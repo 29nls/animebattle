@@ -1,0 +1,113 @@
+{
+  "category": "conditions",
+  "prd_ref": "PRD §16.4 (kondisi pertarungan → efek komputasi)",
+  "cases": [
+    {
+      "id": "conditions-01-in-character-menahan-diri",
+      "category": "conditions",
+      "title": "Mode in_character + trait holds_back → efektivitas hax turun 35%",
+      "side_a": "holds_back",
+      "side_b": "baseline",
+      "conditions": { "win_condition": "incapacitation", "mode": "in_character" },
+      "expect": {
+        "winner": "a",
+        "edge_status": { "time-manipulation": "effective" },
+        "edge_effectiveness": { "time-manipulation": [0.64, 0.66] },
+        "outcome_notes_include": ["in_character_penalty"],
+        "probability_a": [0.9, 1.0],
+        "assertion": "Penalti karakterisasi tidak menghapus kemenangan, tetapi menurunkan keunggulan"
+      }
+    },
+    {
+      "id": "conditions-02-bloodlusted",
+      "category": "conditions",
+      "title": "Mode bloodlusted → hax dipakai maksimal dan aktivasi dianggap instan",
+      "side_a": "holds_back",
+      "side_b": "baseline",
+      "conditions": { "win_condition": "incapacitation", "mode": "bloodlusted" },
+      "expect": {
+        "winner": "a",
+        "edge_effectiveness": { "time-manipulation": [0.999, 1.0] },
+        "outcome_notes_include": ["bloodlusted_boost"],
+        "probability_a": [0.9, 1.0],
+        "assertion": "Efektivitas dibatasi 1,0 meski pengali 1,2"
+      }
+    },
+    {
+      "id": "conditions-03-knowledge-full-menguatkan-counter",
+      "category": "conditions",
+      "title": "Knowledge full → penangkalan resistensi 1,25× lebih kuat",
+      "side_a": "haxer_timestop",
+      "side_b": "resistor_time_strong",
+      "conditions": { "win_condition": "incapacitation", "knowledge_level": "full" },
+      "expect": {
+        "no_decisive_edges": true,
+        "edge_status": { "time-manipulation": "reduced" },
+        "edge_effectiveness": { "time-manipulation": [0.275, 0.285] },
+        "outcome_notes_include": ["knowledge_multiplier:full"],
+        "assertion": "0,35 ÷ 1,25 = 0,28"
+      }
+    },
+    {
+      "id": "conditions-04-knowledge-none-melemahkan-counter",
+      "category": "conditions",
+      "title": "Knowledge none → penangkalan resistensi 0,8× lebih lemah",
+      "side_a": "haxer_timestop",
+      "side_b": "resistor_time_strong",
+      "conditions": { "win_condition": "incapacitation", "knowledge_level": "none" },
+      "expect": {
+        "no_decisive_edges": true,
+        "edge_status": { "time-manipulation": "reduced" },
+        "edge_effectiveness": { "time-manipulation": [0.43, 0.44] },
+        "outcome_notes_include": ["knowledge_multiplier:none"],
+        "assertion": "0,35 ÷ 0,8 = 0,4375"
+      }
+    },
+    {
+      "id": "conditions-05-persiapan-tanpa-waktu",
+      "category": "conditions",
+      "title": "Ability butuh persiapan tanpa prep_time → tidak aktif",
+      "side_a": "prep_specialist",
+      "side_b": "speedster",
+      "conditions": { "win_condition": "incapacitation", "prep_time": "none" },
+      "expect": {
+        "winner": "b",
+        "no_decisive_edges": true,
+        "edge_status": { "sealing": "inactive" },
+        "edge_inactive_reason": { "sealing": "too_slow_against_speed_gap" },
+        "assertion": "Aktivasi lambat kalah dari lawan yang jauh lebih cepat"
+      }
+    },
+    {
+      "id": "conditions-06-persiapan-panjang",
+      "category": "conditions",
+      "title": "prep_time extended → ability yang butuh persiapan berjalan dan menjadi decisive",
+      "side_a": "prep_specialist",
+      "side_b": "speedster",
+      "conditions": { "win_condition": "incapacitation", "prep_time": "extended" },
+      "expect": {
+        "winner": "a",
+        "probability_a": [0.9, 1.0],
+        "decisive_edges": { "count_min": 1, "side": "a" },
+        "edge_status": { "sealing": "effective" },
+        "outcome_notes_include": ["prep_time_bonus"],
+        "assertion": "Persiapan panjang mengubah hasil, bukan hanya catatan"
+      }
+    },
+    {
+      "id": "conditions-07-jarak-awal-di-luar-jangkauan",
+      "category": "conditions",
+      "title": "Jarak awal melebihi jangkauan ability → tidak aktif",
+      "side_a": "haxer_timestop",
+      "side_b": "baseline",
+      "conditions": { "win_condition": "incapacitation", "starting_distance_rank": 10 },
+      "expect": {
+        "no_decisive_edges": true,
+        "edge_status": { "time-manipulation": "inactive" },
+        "edge_inactive_reason": { "time-manipulation": "out_of_range" },
+        "probability_a": [0.5, 0.55],
+        "assertion": "Jangkauan ability (rank 5) lebih pendek dari jarak awal (rank 10)"
+      }
+    }
+  ]
+}

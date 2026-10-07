@@ -4,3 +4,16 @@ node_modules/
 *.log
 .env*
 .freebuff/
+
+# Next.js
+.next/
+
+# TypeScript incremental
+*.tsbuildinfo
+
+# `next-env.d.ts` SENGAJA tidak diabaikan, meskipun Next.js akan menimpanya.
+# Alasannya: `npm run typecheck` adalah bagian dari urutan verifikasi di README,
+# dan berkas itu menyediakan tipe untuk impor CSS serta aset gambar. Tanpa berkas
+# ini, hasil pertama dari clone bersih adalah kegagalan typecheck yang tidak
+# mencerminkan masalah nyata — dan verifikasi yang gagal saat pertama dijalankan
+# akan cenderung diabaikan orang.

@@ -840,6 +840,9 @@ create table battle_results (
   potential_scenario   text,
   limitations          jsonb not null default '[]'::jsonb,
   assumptions          jsonb not null default '[]'::jsonb,
+  -- Rujukan terstruktur per kalimat reasoning (validator RG-1, AC-34):
+  -- { "primary": ["metric:speed", ...], "scenario": [...], ... }
+  reasoning_refs       jsonb not null default '{}'::jsonb,
   input_hash           text not null unique,
   engine_version       text not null,
   rule_set_version     text not null references battle_rule_sets(version) on delete restrict,
@@ -1297,6 +1300,11 @@ as $$
 $$;
 
 -- Dataset agregat untuk battle engine dalam SATU round-trip (menghindari N+1).
+--
+-- Bentuk keluaran harus cocok dengan tipe `SideData` di src/services/battle/types.ts.
+-- Khususnya: setiap ability membawa `category_slug` + `category_is_negation`, dan
+-- setiap resistensi membawa `category_slug` (kategori ability yang ditahan) karena
+-- rule engine mencocokkan aturan berdasarkan pasangan SLUG KATEGORI, bukan id.
 create or replace function public.battle_dataset(version_ids uuid[])
 returns jsonb
 language sql
@@ -1334,23 +1342,32 @@ as $$
       'abilities', coalesce((
         select jsonb_agg(jsonb_build_object(
                  'id', ab.id, 'name', ab.name, 'category_id', ab.category_id,
-                 'category_slug', ac.slug, 'activation_speed', ab.activation_speed,
+                 'category_slug', ac.slug,
+                 'category_is_negation', ac.is_negation,
+                 'activation_speed', ab.activation_speed,
                  'is_offensive', ab.is_offensive, 'is_passive', ab.is_passive,
                  'is_prep_required', ab.is_prep_required,
-                 'proficiency', ca.proficiency, 'confidence', ca.confidence)) 
+                 'proficiency', ca.proficiency, 'confidence', ca.confidence,
+                 'effective_range_rank', rs.rank))
           from character_abilities ca
           join abilities ab on ab.id = ca.ability_id
           join ability_categories ac on ac.id = ab.category_id
+          left join stat_scales rs on rs.id = ca.effective_range_scale_id
          where ca.character_version_id = cv.id
       ), '[]'::jsonb),
       'resistances', coalesce((
         select jsonb_agg(jsonb_build_object(
-                 'resistance_type_id', cr.resistance_type_id, 'level', cr.level,
-                 'level_label', cr.level_label, 'category_id', rt.category_id,
+                 'resistance_type_id', cr.resistance_type_id,
+                 'resistance_type_slug', rt.slug,
+                 'category_id', rt.category_id,
+                 'category_slug', ac.slug,
+                 'level', cr.level,
+                 'level_label', cr.level_label,
                  'verification_status', cr.verification_status,
                  'confidence', cr.confidence))
           from character_resistances cr
           join resistance_types rt on rt.id = cr.resistance_type_id
+          join ability_categories ac on ac.id = rt.category_id
          where cr.character_version_id = cv.id
       ), '[]'::jsonb),
       'traits', coalesce((

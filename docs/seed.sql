@@ -506,7 +506,48 @@ values (
       'knowledge_full_counter_multiplier', 1.25,
       'knowledge_none_counter_multiplier', 0.80,
       'prep_time_extended_bonus', 0.15
-    )
+    ),
+    -- Pemetaan kategori ability -> SETTING win condition yang dapat dipenuhinya.
+    -- Kategori yang tidak disebut memakai '_default'. Nilai [] berarti kategori
+    -- tersebut tidak pernah menjadi jalur kemenangan (mis. teleportation).
+    -- Cermin identik dengan src/services/battle/fixtures/rule-set.default.json;
+    -- kesamaannya diperiksa otomatis oleh scripts/validate-schema.mjs.
+    'win_condition_map', '{
+      "_default": ["ko", "death", "incapacitation", "any"],
+      "time-manipulation": ["incapacitation", "ko", "bfr", "any"],
+      "mind-manipulation": ["incapacitation", "submission", "ko", "any"],
+      "empathic-manipulation": ["incapacitation", "submission", "any"],
+      "fear-manipulation": ["incapacitation", "submission", "any"],
+      "illusion-creation": ["incapacitation", "submission", "any"],
+      "status-effect-inducement": ["incapacitation", "ko", "any"],
+      "statistics-reduction": ["incapacitation", "any"],
+      "soul-manipulation": ["death", "incapacitation", "any"],
+      "bfr": ["bfr", "any"],
+      "sealing": ["bfr", "incapacitation", "any"],
+      "regeneration-negation": ["death", "any"],
+      "immortality-negation": ["death", "any"],
+      "power-nullification": ["incapacitation", "ko", "any"],
+      "absorption": ["incapacitation", "ko", "death", "any"],
+      "precognition": [],
+      "teleportation": [],
+      "regeneration": [],
+      "immortality": [],
+      "healing": [],
+      "forcefield-creation": [],
+      "intangibility": [],
+      "invisibility": [],
+      "shapeshifting": [],
+      "adaptation": [],
+      "reactive-evolution": [],
+      "duplication": [],
+      "summoning": [],
+      "aura": [],
+      "aura-pressure": [],
+      "non-physical-interaction": [],
+      "statistics-amplification": [],
+      "damage-reduction": [],
+      "dimensional-travel": []
+    }'::jsonb
   ),
   true,
   'Rule set default MVP: layered decision + weighted scoring, deterministik.'

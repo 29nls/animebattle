@@ -13,6 +13,7 @@ Dokumen pendamping [PRD.md](PRD.md). Berisi diagram, matriks, spesifikasi tabel,
 - [H. Database Table Specification](#h-database-table-specification)
 - [I. User Journey](#i-user-journey)
 - [J. Development Roadmap](#j-development-roadmap)
+- [K. Case Library Battle Engine (format data)](#k-case-library-battle-engine-format-data)
 
 ---
 
@@ -823,7 +824,7 @@ gantt
 | 0 | Log migrasi + seed; screenshot CI; coverage awal |
 | 1 | Lighthouse report; screenshot halaman; output validator metadata untuk 3 tipe halaman |
 | 2 | Benchmark 10k (p50/p95 search & list); laporan duplikasi re-run 3×; screenshot admin job + error |
-| 3 | Hasil case library (30+ kasus) + diff hasil antar mode kondisi; screenshot hasil battle lengkap |
+| 3 | Hasil case library (30+ kasus) + diff hasil antar mode kondisi; keluaran `npm run check:battle-guards` (uji mutasi guard); screenshot hasil battle lengkap |
 | 4 | Laporan uji rate limit, uji injeksi, uji SSRF; `EXPLAIN ANALYZE` 6 query kritis; bundle report |
 | 5 | Dashboard KPI (K1–K7) dengan query & grafik; audit % record bersumber; hasil soft launch |
 
@@ -835,3 +836,117 @@ gantt
 4. Runbook operasional lengkap: ingestion, conflict review, merge, takedown, rollback, incident.
 5. Hasil simulasi selalu dapat direproduksi dari `input_hash` + `rule_set_version`.
 6. Setiap fakta dapat ditelusuri ke baris sumber; setiap gambar punya lisensi & atribusi.
+
+---
+
+## K. Case Library Battle Engine (format data)
+
+Referensi: PRD §17 (perhitungan), §35.3 (AC-31…AC-36). Implementasi: [src/services/battle/cases/](../src/services/battle/cases/) dan runner [scripts/run-battle-cases.mjs](../scripts/run-battle-cases.mjs).
+
+### K.1 Mengapa kasus adalah data, bukan kode
+
+Kasus uji disimpan sebagai JSON yang dibaca runner, bukan sebagai `describe()` di dalam suite. Alasannya bukan gaya: bila ekspektasi hidup di dalam kode, satu-satunya cara menambah cakupan adalah menulis kode baru — dan setiap perubahan engine berisiko menuntut penulisan ulang suite. Dengan format data, menambah cakupan = menambah satu objek JSON, dan runner yang sudah ada langsung memeriksanya. Ini juga yang membuat AC-31 dapat diaudit oleh non-programmer (mis. game designer yang memutuskan apakah hasil engine masuk akal).
+
+### K.2 Bentuk berkas
+
+```
+src/services/battle/cases/
+├─ roster.json         # fixture: 37 "sisi" sintetis (baseline/apex/speedster/haxer_…/resistor_…)
+├─ dominance.json      # 6 kasus — dominasi tier ekstrem & kapan gate dilewati
+├─ speed.json          # 6 kasus — speed blitz, equal_speed, kecepatan vs durability
+├─ hax.json            # 9 kasus — resistensi memblokir hax, negasi, lintas kategori
+├─ incomplete.json     # 5 kasus — data tidak lengkap & gate kelayakan
+├─ qualifiers.json     # 6 kasus — varies/unknown/possibly, rezim non-fisik
+└─ conditions.json     # 7 kasus — mode, knowledge, prep_time, jarak awal
+```
+
+Satu objek kasus — diambil apa adanya dari `hax.json`:
+
+```jsonc
+{
+  "id": "hax-02-resistensi-tersumber-menahan",   // unik global; runner menolak duplikat
+  "category": "hax",                              // untuk laporan cakupan
+  "title": "Time stop vs resistensi tinggi tersumber → reduced, bukan decisive",
+  "side_a": "haxer_timestop",                     // kunci di roster.json, bukan nama karakter
+  "side_b": "resistor_time_strong",
+  "conditions": { "win_condition": "incapacitation" },  // opsional; di-merge di atas conditions_defaults
+  "expect": {
+    "winner": ["b", "draw"],                     // string atau array nilai yang diterima
+    "probability_a": [0.45, 0.50],               // rentang, bukan angka tunggal
+    "difficulty": ["extreme"],
+    "no_decisive_edges": true,                    // jalur menang hax tertutup
+    "edge_status": { "time-manipulation": "reduced" },
+    "edge_effectiveness": { "time-manipulation": [0.34, 0.36] },
+    "coverage": { "b": [0.999, 1] },
+    "assertion": "Reducer 0,35 diterapkan apa adanya; S = −0,0228 → p_a = 0,4875. Draw adalah hasil jujur (PRD BC-3)"
+  }
+}
+```
+
+`assertion` bukan dokumentasi hiasan: ia memuat **alasan mengapa ekspektasi ini benar**, termasuk nilai antara (S, p) yang diharapkan. Bila nanti engine berubah dan kasus ini gagal, penilai dapat memutuskan dari teks ini apakah engine yang salah atau ekspektasi yang ketinggalan.
+
+**Kunci `expect` yang dikenali runner** (kunci di luar daftar ini diabaikan — jadi jangan mengarang nama kunci):
+
+| Kunci | Tipe | Memeriksa |
+|---|---|---|
+| `winner` | string \| string[] | nilai `winner` yang diterima |
+| `probability_a` / `probability_b` | `[min, max]` | rentang probabilitas |
+| `difficulty` / `battle_length` | string[] | nilai yang diterima |
+| `confidence` | `{min, max}` | rentang keyakinan |
+| `low_confidence` | boolean | flag banner data terbatas |
+| `dominance` | `{applies, dominant_side?, blocked_by?}` | hasil gate Layer 1 dan alasan bila dilewati |
+| `decisive_edges` | `{count_min?, count_max?, side?}` | jumlah/sisi decisive edge |
+| `no_decisive_edges` | boolean | menuntut **tidak ada** decisive edge |
+| `edge_status` | `{kategori: status}` | status interaksi per kategori (`blocked`/`reduced`/`applied`/…) |
+| `edge_effectiveness` | `{kategori: [min,max]}` | efektivitas numerik per kategori |
+| `edge_inactive_reason` | `{kategori: fragmen}` | alasan ability tidak aktif |
+| `edge_satisfies_win_condition` | `{kategori: boolean}` | apakah ability memenuhi win condition terpilih |
+| `limitations_include` / `limitations_exclude` / `limitations_empty` | string[] / boolean | kode keterbatasan yang wajib ada / wajib tidak ada / kosong |
+| `assumptions_include` / `assumptions_exclude` | string[] | asumsi yang wajib ada / tidak ada |
+| `outcome_notes_include` | string[] | catatan pada `ability_outcomes` |
+| `primary_reason_refs_include` | string[] | rujukan pada alasan utama |
+| `score_a_value` | `{metrik: {value, tol?}}` | nilai `a_i` yang diharapkan per metrik |
+| `score_breakdown_length` | number | jumlah baris breakdown |
+| `coverage` | `{a?: [min,max], b?: [min,max]}` | cakupan resistensi per sisi |
+| `engine_fields` | boolean | format `input_hash`/`battle_id`, `rule_set_version` |
+| `reasoning_traceable` | boolean (default true) | RG-1 dijalankan untuk kasus ini |
+| `disclaimer` | boolean (default true) | teks disclaimer wajib ada |
+
+Dua kunci terakhir default-nya **aktif tanpa diminta**: setiap kasus otomatis diperiksa RG-1 dan disclaimer-nya. Menonaktifkannya harus tertulis eksplisit di berkas kasus, sehingga tidak ada kasus yang diam-diam lolos dari pemeriksaan traceability.
+
+### K.3 Aturan fixture (`roster.json`)
+
+| Aturan | Alasan |
+|---|---|
+| 37 sisi sintetis, bukan karakter berhak cipta | Kasus uji adalah alat rekayasa, bukan klaim tentang karakter nyata. Tidak ada nama, statistik, atau feat karakter berlisensi yang perlu disalin |
+| `extends` untuk mewarisi level stat | 28 dari 37 sisi memakainya (mis. `resistor_time_strong` ← `baseline`, `mutual_hax_b` ← `eraser`), sehingga setiap varian uji hanya menyatakan **selisihnya** terhadap induk dan maksud kasus terbaca dari diff-nya |
+| Satu kasus tidak boleh memakai kunci sisi yang sama | `side_a === side_b` hanya menguji jalur `draw`; runner menolaknya sebagai kasus tak bermakna |
+| Level stat ordinal (rank), bukan angka absolut | Engine membandingkan rank, sehingga kasus tidak perlu mengarang nilai joule/kecepatan |
+| `conditions_defaults` di level roster | Setiap kasus hanya menulis kondisi yang **menyimpang** dari default, sehingga perbedaan antar kasus terlihat sekali baca |
+
+### K.4 Yang diverifikasi runner (dan bagaimana ia gagal)
+
+| Kelompok | Pemeriksaan | Perilaku saat gagal |
+|---|---|---|
+| Harapan kasus | pemenang, rentang probabilitas, difficulty, status tiap interaction, decisive edges, limitations wajib | Daftar `FAIL` per kasus + `GAGAL (n)` |
+| Determinisme | hasil & `input_hash` identik saat fixture dibangun ulang | `FAIL <id> :: determinisme…` |
+| Ketahanan library | id duplikat, `expect` kosong, `side_a === side_b`, rujukan roster tak dikenal | Kasus ditolak sebelum dievaluasi |
+| RG-1 traceability (AC-34) | tiap kalimat reasoning punya rujukan `metric:`/`edge:`/`limitation:`/`condition:` yang dapat diselesaikan | `FAIL GLOBAL :: RG-1 lulus untuk semua kasus — n/39` |
+| Invarian AC-32 | pihak dengan selisih tier ≥ 8 tanpa decisive edge tidak boleh menang | `FAIL GLOBAL :: invarian AC-32…` |
+| Sensitivitas AC-33 | pasangan kasus bersubjek sama dengan `conditions` berbeda harus menghasilkan hasil berbeda; dua-duanya `insufficient_data` dikecualikan | `FAIL GLOBAL :: AC-33…` |
+| Cakupan | jumlah kasus ≥ 30, dan keenam kategori wajib (`dominance`, `speed`, `hax`, `incomplete_data`, `conditions`, `qualifiers`) terwakili | `FAIL GLOBAL :: jumlah kasus ≥ 30…` / `FAIL GLOBAL :: kategori "<x>" terwakili…` |
+| Rule set | fixture rule set masih sah (≥ 20 aturan hax) | `FAIL GLOBAL :: rule set fixture sah…` |
+| Format field engine | `input_hash` cocok `sha256:<64 hex>`, `battle_id` cocok `btl_<24 hex>`, `rule_set_version` = versi fixture | `FAIL <id> :: engine_fields` (aktif per kasus) |
+
+Runner keluar dengan status **1** bila ada satu pemeriksaan pun gagal, sehingga dapat dipasang di CI tanpa lapisan tambahan.
+
+Guard-nya sendiri diuji, karena runner yang tidak pernah menolak apa pun sama saja dengan tidak ada: `npm run check:battle-guards` ([scripts/mutate-battle-guards.mjs](../scripts/mutate-battle-guards.mjs)) merusak berkas kasus satu per satu — id duplikat, tanpa `expect`, `side_a === side_b`, rujukan sisi tak dikenal, ekspektasi dibalik, kategori wajib dihapus — lalu menuntut runner menolak **dengan alasan yang spesifik** (mis. menyebut id kasus yang gagal, bukan sekadar ada `FAIL` di suatu tempat). **6/6 tertangkap, 0 bocor.** Berkas kasus selalu dipulihkan dan pemulihannya diverifikasi dengan sha256, sehingga uji ini aman dijalankan di working tree yang sedang dipakai.
+
+Urutan pemakaian yang disarankan: `validate:battle-cases` dulu (apakah hasil engine masih benar?), lalu `check:battle-guards` (apakah yang mengawasi hasil engine masih menggigit?).
+
+### K.5 Cara menambah kasus
+
+1. Tambahkan fixture yang dibutuhkan di `roster.json` (atau pakai `extends`).
+2. Tambahkan satu objek di berkas kategori yang sesuai dengan `expect` yang **menyatakan perilaku yang benar**, bukan sekadar hasil yang kebetulan keluar.
+3. Jalankan `npm run validate:battle-cases`.
+4. Bila kasus gagal, putuskan lebih dulu mana yang keliru — engine atau ekspektasi. Mengubah `expect` agar lulus hanya sah bila ekspektasi lamanya memang salah; sebutkan alasannya di `title`.

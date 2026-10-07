@@ -14,6 +14,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+
 const resolveDoc = (name) => fileURLToPath(new URL(`../docs/${name}`, import.meta.url));
 import { PGlite } from '@electric-sql/pglite';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
@@ -135,6 +136,98 @@ if (wsum.rows.length === 1 && wsum.rows[0].total === 100) {
   ok('rule set aktif Σbobot = 100', `versi ${wsum.rows[0].version}`);
 } else {
   bad('rule set aktif Σbobot = 100', JSON.stringify(wsum.rows));
+}
+
+// ----- Konsistensi seed database <-> fixture engine (mencegah drift dua arah) -----
+// Rule set produksi hidup di DB; fixture dipakai untuk pengujian offline. Bila
+// salah satu diubah tanpa yang lain, perilaku engine akan berbeda dari data
+// sebenarnya — jadi kesamaannya diperiksa, bukan diasumsikan.
+const fixturePath = fileURLToPath(
+  new URL('../src/services/battle/fixtures/rule-set.default.json', import.meta.url),
+);
+const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'));
+const canonical = (value) => {
+  const sort = (v) => {
+    if (Array.isArray(v)) return v.map(sort);
+    if (v === null || typeof v !== 'object') return v;
+    return Object.fromEntries(Object.keys(v).sort().map((k) => [k, sort(v[k])]));
+  };
+  return JSON.stringify(sort(value));
+};
+
+const dbRuleSet = await db.query(
+  `select version, engine_version, weights, constants from battle_rule_sets where version = $1`,
+  [fixture.version],
+);
+if (dbRuleSet.rows.length !== 1) {
+  bad('fixture rule set ada di database', `versi ${fixture.version} tidak ditemukan`);
+} else {
+  const dbRs = dbRuleSet.rows[0];
+  ok('fixture rule set ada di database', `versi ${dbRs.version}, engine ${dbRs.engine_version}`);
+  if (canonical(dbRs.weights) === canonical(fixture.weights)) {
+    ok('bobot seed = bobot fixture', '14 kunci identik');
+  } else {
+    bad('bobot seed = bobot fixture', 'weights berbeda antara docs/seed.sql dan rule-set.default.json');
+  }
+  if (canonical(dbRs.constants) === canonical(fixture.constants)) {
+    ok('konstanta seed = konstanta fixture', 'termasuk win_condition_map');
+  } else {
+    bad('konstanta seed = konstanta fixture', 'constants berbeda antara docs/seed.sql dan rule-set.default.json');
+  }
+  if (dbRs.engine_version === fixture.engine_version) {
+    ok('engine_version seed = fixture', dbRs.engine_version);
+  } else {
+    bad('engine_version seed = fixture', `db=${dbRs.engine_version}, fixture=${fixture.engine_version}`);
+  }
+}
+
+const dbHaxRules = await db.query(`
+  select ac.slug as ability_category,
+         rc.slug as resistance_category,
+         h.relation,
+         h.effectiveness_multiplier,
+         h.requires_source_evidence
+    from hax_interactions h
+    join ability_categories ac on ac.id = h.ability_category_id
+    join resistance_types rt on rt.id = h.resistance_type_id
+    join ability_categories rc on rc.id = rt.category_id
+`);
+const dbHaxKeys = new Set(
+  dbHaxRules.rows.map((r) => `${r.ability_category}|${r.resistance_category}`),
+);
+const fixtureHaxKeys = new Set(
+  fixture.hax_rules.map((r) => `${r.ability_category_slug}|${r.resistance_category_slug}`),
+);
+const missingInDb = [...fixtureHaxKeys].filter((k) => !dbHaxKeys.has(k));
+const missingInFixture = [...dbHaxKeys].filter((k) => !fixtureHaxKeys.has(k));
+if (missingInDb.length === 0 && missingInFixture.length === 0) {
+  ok('aturan hax seed = fixture', `${dbHaxKeys.size} pasangan kategori identik`);
+} else {
+  bad(
+    'aturan hax seed = fixture',
+    `hanya di fixture: ${missingInDb.join(', ') || '-'} | hanya di DB: ${missingInFixture.join(', ') || '-'}`,
+  );
+}
+
+const dbRuleMismatch = [];
+for (const dbRule of dbHaxRules.rows) {
+  const key = `${dbRule.ability_category}|${dbRule.resistance_category}`;
+  const fixtureRule = fixture.hax_rules.find(
+    (r) => `${r.ability_category_slug}|${r.resistance_category_slug}` === key,
+  );
+  if (!fixtureRule) continue;
+  if (
+    fixtureRule.relation !== dbRule.relation ||
+    Number(fixtureRule.effectiveness_multiplier) !== Number(dbRule.effectiveness_multiplier) ||
+    fixtureRule.requires_source_evidence !== dbRule.requires_source_evidence
+  ) {
+    dbRuleMismatch.push(`${key} (db: ${dbRule.relation}/${dbRule.effectiveness_multiplier}, fixture: ${fixtureRule.relation}/${fixtureRule.effectiveness_multiplier})`);
+  }
+}
+if (dbRuleMismatch.length === 0) {
+  ok('relasi & pengali aturan hax identik');
+} else {
+  bad('relasi & pengali aturan hax identik', dbRuleMismatch.slice(0, 5).join(' | '));
 }
 
 const badSum = await db.query(`
@@ -358,7 +451,6 @@ const sideB = byId.get(vPeak);
 const datasetOk =
   payload?.length === 2 &&
   sideA?.abilities?.length === 1 &&
-  sideA?.ability_ok !== false &&
   sideA?.metrics?.attack_potency > 0 &&
   sideA?.metrics?.tier === 20 &&
   sideA?.statistics?.some((s) => s.qualifier === 'at_least') &&
@@ -369,6 +461,23 @@ if (datasetOk) {
     `formA abilities=${sideA.abilities.length}, formB resistances=${sideB.resistances.length}`);
 } else {
   bad('RPC battle_dataset', JSON.stringify({ sideA, sideB }).slice(0, 400));
+}
+
+// Kontrak DB -> engine: field yang dibaca engine (SideData di
+// src/services/battle/types.ts) harus benar-benar dikembalikan RPC.
+const contractGaps = [];
+const abilityA = sideA?.abilities?.[0];
+if (!abilityA?.category_slug) contractGaps.push('abilities[].category_slug');
+if (typeof abilityA?.category_is_negation !== 'boolean') contractGaps.push('abilities[].category_is_negation');
+const resistanceB = sideB?.resistances?.[0];
+if (!resistanceB?.category_slug) contractGaps.push('resistances[].category_slug');
+if (resistanceB?.level_label === undefined) contractGaps.push('resistances[].level_label');
+if (sideA?.tier?.rank === undefined) contractGaps.push('tier.rank');
+if (sideA?.metrics?.battle_iq === undefined) contractGaps.push('metrics.battle_iq');
+if (contractGaps.length === 0) {
+  ok('kontrak battle_dataset ↔ SideData engine lengkap');
+} else {
+  bad('kontrak battle_dataset ↔ SideData engine lengkap', `field hilang: ${contractGaps.join(', ')}`);
 }
 
 const cond = await db.query(

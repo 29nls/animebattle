@@ -1,0 +1,144 @@
+{
+  "category": "hax",
+  "prd_ref": "PRD §15.3 (matriks status interaksi), §16.3 Layer 2, RS-1",
+  "cases": [
+    {
+      "id": "hax-01-tanpa-resistensi",
+      "category": "hax",
+      "title": "Time stop terhadap lawan tanpa resistensi → decisive",
+      "side_a": "haxer_timestop",
+      "side_b": "baseline",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "winner": "a",
+        "probability_a": [0.9, 1.0],
+        "decisive_edges": { "count_min": 1, "side": "a" },
+        "edge_status": { "time-manipulation": "effective" },
+        "edge_effectiveness": { "time-manipulation": [0.999, 1.0] },
+        "assertion": "Tanpa resistensi terdokumentasi, ability berjalan penuh"
+      }
+    },
+    {
+      "id": "hax-02-resistensi-tersumber-menahan",
+      "category": "hax",
+      "title": "Time stop vs resistensi tinggi tersumber → reduced, bukan decisive",
+      "side_a": "haxer_timestop",
+      "side_b": "resistor_time_strong",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "winner": ["b", "draw"],
+        "probability_a": [0.45, 0.5],
+        "difficulty": ["extreme"],
+        "no_decisive_edges": true,
+        "edge_status": { "time-manipulation": "reduced" },
+        "edge_effectiveness": { "time-manipulation": [0.34, 0.36] },
+        "coverage": { "b": [0.999, 1.0] },
+        "assertion": "Reducer 0,35 dari hax_interactions diterapkan apa adanya. S = −0,0228 → p_a = 0,4875. Hasilnya seri atau kemenangan tipis pihak bertahan: jalur menang hax tertutup, dan pihak bertahan juga tidak punya jalur menyerang, sehingga 'draw' adalah hasil yang jujur (PRD BC-3)"
+      }
+    },
+    {
+      "id": "hax-03-rs1-tanpa-bukti-tidak-memblokir",
+      "category": "hax",
+      "title": "RS-1: status blocked diturunkan menjadi reduced bila resistensi tanpa bukti tersumber",
+      "side_a": "bfr_novice",
+      "side_b": "bfr_resistor_high_unsourced",
+      "conditions": { "win_condition": "bfr" },
+      "expect": {
+        "no_decisive_edges": true,
+        "edge_status": { "bfr": "reduced" },
+        "edge_effectiveness": { "bfr": [0.49, 0.51] },
+        "outcome_notes_include": ["resistance_evidence_missing:downgraded_to_reduced"],
+        "assertion": "Resistensi tanpa sumber tidak boleh memblokir sepenuhnya"
+      }
+    },
+    {
+      "id": "hax-04-negasi-instak-tanpa-resistensi",
+      "category": "hax",
+      "title": "Existence erasure (kategori negasi) terhadap lawan tanpa resistensi → decisive",
+      "side_a": "eraser",
+      "side_b": "baseline",
+      "conditions": { "win_condition": "death" },
+      "expect": {
+        "winner": "a",
+        "probability_a": [0.9, 1.0],
+        "decisive_edges": { "count_min": 1, "side": "a" },
+        "edge_status": { "existence-erasure": "effective" },
+        "assertion": "Kategori negasi berjalan pada attack level 'absolute'"
+      }
+    },
+    {
+      "id": "hax-05-negasi-vs-resistensi-tinggi",
+      "category": "hax",
+      "title": "Existence erasure vs resistensi tinggi tersumber → reduced 0,30",
+      "side_a": "eraser",
+      "side_b": "resistor_ee_high",
+      "conditions": { "win_condition": "death" },
+      "expect": {
+        "no_decisive_edges": true,
+        "edge_status": { "existence-erasure": "reduced" },
+        "edge_effectiveness": { "existence-erasure": [0.29, 0.31] },
+        "coverage": { "b": [0.999, 1.0] },
+        "assertion": "Aturan eksplisit menang atas matriks default"
+      }
+    },
+    {
+      "id": "hax-06-aturan-lintas-kategori",
+      "category": "hax",
+      "title": "Regeneration negation vs resistensi Regeneration (kategori berbeda) → blocked",
+      "side_a": "regen_negator",
+      "side_b": "regen_resistor",
+      "conditions": { "win_condition": "death" },
+      "expect": {
+        "no_decisive_edges": true,
+        "edge_status": { "regeneration-negation": "blocked" },
+        "edge_effectiveness": { "regeneration-negation": [0.0, 0.0] },
+        "coverage": { "b": [0.999, 1.0] },
+        "assertion": "Pencocokan aturan lintas kategori harus menemukan resistensi Regeneration dari ability Regeneration Negation"
+      }
+    },
+    {
+      "id": "hax-07-aturan-lintas-kategori-tanpa-bukti",
+      "category": "hax",
+      "title": "Aturan blocked yang butuh bukti, resistensi tanpa bukti → reduced",
+      "side_a": "regen_negator",
+      "side_b": "regen_resistor_unsourced",
+      "conditions": { "win_condition": "death" },
+      "expect": {
+        "no_decisive_edges": true,
+        "edge_status": { "regeneration-negation": "reduced" },
+        "edge_effectiveness": { "regeneration-negation": [0.49, 0.51] },
+        "outcome_notes_include": ["resistance_evidence_missing:downgraded_to_reduced"],
+        "assertion": "requires_source_evidence=true hanya sah bila resistensi dapat ditelusuri"
+      }
+    },
+    {
+      "id": "hax-08-win-condition-menolak-bfr",
+      "category": "hax",
+      "title": "BFR dengan win condition 'death' → ability efektif tetapi bukan decisive",
+      "side_a": "haxer_bfr",
+      "side_b": "baseline",
+      "conditions": { "win_condition": "death" },
+      "expect": {
+        "no_decisive_edges": true,
+        "edge_status": { "bfr": "effective" },
+        "edge_satisfies_win_condition": { "bfr": false },
+        "assertion": "Win condition menyaring hax yang relevan (PRD §16.4)"
+      }
+    },
+    {
+      "id": "hax-09-win-condition-menerima-bfr",
+      "category": "hax",
+      "title": "BFR dengan win condition 'bfr' → decisive",
+      "side_a": "haxer_bfr",
+      "side_b": "baseline",
+      "conditions": { "win_condition": "bfr" },
+      "expect": {
+        "winner": "a",
+        "probability_a": [0.9, 1.0],
+        "decisive_edges": { "count_min": 1, "side": "a" },
+        "edge_satisfies_win_condition": { "bfr": true },
+        "assertion": "Perubahan win condition membalik status decisive pada ability yang sama"
+      }
+    }
+  ]
+}

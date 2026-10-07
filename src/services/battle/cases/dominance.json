@@ -1,0 +1,100 @@
+{
+  "category": "dominance",
+  "prd_ref": "PRD §16.3 Layer 1 (Absolute Dominance Gate)",
+  "cases": [
+    {
+      "id": "dominance-01-selisih-ekstrem",
+      "category": "dominance",
+      "title": "Selisih tier 10 dan durability 16 → dominasi mutlak",
+      "side_a": "apex",
+      "side_b": "baseline",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "winner": "a",
+        "probability_a": [0.95, 1.0],
+        "difficulty": ["low"],
+        "battle_length": ["short"],
+        "dominance": { "applies": true, "dominant_side": "a" },
+        "no_decisive_edges": true,
+        "assumptions_include": ["no_documented_resistances:b", "no_documented_abilities:b"],
+        "coverage": { "a": [0, 0.0001] },
+        "engine_fields": true,
+        "assertion": "Gerbang dominasi menetapkan pemenang tanpa should lewat aritmetika bobot"
+      }
+    },
+    {
+      "id": "dominance-02-urutan-dibalik",
+      "category": "dominance",
+      "title": "Kasus sama dengan sisi dibalik → simetris",
+      "side_a": "baseline",
+      "side_b": "apex",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "winner": "b",
+        "probability_b": [0.95, 1.0],
+        "difficulty": ["low"],
+        "dominance": { "applies": true, "dominant_side": "b" },
+        "assertion": "Membalik urutan sisi membalik hasil, tanpa bias posisi"
+      }
+    },
+    {
+      "id": "dominance-03-tepat-di-ambang",
+      "category": "dominance",
+      "title": "Δtier = 8 (tepat ambang) dan Δdurability = 12 → gerbang aktif",
+      "side_a": "apex",
+      "side_b": "near_peer",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "winner": "a",
+        "probability_a": [0.95, 1.0],
+        "dominance": { "applies": true, "dominant_side": "a" },
+        "assertion": "Ambang bersifat inklusif (≥), bukan eksklusif"
+      }
+    },
+    {
+      "id": "dominance-04-durability-menahan-gerbang",
+      "category": "dominance",
+      "title": "Δtier = 8 tetapi Δdurability hanya 2 → gerbang TIDAK aktif",
+      "side_a": "apex",
+      "side_b": "brick_near_peer",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "winner": "a",
+        "dominance": { "applies": false, "blocked_by": "durability_delta_below_threshold" },
+        "probability_a": [0.5, 0.949],
+        "assertion": "Durability adalah prasyarat: selisih tier saja tidak cukup untuk menetapkan pemenang"
+      }
+    },
+    {
+      "id": "dominance-05-dilewati-karena-hax-penentu",
+      "category": "dominance",
+      "title": "Pihak tertinggal punya hax instan yang memenuhi win condition → gerbang dilewati",
+      "side_a": "apex",
+      "side_b": "haxer_timestop",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "winner": "b",
+        "probability_b": [0.9, 1.0],
+        "dominance": { "applies": false, "blocked_by": "trailing_side_has_decisive_edge" },
+        "decisive_edges": { "count_min": 1, "side": "b" },
+        "edge_status": { "time-manipulation": "effective" },
+        "assertion": "Keunggulan hax punya otoritas di atas dominasi statistik (PRD §16.1 poin 3)"
+      }
+    },
+    {
+      "id": "dominance-06-dilewati-karena-resistensi-tersumber",
+      "category": "dominance",
+      "title": "Pihak tertinggal punya resistensi tersumber terhadap ability pihak dominan → gerbang dilewati",
+      "side_a": "apex_warp",
+      "side_b": "resistor_warp_strong",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "winner": "a",
+        "dominance": { "applies": false, "blocked_by": "trailing_side_has_sourced_resistance" },
+        "probability_a": [0.5, 0.949],
+        "edge_status": { "reality-warping": "reduced" },
+        "assertion": "Resistensi tersumber mencegah hasil otomatis, meski pihak dominan tetap unggul secara skor"
+      }
+    }
+  ]
+}

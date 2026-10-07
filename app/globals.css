@@ -1,0 +1,51 @@
+@import 'tailwindcss';
+
+/**
+ * Token desain — PRD §28 (premium dark anime battle database).
+ *
+ * Aturan yang membuat ini bukan sekadar daftar warna: warna latar dan teks
+ * diturunkan dari token, bukan ditulis langsung di komponen. Mode terang tidak
+ * diaktifkan di MVP, tetapi token dipisah supaya penambahannya nanti tidak
+ * menuntut audit seluruh komponen.
+ */
+@theme {
+  --color-surface-0: oklch(0.16 0.02 265);
+  --color-surface-1: oklch(0.21 0.025 265);
+  --color-surface-2: oklch(0.27 0.03 265);
+  --color-surface-3: oklch(0.34 0.035 265);
+
+  --color-ink-0: oklch(0.98 0.005 265);
+  --color-ink-1: oklch(0.86 0.01 265);
+  --color-ink-2: oklch(0.7 0.015 265);
+  --color-ink-3: oklch(0.55 0.02 265);
+
+  --color-accent-a: oklch(0.7 0.19 25);
+  --color-accent-b: oklch(0.72 0.16 250);
+  --color-accent-win: oklch(0.78 0.15 150);
+  --color-accent-flag: oklch(0.82 0.14 85);
+
+  --color-line: oklch(0.32 0.02 265);
+  --color-line-strong: oklch(0.45 0.03 265);
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+}
+
+html {
+  color-scheme: dark;
+  background-color: var(--color-surface-0);
+  color: var(--color-ink-1);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-family: var(--font-sans);
+  min-height: 100dvh;
+}
+
+/* Fokus keyboard harus selalu terlihat; aksesibilitas bukan tambahan (PRD §29). */
+:focus-visible {
+  outline: 2px solid var(--color-accent-b);
+  outline-offset: 2px;
+}

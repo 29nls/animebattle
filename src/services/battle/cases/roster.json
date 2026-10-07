@@ -1,0 +1,289 @@
+{
+  "$comment": "Karakter SINTETIS untuk pengujian engine. Tidak ada karakter atau statistik nyata di sini — setiap sisi dirancang mengisolasi satu variabel. Angka 'rank' mengikuti skala di docs/seed.sql (mis. attack_potency 'island'=14, speed 'sub relativistic'=10, 'ftl_plus'=15, 'mftl_plus'=17) dan penamaan tier mengikuti docs/seed.sql.",
+  "defaults": {
+    "form_name": "Standard",
+    "form_slug": "standard",
+    "media_type": "other",
+    "data_completeness": "complete",
+    "ability_confidence": 0.8,
+    "resistance_confidence": 0.8
+  },
+  "conditions_defaults": {
+    "mode": "standard",
+    "speed_equalized": false,
+    "starting_distance_rank": null,
+    "battlefield": "neutral",
+    "knowledge_level": "partial",
+    "prep_time": "none",
+    "win_condition": "incapacitation"
+  },
+  "sides": {
+    "baseline": {
+      "name": "Baseline Unit",
+      "tier": { "code": "5-B", "rank": 20 },
+      "metrics": {
+        "attack_potency": 14, "durability": 14, "striking_strength": 14, "lifting_strength": 13,
+        "speed": 10, "reaction_speed": 8, "combat_speed": 6, "range": 6,
+        "stamina": 6, "intelligence": 6, "battle_iq": 4, "experience": 20
+      }
+    },
+    "baseline_twin": {
+      "name": "Baseline Unit (Twin)",
+      "tier": { "code": "5-B", "rank": 20 },
+      "metrics": {
+        "attack_potency": 14, "durability": 14, "striking_strength": 14, "lifting_strength": 13,
+        "speed": 10, "reaction_speed": 8, "combat_speed": 6, "range": 6,
+        "stamina": 6, "intelligence": 6, "battle_iq": 4, "experience": 20
+      }
+    },
+    "apex": {
+      "name": "Apex Unit",
+      "tier": { "code": "2-A", "rank": 30 },
+      "metrics": {
+        "attack_potency": 30, "durability": 30, "striking_strength": 30, "lifting_strength": 24,
+        "speed": 17, "reaction_speed": 11, "combat_speed": 10, "range": 20,
+        "stamina": 11, "intelligence": 11, "battle_iq": 8, "experience": 80
+      },
+      "nonphysical_metrics": ["attack_potency", "durability", "striking_strength", "range", "stamina", "intelligence"]
+    },
+    "apex_warp": {
+      "extends": "apex",
+      "name": "Apex Unit (Warping)",
+      "abilities": [
+        { "category": "reality-warping", "name": "Reality Warp", "proficiency": "master", "activation": "instant" }
+      ]
+    },
+    "near_peer": {
+      "name": "Near Peer",
+      "tier": { "code": "4-C", "rank": 22 },
+      "metrics": {
+        "attack_potency": 18, "durability": 18, "striking_strength": 18, "lifting_strength": 15,
+        "speed": 12, "reaction_speed": 9, "combat_speed": 7, "range": 8,
+        "stamina": 7, "intelligence": 7, "battle_iq": 5, "experience": 25
+      }
+    },
+    "brick_near_peer": {
+      "name": "Brick (near peer tier, jauh lebih tahan)",
+      "tier": { "code": "4-C", "rank": 22 },
+      "metrics": {
+        "attack_potency": 18, "durability": 28, "striking_strength": 20, "lifting_strength": 16,
+        "speed": 11, "reaction_speed": 8, "combat_speed": 6, "range": 7,
+        "stamina": 8, "intelligence": 6, "battle_iq": 4, "experience": 25
+      }
+    },
+    "speedster": {
+      "name": "Speedster",
+      "tier": { "code": "5-B", "rank": 20 },
+      "metrics": {
+        "attack_potency": 14, "durability": 14, "striking_strength": 14, "lifting_strength": 13,
+        "speed": 18, "reaction_speed": 10, "combat_speed": 9, "range": 6,
+        "stamina": 6, "intelligence": 6, "battle_iq": 5, "experience": 20
+      }
+    },
+    "slow_tank": {
+      "name": "Slow Tank",
+      "tier": { "code": "5-B", "rank": 20 },
+      "metrics": {
+        "attack_potency": 13, "durability": 16, "striking_strength": 15, "lifting_strength": 14,
+        "speed": 6, "reaction_speed": 7, "combat_speed": 5, "range": 6,
+        "stamina": 7, "intelligence": 6, "battle_iq": 4, "experience": 20
+      }
+    },
+    "haxer_timestop": {
+      "name": "Time Stopper",
+      "tier": { "code": "5-B", "rank": 20 },
+      "metrics": {
+        "attack_potency": 14, "durability": 14, "striking_strength": 14, "lifting_strength": 13,
+        "speed": 10, "reaction_speed": 8, "combat_speed": 6, "range": 6,
+        "stamina": 6, "intelligence": 6, "battle_iq": 4, "experience": 20
+      },
+      "abilities": [
+        { "category": "time-manipulation", "name": "Time Stop", "proficiency": "master", "activation": "instant", "range_rank": 5 }
+      ]
+    },
+    "haxer_timestop_slow": {
+      "extends": "haxer_timestop",
+      "name": "Time Stopper (aktivasi lambat)",
+      "abilities": [
+        { "category": "time-manipulation", "name": "Time Stop", "proficiency": "master", "activation": "slow", "range_rank": 5 }
+      ]
+    },
+    "holds_back": {
+      "extends": "haxer_timestop",
+      "name": "Time Stopper (menahan diri)",
+      "traits": ["holds_back"]
+    },
+    "resistor_time_strong": {
+      "extends": "baseline",
+      "name": "Time Resistance (tersumber)",
+      "resistances": [
+        { "category": "time-manipulation", "level": 3, "status": "verified", "confidence": 0.85 }
+      ]
+    },
+    "resistor_time_unsourced": {
+      "extends": "baseline",
+      "name": "Time Resistance (tanpa bukti tersumber)",
+      "resistances": [
+        { "category": "time-manipulation", "level": 2, "status": "unknown", "confidence": 0.3 }
+      ]
+    },
+    "resistor_time_absolute": {
+      "extends": "baseline",
+      "name": "Time Resistance (absolute)",
+      "resistances": [
+        { "category": "time-manipulation", "level": 4, "status": "verified", "confidence": 0.9 }
+      ]
+    },
+    "eraser": {
+      "extends": "baseline",
+      "name": "Eraser",
+      "abilities": [
+        { "category": "existence-erasure", "name": "Existence Erasure", "proficiency": "master", "activation": "instant", "negation": true }
+      ]
+    },
+    "resistor_ee_high": {
+      "extends": "baseline",
+      "name": "Existence Erasure Resistance (tinggi, tersumber)",
+      "resistances": [
+        { "category": "existence-erasure", "level": 3, "status": "verified", "confidence": 0.85 }
+      ]
+    },
+    "haxer_bfr": {
+      "extends": "baseline",
+      "name": "BFR Specialist",
+      "abilities": [
+        { "category": "bfr", "name": "Dimensional Banishment", "proficiency": "master", "activation": "instant" }
+      ]
+    },
+    "bfr_novice": {
+      "extends": "baseline",
+      "name": "BFR Novice",
+      "abilities": [
+        { "category": "bfr", "name": "Rift Push", "proficiency": "novice", "activation": "instant" }
+      ]
+    },
+    "bfr_resistor_high": {
+      "extends": "baseline",
+      "name": "BFR Resistance (tinggi, tersumber)",
+      "resistances": [
+        { "category": "bfr", "level": 3, "status": "verified", "confidence": 0.85 }
+      ]
+    },
+    "bfr_resistor_high_unsourced": {
+      "extends": "baseline",
+      "name": "BFR Resistance (tinggi, tanpa bukti tersumber)",
+      "resistances": [
+        { "category": "bfr", "level": 3, "status": "unknown", "confidence": 0.4 }
+      ]
+    },
+    "bfr_novice_vs_high": {
+      "extends": "bfr_resistor_high",
+      "name": "BFR Resistance (untuk pasangan novice)"
+    },
+    "regen_immortal": {
+      "extends": "baseline",
+      "name": "Regenerating Immortal",
+      "abilities": [
+        { "category": "regeneration", "name": "High-Speed Regeneration", "proficiency": "advanced", "activation": "triggered", "offensive": false, "passive": true },
+        { "category": "immortality", "name": "Immortal Body", "proficiency": "advanced", "activation": "triggered", "offensive": false, "passive": true }
+      ]
+    },
+    "regen_negator": {
+      "extends": "baseline",
+      "name": "Regeneration Negator",
+      "abilities": [
+        { "category": "regeneration-negation", "name": "Regeneration Negation", "proficiency": "master", "activation": "instant", "negation": true }
+      ]
+    },
+    "regen_resistor": {
+      "extends": "baseline",
+      "name": "Regeneration Resistance (tersumber)",
+      "resistances": [
+        { "category": "regeneration", "level": 3, "status": "verified", "confidence": 0.85 }
+      ]
+    },
+    "regen_resistor_unsourced": {
+      "extends": "baseline",
+      "name": "Regeneration Resistance (tanpa bukti tersumber)",
+      "resistances": [
+        { "category": "regeneration", "level": 3, "status": "unknown", "confidence": 0.3 }
+      ]
+    },
+    "resistor_warp_strong": {
+      "extends": "baseline",
+      "name": "Reality Warping Resistance (tersumber)",
+      "resistances": [
+        { "category": "reality-warping", "level": 3, "status": "verified", "confidence": 0.85 }
+      ]
+    },
+    "mutual_hax_b": {
+      "extends": "eraser",
+      "name": "Eraser (untuk uji hax mutual)"
+    },
+    "prep_specialist": {
+      "extends": "baseline",
+      "name": "Sealing Specialist (butuh persiapan)",
+      "abilities": [
+        { "category": "sealing", "name": "Grand Seal", "proficiency": "master", "activation": "slow", "prep": true, "range_rank": 6 }
+      ]
+    },
+    "sparse": {
+      "name": "Sparse Data Unit",
+      "tier": { "code": "5-B", "rank": 20 },
+      "metrics": {
+        "attack_potency": 14, "durability": 14, "speed": 10, "experience": null
+      },
+      "data_completeness": "minimal"
+    },
+    "incomplete_unknown_tier": {
+      "extends": "baseline",
+      "name": "Unknown Tier",
+      "tier": { "code": "Unknown", "rank": null, "rankable": false },
+      "statistics": [
+        { "metric": "tier", "raw_text": "Unknown", "qualifier": "unknown", "confidence": 0.2 }
+      ]
+    },
+    "incomplete_missing_durability": {
+      "extends": "baseline",
+      "name": "Durability Tidak Terdokumentasi",
+      "metrics": { "durability": null }
+    },
+    "incomplete_missing_speed": {
+      "extends": "baseline",
+      "name": "Speed Tidak Terdokumentasi",
+      "metrics": { "speed": null }
+    },
+    "partial_missing_combat_speed": {
+      "extends": "baseline",
+      "name": "Combat Speed Tidak Terdokumentasi",
+      "metrics": { "combat_speed": null }
+    },
+    "varies_speed": {
+      "extends": "baseline",
+      "name": "Speed Bervariasi",
+      "statistics": [
+        { "metric": "speed", "raw_text": "Varies", "qualifier": "varies", "confidence": 0.5 }
+      ]
+    },
+    "unknown_speed": {
+      "extends": "baseline",
+      "name": "Speed Tidak Diketahui",
+      "statistics": [
+        { "metric": "speed", "raw_text": "Unknown", "qualifier": "unknown", "confidence": 0.3 }
+      ]
+    },
+    "possibly_tier": {
+      "extends": "baseline",
+      "name": "Tier Possibly",
+      "statistics": [
+        { "metric": "tier", "raw_text": "Possibly 5-B", "qualifier": "possibly", "confidence": 0.6 }
+      ]
+    },
+    "mftl_nonphysical": {
+      "extends": "baseline",
+      "name": "Speed MFTL (rezim non-fisik)",
+      "metrics": { "speed": 17 },
+      "nonphysical_metrics": ["speed"]
+    }
+  }
+}

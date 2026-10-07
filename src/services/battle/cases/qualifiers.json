@@ -1,0 +1,97 @@
+{
+  "category": "qualifiers",
+  "prd_ref": "PRD §12.3 (qualifier), §13.3, §17.3 (confidence)",
+  "cases": [
+    {
+      "id": "qualifiers-01-varies-dikeluarkan",
+      "category": "qualifiers",
+      "title": "Speed 'varies' → metrik dikeluarkan dari skoring, bukan ditebak",
+      "side_a": "varies_speed",
+      "side_b": "baseline",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "winner": "draw",
+        "limitations_include": ["varies_metric:speed:a"],
+        "score_a_value": { "speed": { "value": 0.0, "tol": 0.0001 } },
+        "no_decisive_edges": true,
+        "assertion": "PRD §13.3: nilai yang bervariasi tidak dibandingkan (lihat catatan keterbatasan skema)"
+      }
+    },
+    {
+      "id": "qualifiers-02-possibly-meredam-selisih",
+      "category": "qualifiers",
+      "title": "Tier 'possibly' → selisih diredam 50%",
+      "side_a": "possibly_tier",
+      "side_b": "near_peer",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "score_a_value": { "tier": { "value": -0.125, "tol": 0.001 } },
+        "limitations_empty": true,
+        "assertion": "(20−22)/8 = −0,25 lalu ×0,5 = −0,125; tanpa kualifikasi nilainya −0,25"
+      }
+    },
+    {
+      "id": "qualifiers-03-unknown-dikeluarkan",
+      "category": "qualifiers",
+      "title": "Speed 'unknown' → metrik dikeluarkan dan dicatat",
+      "side_a": "unknown_speed",
+      "side_b": "baseline",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "winner": "draw",
+        "limitations_include": ["unknown_metric:speed:a"],
+        "score_a_value": { "speed": { "value": 0.0, "tol": 0.0001 } },
+        "assertion": "'Tidak diketahui' tidak diperlakukan sama dengan nol"
+      }
+    },
+    {
+      "id": "qualifiers-04-rezim-non-fisik",
+      "category": "qualifiers",
+      "title": "Speed MFTL (non-fisik) → selisih diredam 50% dan dicatat sebagai asumsi",
+      "side_a": "mftl_nonphysical",
+      "side_b": "baseline",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "winner": "a",
+        "probability_a": [0.5, 0.55],
+        "score_a_value": { "speed": { "value": 0.35, "tol": 0.001 } },
+        "assumptions_include": ["nonphysical_metric:speed"],
+        "assertion": "(17−10)/10 = 0,7 lalu ×0,5 = 0,35 karena rezim FTL tidak dibandingkan secara energi"
+      }
+    },
+    {
+      "id": "qualifiers-05-keyakinan-rendah",
+      "category": "qualifiers",
+      "title": "Data minim (9 metrik skoring kosong) → banner data terbatas",
+      "side_a": "sparse",
+      "side_b": "baseline",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "winner": "draw",
+        "low_confidence": true,
+        "confidence": { "min": 0.25, "max": 0.3 },
+        "limitations_include": [
+          "missing_metric:striking_strength:a",
+          "missing_metric:reaction_speed:a",
+          "missing_metric:range:a",
+          "missing_metric:battle_iq:a"
+        ],
+        "assertion": "BC-2: keyakinan < 0,45 harus memunculkan peringatan, bukan kesimpulan tegas"
+      }
+    },
+    {
+      "id": "qualifiers-06-resistensi-terdokumentasi-vs-tidak",
+      "category": "qualifiers",
+      "title": "Asumsi membedakan 'tidak ada resistensi terdokumentasi' dari sisi yang punya resistensi",
+      "side_a": "resistor_time_strong",
+      "side_b": "baseline",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "assumptions_include": ["no_documented_resistances:b", "no_documented_abilities:a"],
+        "assumptions_exclude": ["no_documented_resistances:a"],
+        "limitations_empty": true,
+        "assertion": "Sisi tanpa catatan resistensi ditandai eksplisit, tidak dianggap kebal"
+      }
+    }
+  ]
+}

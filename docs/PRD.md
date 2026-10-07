@@ -477,8 +477,8 @@ Qualifier adalah modifier pada klaim, bukan bagian dari tier.
 | `up_to` | batas atas | `effective_rank = rank` ; gap dihitung ke atas tapi dibatasi `+2 rank` |
 | `higher_with` | naik bila kondisi tertentu (mis. equipment/form tambahan) | dihitung sebagai *conditional edge*, hanya aktif bila kondisi terpenuhi (criteria match) |
 | `far_higher_with` | seperti di atas dengan magnitudo lebih besar | conditional edge dengan bobot 1,5× |
-| `varies` | nilai tidak tetap | `is_rankable = false` untuk metrik itu → engine pakai skenario "best case" dan "typical case" terpisah |
-| `unknown` | tidak diketahui | metrik di-exclude dari skoring; `data_completeness` turun; hasil diberi flag keterbatasan |
+| `varies` | nilai tidak tetap | **MVP:** metrik dikeluarkan dari skoring, ditulis di `limitations[]` sebagai `varies_metric:<metric>:<side>`, dan `confidence` diturunkan (0,30). Menampilkan dua skenario (typical/best-case) **belum** diimplementasikan karena memerlukan kolom tambahan `best_case_scale_id`/`typical_scale_id` pada `statistics`; tanpa data itu, dua skenario hanya akan menjadi tebakan. Dicatat sebagai penyempurnaan Phase 2 |
+| `unknown` | tidak diketahui | metrik dikeluarkan dari skoring (`unknown_metric:<metric>:<side>`); `data_completeness` turun; hasil diberi flag keterbatasan |
 
 ### 12.4 Aturan penegakan
 
@@ -683,7 +683,10 @@ LAYER 0  Gate kelayakan
 LAYER 1  Dominasi mutlak (Absolute Dominance Gate)
          Δrank ≥ 8 pada tier DAN Δrank ≥ 6 pada durability DAN
          tidak ada resistance relevan di sisi yang tertinggal
-         → pemenang ditetapkan, probability ≥ 0,95, difficulty = Extreme
+         → pemenang ditetapkan, probability ≥ 0,95, difficulty = low
+         (mismatch-nya ekstrem, tetapi KESULITAN bagi pemenang justru minimal —
+          konsisten dengan pemetaan Layer 5; "extreme" pada kesempatan ini akan
+          bertabrakan dengan arti difficulty di Layer 5)
          (dilewati bila hax decisive milik pihak tertinggal ada)
 
 LAYER 2  Decisive Edge (hax & win condition)
@@ -734,32 +737,52 @@ LAYER 7  Persist & cache
 | `battlefield` | Efek lingkungan terbatas pada flag netral/tertutup/terbuka (5 arena default) | Menghindari arena spesifik tak terverifikasi |
 | `knowledge_level` | `full` menaikkan efektivitas counter 1,25×; `none` menurunkan 0,8× | Pengetahuan memengaruhi pemilihan strategi |
 | `prep_time` | `extended` memberi bonus conditional-edge pada ability ber-`prep_requirement` | Menghargai persiapan |
-| `win_condition` | Memfilter hax yang relevan (mis. `bfr` menerima teleport/sealing, `ko` menolak instakill-soul) | Win condition adalah konteks penentu |
+| `win_condition` | Memfilter hax yang relevan. `win_condition_map` pada rule set memetakan kategori ability → **daftar setting win condition** yang dapat dipenuhinya; ability hanya menjadi *decisive* bila setting pertarungan ada di daftar itu. Contoh: `bfr` → `[bfr, any]`, sehingga BFR tidak decisive pada setting `death`; kategori utilitas (`teleportation`, `regeneration`) dipetakan ke `[]` dan tidak pernah menjadi jalur kemenangan. **Dapat diubah admin tanpa deploy** | Win condition adalah konteks penentu |
 
 ### 16.5 Kontrak keluaran
 
 ```ts
 type BattleResult = {
-  battle_id: string;
+  battle_id: string;                            // diturunkan dari input_hash, bukan random
+  input_hash: string;                           // SHA-256 bentuk kanonik input (kunci cache)
+  engine_version: string;
+  rule_set_version: string;
   winner: "a" | "b" | "draw" | "insufficient_data";
-  win_probability: { a: number; b: number };   // jumlah 1,00
+  win_probability: { a: number; b: number };    // jumlah 1,00
   confidence: number;                           // 0..1 sudah termasuk penalti data
+  low_confidence: boolean;                      // true bila < threshold banner (§17.3 BC-2)
   difficulty: "low" | "mid" | "high" | "extreme";
   battle_length: "short" | "medium" | "long";
   decisive_edges: DecisiveEdge[];
+  ability_outcomes: AbilityOutcome[];           // hasil rule engine hax: blocked/reduced/applied/unresisted
   score_breakdown: ScoreContribution[];         // per metrik: nilai a_i, bobot, kontribusi
+  weighted_score: number;                       // S setelah normalisasi bobot
+  dominance: DominanceResult;                   // hasil Layer 1 + alasan bila tidak diterapkan
+  coverage: { a: number; b: number };           // rasio cakupan resistensi vs ability ofensif lawan
   primary_reason: string;
   secondary_factors: string[];
   critical_counter: string;
   potential_scenario: string;                   // template deterministik
-  limitations: string[];                        // metrik missing/varies/unknown
+  reasoning: { primary; secondary; critical_counter; scenario };  // versi ber-rujukan (AC-34)
+  limitations: string[];
   assumptions: string[];
-  engine_version: string;
-  rule_set_version: string;
-  input_hash: string;
   disclaimer: string;                           // teks wajib §18.4
 };
 ```
+
+**Konvensi kode `limitations[]` — hanya tiga keluarga ini yang diimplementasikan** (semuanya berakhiran `:<a|b>` sehingga UI dapat menandai sisi mana yang bermasalah):
+
+| Pola | Arti | Sumber kode |
+|---|---|---|
+| `missing_metric:<metrik>:<a\|b>` | metrik tidak terdokumentasi pada sisi tersebut | `gates.ts` (metrik wajib) & `metrics.ts` (metrik skoring) |
+| `unknown_metric:<metrik>:<a\|b>` | metrik bernilai `unknown` → tidak dapat dibandingkan | `gates.ts` & `qualifiers.ts` |
+| `varies_metric:<metrik>:<a\|b>` | metrik bernilai `varies` → dikeluarkan dari skoring | `qualifiers.ts` |
+
+**Yang belum dijadikan kode — dan sengaja tidak saya tulis seolah ada:** kualifikasi lemah (`possibly`, `at least`, …) dan konflik antar sumber **tidak** muncul sebagai entri `limitations[]`. Keduanya sudah memengaruhi hasil lewat jalur lain: kualifikasi lewat penalti `qualifier_penalty` (§17.3), konflik lewat penalti `per_unresolved_conflict` pada `confidence`. Menambah kode `qualifier:*`/`conflict:*` ke `limitations[]` adalah pekerjaan Sprint 3–4 (dibutuhkan saat UI admin menampilkan alasan keyakinan rendah per sisi); sampai itu ada, klaim di dokumen ini dibatasi pada tiga keluarga di atas.
+
+**Placeholder saat `winner = "insufficient_data"`.** Kolom DB bersifat `NOT NULL`, jadi hasil tanpa pemenang tetap mengisi field: `difficulty = "extreme"`, `battle_length = "short"`, `decisive_edges = []`, `score_breakdown = []`, `weighted_score = 0`, `coverage = {a:0,b:0}`, `confidence = confidence.floor`, `low_confidence = true`, dan `assumptions` memuat penanda `insufficient_data_placeholder_fields`.
+
+**Aturan UI yang mengikat (bukan saran):** bila `assumptions` memuat `insufficient_data_placeholder_fields`, UI **wajib** menampilkan status "data tidak memadai" beserta daftar field yang hilang, dan **wajib tidak** menampilkan `difficulty`/`battle_length`/`weighted_score` sebagai temuan analisis. Tanpa aturan ini, `difficulty="extreme"` pada hasil tanpa pemenang akan terbaca pengguna sebagai "pertarungan sangat sulit", padahal artinya "tidak ada simulasi yang dijalankan". Kasus `incomplete-01`…`incomplete-03` mengunci perilaku ini.
 
 ---
 
@@ -791,16 +814,35 @@ type BattleResult = {
 ### 17.3 Kalibrasi probabilitas
 
 ```
-S        = Σ (w_i × a_i) / 100                    ∈ [−1, 1]
-p_raw    = 1 / (1 + e^(−k·S)),  k = 2.2           → memberi ~0,71 pada S = 0,4
-p_final  = p_raw
-         ⊕ decisive edge tunggal  → max(p, 0.90)
-         ⊕ mutual decisive        → clamp(p, 0.35, 0.65)
-         ⊕ qualifier penalty      → p ← p + (0.5 − p) × 0.20
-         ⊕ data gap               → p ← p + (0.5 − p) × gap_ratio
-confidence = base(1.0) − 0.08·ability_missing − 0.10·stat_missing
-           − 0.05·qualifier_heavy − 0.10·conflict_unresolved   (floor 0.25)
+S        = Σ (w_i × a_i) / 100                    ∈ [−1, 1]   // bobot berjumlah 100
+p₀       = 1 / (1 + e^(−k·S)),  k = 2.2           // memberi ~0,71 pada S = 0,4
+
+// (a) lantai/lis atas decisive edge — MENANG atas penarikan kalibrasi berikutnya
+both decisive  → p ← clamp(p₀, 0.35, 0.65)        // mutual: hasil tidak boleh tegas
+A decisive     → p ← max(p₀, 0.90)
+B decisive     → p ← min(p₀, 0.10)
+
+// (b) penarikan ke 0,5 karena bukti lemah — besarnya = penalti kualifikasi TERBESAR
+//     di antara kedua sisi, dibatasi 0,20 (bukan rata-rata, bukan penjumlahan)
+pull = min(0.20, max(qualifier_penalty[q] untuk seluruh stat ber-status current))
+p ← p + (0.5 − p) × pull
+
+// (c) penarikan karena data hilang
+p ← p + (0.5 − p) × gap_ratio
+
+// (d) lantai decisive edge dipulihkan: penarikan TIDAK boleh membatalkan (a)
+p ← max(p, 0.90) bila lantai ≥ 0.5, else min(p, 0.10)
+p ← clamp(p, 0.02, 0.98)
+
+confidence = 1,00 − 0,08·(metrik_skoring_hilang_A + metrik_skoring_hilang_B)
+                    − 0,05·sisi_tanpa_data_ability
+                    − 0,05·sisi_dengan_≥3_kualifikasi_lemah
+                    − 0,10·konflik_belum_terselesaikan     (floor 0.25)
 ```
+
+**Catatan penting soal `qualifier_penalty`:** tabel penalti bertipe per-kualifikasi (`possibly: 0.25`, `varies: 0.30`, `unknown: 0.40`, `at_least/at_most/up_to/higher_with: 0.10`, `likely: 0.15`, `exact: 0`). Yang dipakai engine adalah **nilai terbesar**, bukan akumulasi — alasannya, sepuluh klaim `possibly` tidak membuat model sepuluh kali lebih ragu dibanding satu klaim `possibly`; keraguan dibatasi oleh kualifikasi terlemah yang ada di meja. Batas 0,20 mencegah satu kualifikasi `varies` melemparkan hasil ke 0,50 dan meniadakan seluruh perhitungan statistik.
+
+**Catatan soal `confidence`:** hanya metrik yang **ikut menskor** yang dihitung hilang. Metrik `varies`/`unknown` yang memang sengaja dikeluarkan tidak dihukum dua kali (sekali dikeluarkan dari skor, sekali menurunkan keyakinan) — penalti untuk kasus itu datang dari jalur `qualifier_penalty`, bukan dari `per_missing_metric`.
 
 **Aturan BC-1:** `p` **bukan** probabilitas statistik dunia nyata; ini skor keyakinan model pada asumsi dan kondisi yang dipilih. Ditampilkan sebagai "Estimated Win Probability" dan selalu disertai `confidence` dan `disclaimer`.
 **Aturan BC-2:** bila `confidence < 0.45`, hasil ditampilkan dengan banner "Data terbatas — hasil indikatif" dan pemenang **tidak** dinyatakan sebagai kesimpulan tegas.
@@ -1651,12 +1693,14 @@ Semua AC diverifikasi dengan bukti konkret (test otomatis, query SQL, laporan Li
 
 ### 35.3 Kriteria kualitas simulasi
 
-| AC | Kriteria | Cara verifikasi |
+| AC | Kriteria | Cara verifikasi & status |
 |---|---|---|
-| AC-31 | Case library | ≥ 30 kasus uji bertanda tangan (input → ekspektasi rentang hasil) di `tests/battle/cases/*.json`, mencakup: dominasi tier ekstrem, speed blitz, resistensi memblokir hax, mutual hax, data tidak lengkap, varies, qualifier possibly |
-| AC-32 | Tidak ada hasil mustahil | 0 kasus di mana pihak dengan selisih ≥ 8 rank di tier+durability+speed menang tanpa decisive edge (uji otomatis) |
-| AC-33 | Sensitivitas kondisi | Mengubah `mode` ke `bloodlusted` atau `speed_equalized` mengubah hasil pada ≥ 70% kasus uji yang relevan (menunjukkan kondisi benar-benar berpengaruh) |
-| AC-34 | Traceability reasoning | 100% `primary_reason`/`secondary_factors` dapat dipetakan ke elemen `score_breakdown` atau `decisive_edges` (validator RG-1 lulus) |
+| AC-31 | Case library sebagai data | ≥ 30 kasus uji bertanda tangan (input → ekspektasi rentang hasil) di `src/services/battle/cases/*.json`, mencakup: dominasi tier ekstrem, speed blitz, mutual hax, **resistensi memblokir hax**, **data tidak lengkap**, `varies`, qualifier `possibly`. **LULUS — 39 kasus / 6 berkas** (`dominance`=6, `speed`=6, `hax`=9, `incomplete`=5, `qualifiers`=6, `conditions`=7) |
+| AC-32 | Tidak ada hasil mustahil | 0 kasus di mana pihak dengan selisih ≥ 8 rank tier (dan ≥ 6 durability) menang tanpa decisive edge. Invarian diperiksa pada **seluruh** 39 kasus, bukan sampel. **LULUS — 0 pelanggaran** |
+| AC-33 | Sensitivitas kondisi | Mengubah `mode` ke `bloodlusted` atau `speed_equalized` mengubah hasil. **LULUS, lebih ketat dari target** — runner menuntut **100%** pasangan kondisi-different menghasilkan hasil berbeda (bukan ≥ 70%): 8 pasangan diperiksa, 1 dikecualikan karena kedua hasil `insufficient_data` (perbedaan kondisi tidak mungkin terlihat saat engine berhenti di gerbang kelayakan) |
+| AC-34 | Traceability reasoning | 100% `primary_reason`/`secondary_factors`/`critical_counter`/`potential_scenario` dapat dipetakan ke elemen `score_breakdown`, `decisive_edges`, atau `condition:*`. **LULUS — RG-1 39/39**. Teks bebas tanpa rujukan akan menggagalkan runner, sehingga AI narrator (§34) tidak dapat menyuntik klaim tak bersumber ke jalur deterministik |
+| AC-35 | Determinisme case library | Runner yang sama dijalankan dua kali menghasilkan 425/425 identik; `input_hash` dan `battle_id` stabil (diturunkan dari bentuk kanonik input, bukan waktu/acak). **LULUS** |
+| AC-36 | Case library tidak dapat "dilonggarkan" | Setiap kasus menyatakan ekspektasinya (`winner`, `probability_a/b`, `difficulty`, `edge_status`, `coverage`, …); runner **menolak** kasus tanpa `expect`, id duplikat, `side_a === side_b`, rujukan sisi yang tidak ada di `roster.json`, dan kategori wajib yang hilang. Guard ini sendiri diuji dengan mutasi ([scripts/mutate-battle-guards.mjs](../scripts/mutate-battle-guards.mjs)): **6/6 mutasi tertangkap, dan tiap penolakan harus menyebut alasan yang tepat** — bukan sekadar "ada yang gagal". **LULUS** |
 
 ---
 
@@ -1816,7 +1860,11 @@ anime-vs-battle/
 │  │  │  ├─ difficulty.ts
 │  │  │  ├─ reasoning.ts                # template deterministik + validator RG-1
 │  │  │  ├─ rule-set.ts                 # load & validasi battle_rule_sets
-│  │  │  └─ __tests__/ + cases/*.json   # AC-31 case library
+│  │  │  ├─ stable-json.ts              # bentuk kanonik input_hash (kunci cache)
+│  │  │  ├─ types.ts                    # kontrak tipe; tanpa nilai runtime
+│  │  │  ├─ index.ts                    # barrel publik engine
+│  │  │  ├─ fixtures/rule-set.default.json   # cermin docs/seed.sql (uji drift otomatis)
+│  │  │  └─ cases/*.json                # AC-31 case library: 39 kasus / 6 berkas
 │  │  ├─ ingestion/                     # TIDAK boleh diimpor jalur request (AC-25)
 │  │  │  ├─ pipeline.ts                 # orchestrator 7 tahap
 │  │  │  ├─ queue.ts                    # enqueue/claim/resume, backoff
@@ -1831,7 +1879,7 @@ anime-vs-battle/
 │  │  │  ├─ normalize.ts · validate.ts · dedupe.ts · resolve.ts · upsert.ts
 │  │  │  └─ __tests__/
 │  │  ├─ search-index.ts                # search_vector, MV refresh
-│  │  └─ cache.ts                        # key builders + invalidation
+│  │  └─ cache.ts                       # key builders + invalidation
 │  ├─ lib/
 │  │  ├─ db/{client.ts,types.ts}        # generated types
 │  │  ├─ supabase/{server.ts,client.ts,admin.ts}
@@ -1844,11 +1892,26 @@ anime-vs-battle/
 │  ├─ migrations/                       # SQL versioned (DDL, index, trigger, RLS, MV)
 │  ├─ seed.sql                          # tiers, stat scales, ability categories, rule set
 │  └─ functions/                        # RPC: search_hybrid, character_detail, battle_cache_get
+├─ tools/                                # [ada] konfigurasi yang menegakkan arsitektur
+│  ├─ architecture/
+│  │  ├─ zones.mjs                      # definisi zona — sumber kebenaran lint batas
+│  │  ├─ large-tables.mjs               # klasifikasi besar/kecil + alasan, lengkap atas schema
+│  │  ├─ eslint-rules.mjs               # perakit aturan per zona (dipakai config & pemeriksa)
+│  │  └─ glob.mjs                       # satu matcher untuk config dan invarian cakupan
+│  └─ eslint-plugin-architecture/
+│     ├─ rules/{engine-purity,boundary-import,no-select-star}.mjs
+│     └─ __tests__/rules.test.mjs       # uji unit + regresi bug yang ditemukan
 ├─ tests/
-│  ├─ battle/                           # unit + case library
+│  ├─ architecture/fixtures/            # [ada] fixture melanggar/bersih + expected.mjs & probe zona
+│  ├─ battle/                           # unit + integrasi engine
 │  ├─ ingestion/                        # idempotency, resume, rate limit, robots
 │  └─ e2e/                              # Playwright: search → battle → share
 ├─ scripts/
+│  ├─ validate-schema.mjs               # [ada] eksekusi schema+seed di PostgreSQL, 56 uji
+│  ├─ run-battle-cases.mjs              # [ada] runner AC-31..34, 425 pemeriksaan
+│  ├─ mutate-battle-guards.mjs          # [ada] uji mutasi guard AC-36 (6 mutasi)
+│  ├─ check-architecture.mjs            # [ada] fixture + false-positive + 4 invarian, 38 pemeriksaan
+│  ├─ refresh-mv.sql                    # [ada] REFRESH MV CONCURRENTLY untuk cron
 │  ├─ seed-bench-10k.ts · seed-bench-100k.ts
 │  ├─ bench-queries.sql · explain-check.ts
 │  └─ import-dataset.ts
@@ -1860,13 +1923,35 @@ anime-vs-battle/
 
 **Aturan arsitektur yang ditegakkan tooling**
 
-| Aturan | Alasan | Penegakan |
+| Aturan | Alasan | Penegakan | Status |
+|---|---|---|---|
+| `services/battle/*` bebas I/O (fungsi murni) | Kemudahan uji & determinisme | Plugin internal `architecture/engine-purity` | **Terpasang** |
+| `services/ingestion/*` tidak boleh diimpor dari jalur request | AC-25 | Zona + plugin internal `architecture/boundary-import` | **Terpasang** |
+| Tidak ada `select *` pada tabel besar | Performa | Plugin internal `architecture/no-select-star` + klasifikasi tabel di `tools/architecture/large-tables.mjs` | **Terpasang** |
+| Tidak ada query SQL langsung di komponen | Menjaga satu jalur data & indexing | Belum otomatis; dijaga review. Baru bermakna saat `src/components/**` berisi komponen nyata | **Belum** |
+| Semua halaman publik mengekspor metadata | SEO | Test otomatis (AC-11) | **Belum** (Sprint 1) |
+
+### 39.1 Model zona
+
+Lint batas dibangun di atas enam zona yang didefinisikan sekali di `tools/architecture/zones.mjs`. Zona adalah **satu-satunya** sumber kebenaran: `eslint.config.mjs` merakit konfigurasinya, dan `scripts/check-architecture.mjs` memverifikasi cakupannya.
+
+| Zona | Jalur | Aturan yang berlaku |
 |---|---|---|
-| `services/battle/*` bebas I/O (fungsi murni) | Kemudahan uji & determinisme | ESLint `no-restricted-imports` |
-| `services/ingestion/*` tidak boleh diimpor dari `app/**`/`features/**` | AC-25 | `eslint-plugin-boundaries` |
-| Tidak ada query SQL langsung di komponen | Menjaga satu jalur data & indexing | Rule lint + review |
-| Tidak ada `select *` pada tabel besar | Performa | Rule lint |
-| Semua halaman publik mengekspor metadata | SEO | Test otomatis (AC-11) |
+| `engine` | `src/services/battle/**` | Murni: hanya impor relatif **di dalam zonanya** + `node:crypto.createHash`. Global `Date`/`process`/`console`/`fetch` dan anggota non-deterministik (`Math.random`, `randomUUID`) dilarang |
+| `node-runtime` | `src/lib/**`, `src/services/queue/**` | Wajib impor relatif ber-ekstensi `.ts` (dimuat Node dengan type stripping); dilarang mencapai ingestion |
+| `ingestion-worker` | `worker/**`, `src/services/ingestion/**` | Wajib relatif; **diizinkan** memuat ingestion |
+| `web-request` | `app/**` (kecuali cron), `src/features/**`, `src/components/**` | Dilarang mencapai ingestion (AC-25) |
+| `scheduled-worker` | `app/api/cron/**` | Diizinkan mengerjakan antrian (dipicu penjadwal, bukan pengguna) |
+
+**Kenapa plugin sendiri, bukan `eslint-plugin-boundaries`.** Tiga aturan yang dibutuhkan tidak semuanya berbentuk "zona A tidak boleh impor zona B":
+
+1. `engine-purity` harus mengawasi *cara* memakai modul yang sebagian murni. `node:crypto` misalnya: `createHash` murni dan justru dibutuhkan engine, sementara `randomUUID` tidak. Melarang seluruh modul akan menghukum kode yang benar — dan aturan yang menghukum kode yang benar cepat dimatikan orang lewat `eslint-disable`.
+2. `no-select-star` bekerja pada isi string SQL dan rantai pemanggilan; itu bukan aturan impor sama sekali.
+3. `boundary-import` memang aturan impor, tetapi harus berbagi sumber kebenaran zona dengan dua aturan lain — dan plugin pihak ketiga tidak menyediakan itu.
+
+**"Tabel besar" didefinisikan sebagai data, bukan sebagai tebakan.** `tools/architecture/large-tables.mjs` mengklasifikasikan **setiap** tabel di `docs/schema.sql` sebagai besar atau kecil, masing-masing dengan alasannya. Klasifikasi yang tidak lengkap menggagalkan pemeriksaan, sehingga tabel baru tidak dapat lolos tanpa keputusan sadar. Kriterianya: `select *` dapat menarik ratusan ribu baris (per fakta/form/trafik), atau memuat kolom berat/jsonb.
+
+**Bukti bahwa aturannya menggigit.** `npm run check:architecture` menjalankan tiga hal yang tidak dapat dijawab lint biasa: (a) fixture yang sengaja melanggar harus tertangkap **dengan rule id dan jumlah yang tepat** — kurang maupun lebih sama-sama gagal; (b) kode produksi nyata harus **nol pelanggaran** (uji false-positive); (c) empat invarian: cakupan zona, jalur impor ingestion (diperiksa langsung dari teks kode, bukan lewat lint yang sedang diuji), kelengkapan klasifikasi tabel, dan kesamaan daftar enum di route dengan tipe engine.
 
 ---
 
@@ -1878,7 +1963,7 @@ Asumsi kapasitas: 1–2 full-stack engineer + 1 data curator part-time. Durasi d
 
 | Deliverable | Detail |
 |---|---|
-| Repo & CI | Next.js + TS strict + Tailwind; lint/typecheck/unit/Lighthouse pipeline |
+| Repo & CI | Next.js (App Router) + TS strict + Tailwind; lint/typecheck/unit/Lighthouse pipeline. Lint batas arsitektur (§39.1) termasuk di sini karena dibangun sebelum kode yang harus dijaganya |
 | Skema & migrasi | `schema.sql` dijalankan via migrasi versioned; seed tier/stat scale/kategori ability |
 | Auth & role | Supabase Auth; `user_roles`; guard `/admin` |
 | Design token | Palet dark, tipografi, spacing, komponen badge tier & stat card |

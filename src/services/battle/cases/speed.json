@@ -1,0 +1,95 @@
+{
+  "category": "speed",
+  "prd_ref": "PRD §16.4 (mode & kondisi), §17.1 (normalisasi metrik)",
+  "cases": [
+    {
+      "id": "speed-01-blitz-selisih-kecepatan",
+      "category": "speed",
+      "title": "Statistik setara, selisih kecepatan 8 rank → pihak cepat unggul",
+      "side_a": "speedster",
+      "side_b": "baseline",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "winner": "a",
+        "probability_a": [0.55, 0.62],
+        "score_a_value": { "speed": { "value": 0.8, "tol": 0.001 } },
+        "primary_reason_refs_include": ["metric:speed"],
+        "assertion": "S = 0,096 (speed) + 0,0125 (reaction) + 0,01875 (combat) + 0,03 (battle IQ) = 0,157 → p = 0,586; keunggulan kecepatan nyata tetapi tidak otomatis menang"
+      }
+    },
+    {
+      "id": "speed-02-kecepatan-disetarakan",
+      "category": "speed",
+      "title": "Mode equal_speed menetralkan keunggulan kecepatan",
+      "side_a": "speedster",
+      "side_b": "baseline",
+      "conditions": { "win_condition": "incapacitation", "speed_equalized": true },
+      "expect": {
+        "winner": "a",
+        "probability_a": [0.5, 0.56],
+        "score_a_value": { "speed": { "value": 0.0, "tol": 0.0001 } },
+        "assertion": "Kecepatan dinolkan, kecepatan reaksi/aksi dihitung separuh → hasil mendekati 0,5"
+      }
+    },
+    {
+      "id": "speed-03-cepat-vs-lebih-tahan",
+      "category": "speed",
+      "title": "Cepat tetapi durability lebih rendah + stamina lebih rendah",
+      "side_a": "speedster",
+      "side_b": "slow_tank",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "winner": "a",
+        "difficulty": ["extreme"],
+        "score_a_value": { "durability": { "value": -0.2, "tol": 0.001 } },
+        "assertion": "Durability lawan yang lebih tinggi masuk sebagai kontribusi negatif, bukan diabaikan"
+      }
+    },
+    {
+      "id": "speed-04-aktivasi-lambat-kalah-cepat",
+      "category": "speed",
+      "title": "Time stop dengan aktivasi lambat vs lawan jauh lebih cepat → ability tidak aktif",
+      "side_a": "haxer_timestop_slow",
+      "side_b": "speedster",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "winner": "b",
+        "edge_status": { "time-manipulation": "inactive" },
+        "edge_inactive_reason": { "time-manipulation": "too_slow_against_speed_gap" },
+        "no_decisive_edges": true,
+        "assertion": "Selisih kecepatan ≥ speed_delta mencegah aktivasi ability non-instan (PRD §16.3 Layer 2a)"
+      }
+    },
+    {
+      "id": "speed-05-hax-instan-tetap-menang",
+      "category": "speed",
+      "title": "Hax instan tetap berjalan meski lawan jauh lebih cepat",
+      "side_a": "speedster",
+      "side_b": "haxer_timestop",
+      "conditions": { "win_condition": "incapacitation" },
+      "expect": {
+        "winner": "b",
+        "probability_b": [0.9, 1.0],
+        "decisive_edges": { "count_min": 1, "side": "b" },
+        "edge_status": { "time-manipulation": "effective" },
+        "assertion": "Aktivasi instan tidak terkena penalti selisih kecepatan"
+      }
+    },
+    {
+      "id": "speed-06-sama-persis",
+      "category": "speed",
+      "title": "Dua sisi identik → seri, bukan kemenangan acak",
+      "side_a": "baseline",
+      "side_b": "baseline_twin",
+      "conditions": { "win_condition": "incapacitation", "speed_equalized": true },
+      "expect": {
+        "winner": "draw",
+        "probability_a": [0.49, 0.51],
+        "difficulty": ["extreme"],
+        "no_decisive_edges": true,
+        "score_a_value": { "tier": { "value": 0.0, "tol": 0.0001 } },
+        "assertion": "Semua kontribusi nol → p = 0,5 → draw (PRD BC-3)"
+      }
+    }
+  ]
+}
