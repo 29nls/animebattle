@@ -1,0 +1,13 @@
+{
+  "name": "anime-vs-battle-docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PRD, arsitektur, dan skema database untuk Anime VS Battle. Repo ini belum berisi aplikasi.",
+  "scripts": {
+    "validate:schema": "node scripts/validate-schema.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.3.0"
+  }
+}
