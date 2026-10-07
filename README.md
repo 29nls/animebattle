@@ -46,26 +46,31 @@ Repo ini berisi **dokumentasi perencanaan plus tiga bagian yang sudah benar-bena
 | [src/services/battle/fixtures/rule-set.default.json](src/services/battle/fixtures/rule-set.default.json) | Cermin rule set dari [docs/seed.sql](docs/seed.sql); uji drift otomatis menjaga keduanya identik | 156 |
 | [scripts/run-battle-cases.mjs](scripts/run-battle-cases.mjs) | Runner: mengeksekusi seluruh kasus, memeriksa harapan, determinisme, RG-1, invarian AC-32, sensitivitas AC-33 | 471 |
 | [scripts/mutate-battle-guards.mjs](scripts/mutate-battle-guards.mjs) | Uji mutasi guard: membuktikan runner menolak library rusak, dengan alasan yang spesifik | 162 |
+| [tests/battle-engine/](tests/battle-engine/) | **213 unit test** per modul: normalisasi metrik, gate, rule engine hax, scoring, kalibrasi, reasoning/RG-1, plus determinisme dan kemurnian | 2.780 |
 
 Aturan penting yang membuat library ini berguna: **kasus adalah data, engine tidak tahu kasus mana yang ada.** Menambah cakupan berarti menambah JSON, bukan menambah `if` di engine. Setiap kasus menyatakan `expect` (pemenang, rentang probabilitas, difficulty, decisive edges, limitations) — runner menolak kasus tanpa harapan, id duplikat, `side_a === side_b`, atau rujukan fixture yang tidak ada di `roster.json`.
 
+Pembagian tugas antara keduanya disengaja. Case library menjawab *"apakah engine masih menghasilkan jawaban yang diharapkan untuk 39 situasi nyata?"* — gambaran luas, data-driven, dan menangkap regresi lintas lapis. Unit test menjawab *"apakah modul ini masih berperilaku persis seperti kontraknya?"* — sempit, terisolasi, dan memakai angka eksak. Fixture unit test ditulis dalam TypeScript, sehingga `npm run typecheck` menolak fixture yang tidak sah (nama enum salah, field hilang) sebelum satu test pun berjalan; fixture JSON pada case library tidak bisa memberi jaminan itu.
+
 ## Verifikasi
 
-Skema **diekskusi sungguhan** (PostgreSQL 16 via PGlite) — bukan hanya dibaca. 49 pengujian lulus, mencakup: 37 tabel + 3 MV (sesuai klaim PRD §22), setiap MV punya unique index (syarat `REFRESH CONCURRENTLY`), RLS di setiap tabel, Σbobot rule set = 100, satu form default per karakter, riwayat statistik (`superseded` bukan ditimpa), penolakan fakta tanpa `source_id`, artwork tanpa lisensi, label resistensi tidak konsisten, `absolute` tanpa bukti, toleransi typo pencarian, alias kanji/hangul, idempotensi staging, dan invarian probabilitas hasil battle.
+Skema **dieksekusi sungguhan** (PostgreSQL 16 via PGlite) — bukan hanya dibaca. 56 pengujian lulus, mencakup: 37 tabel + 3 MV (sesuai klaim PRD §22), setiap MV punya unique index (syarat `REFRESH CONCURRENTLY`), RLS di setiap tabel, Σbobot rule set = 100, satu form default per karakter, riwayat statistik (`superseded` bukan ditimpa), penolakan fakta tanpa `source_id`, artwork tanpa lisensi, label resistensi tidak konsisten, `absolute` tanpa bukti, toleransi typo pencarian, alias kanji/hangul, idempotensi staging, dan invarian probabilitas hasil battle.
 
 ```bash
 npm install
 npm run typecheck              # TS strict: engine, app/, src/, worker/
 npm run lint                   # ESLint: lint batas arsitektur
 npm run check:architecture     # fixture + false-positive + 4 invarian batas
+npm run test:engine            # 213 unit test engine per modul (tanpa database)
 npm run test:lint-rules        # uji unit aturan lint (RuleTester)
+npm test                        # keduanya sekaligus
 npm run validate:schema        # skema + seed, keluar 1 bila ada uji gagal
 npm run validate:battle-cases  # engine + case library
 npm run check:battle-guards    # uji mutasi: guard runner benar-benar menolak library rusak
 npm run build                  # Next.js production build
 ```
 
-Keluaran yang diharapkan: `Total: 56 · lulus 56 · gagal 0` dan `Total: 425 · gagal 0`.
+Keluaran yang diharapkan: `Total: 56 · lulus 56 · gagal 0` (skema) dan `Total: 425 · gagal 0` (case library), serta `ℹ tests 213 · ℹ pass 213` (unit test engine).
 
 ### Yang dibuktikan runner engine (bukan diklaim)
 
@@ -78,7 +83,8 @@ Keluaran yang diharapkan: `Total: 56 · lulus 56 · gagal 0` dan `Total: 425 · 
 | Determinisme antar proses | Dua eksekusi terpisah menghasilkan keluaran **identik byte-for-byte** |
 | Mutasi guard runner (AC-36) | 6/6 mutasi tertangkap: id duplikat, tanpa `expect`, `side_a === side_b`, rujukan roster tak dikenal, ekspektasi dibalik, kategori kasus dihapus |
 | Batas arsitektur (38 pemeriksaan) | 22 fixture cocok dengan harapannya (kurang **maupun** lebih sama-sama gagal), 27 berkas produksi nol pelanggaran, 4 invarian: cakupan zona, jalur impor ingestion, kelengkapan klasifikasi 40 tabel/MV, kecocokan daftar enum route↔engine |
-| Uji unit aturan lint | 3/3 suite RuleTester, termasuk tiga kasus regresi bug yang ditemukan saat pemeriksaan pertama |
+| Uji unit engine (per modul) | 213/213 test lulus di 7 berkas; 1 bug produksi ditemukan dan diperbaiki (ambang `difficulty_thresholds.low` terlewat karena representasi biner `0,95 - 0,5`) |
+| Uji unit aturan lint | 3/3 suite RuleTester, termasuk empat kasus regresi bug yang ditemukan saat pemeriksaan (dua di antaranya: bentuk relatif yang lolos penuh, dan specifier bare `postgres` yang salah tuduh saat zona `relativeImportsOnly`) |
 | Jalur HTTP | `next dev` + `curl`: `/api/health` 200, simulasi 200 (`winner=a`, p=0.95 lewat gate dominasi, 14 baris `score_breakdown`), payload tak sah 400, jalur pratinjau 403 di `next start`, admin & cron 503 dengan pesan yang menyebut penyebabnya |
 
 Uji mutasi dijalankan oleh [scripts/mutate-battle-guards.mjs](scripts/mutate-battle-guards.mjs): setiap mutasi diterapkan ke `cases/*.json`, runner dijalankan sebagai proses terpisah, dan hasilnya **harus** non-zero **dengan alasan yang benar** (bukan sekadar ada kegagalan di suatu tempat). Berkas selalu dipulihkan, dan pemulihannya diverifikasi lewat sha256. Script ini juga sudah diuji gagal: bila penolakan yang diharapkan tidak muncul, ia keluar dengan status 1.

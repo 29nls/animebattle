@@ -89,7 +89,17 @@ export default {
     }
 
     function check(node, source) {
-      if (options.relativeImportsOnly === true && !source.startsWith('.')) {
+      // `relativeImportsOnly` menargetkan alias lintasan yang TIDAK dapat
+      // diselesaikan Node saat memuat dengan type stripping — di repo ini
+      // prefix `@/` dari tsconfig `paths`. Specifier BARE (`postgres`) dan
+      // builtin (`node:crypto`) memang diselesaikan Node dari `node_modules` /
+      // builtin, jadi melarangnya berarti menghukum kode yang benar; larangan
+      // yang menghukum kode yang benar pasti dimatikan orang lewat
+      // `eslint-disable` (persis kegagalannya yang didokumentasikan di
+      // `engine-purity.mjs`). Paket ber-scope (`@electric-sql/pglite`) aman
+      // dari detektor ini karena scope-nya tidak pernah kosong: bentuknya
+      // `@scope/name`, bukan `@/name`.
+      if (options.relativeImportsOnly === true && source.startsWith('@/')) {
         context.report({ node, messageId: 'aliasForbidden', data: { zone, source } });
         return;
       }

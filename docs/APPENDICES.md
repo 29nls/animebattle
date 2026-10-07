@@ -340,7 +340,7 @@ flowchart TD
   B -- ya --> C["Load rule set v<br/>weights + constants"]
   C --> D["Normalisasi metrik → a_i ∈ [-1,1]<br/>qualifier penalty · data gap"]
   D --> E["Layer 1 · Absolute Dominance Gate<br/>Δtier ≥ 8 ∧ Δdurability ≥ 6 ∧ no relevant resistance?"]
-  E -- ya --> E1["Winner = A. p ≥ 0.95<br/>difficulty = extreme"]
+  E -- ya --> E1["Winner = sisi dominan. p ≥ 0.95<br/>difficulty = low (bagi pemenang)"]
   E -- tidak --> F["Layer 2 · Hax rule engine<br/>untuk setiap offensive ability:"]
   F --> F1{"Can activate before opponent acts?<br/>activation_speed ∧ range ∧ speed gap ∧ prep/knowledge"}
   F1 -- tidak --> F2["status = inactive · catat alasan"]

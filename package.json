@@ -14,7 +14,9 @@
     "start": "next start",
     "lint": "eslint .",
     "check:architecture": "node scripts/check-architecture.mjs",
-    "test:lint-rules": "node --test tools/eslint-plugin-architecture/__tests__/*.test.mjs"
+    "test:lint-rules": "node --test tools/eslint-plugin-architecture/__tests__/*.test.mjs",
+    "test:engine": "node --test tests/battle-engine/*.test.ts",
+    "test": "npm run test:engine && npm run test:lint-rules"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.3.0",
@@ -30,6 +32,7 @@
   },
   "dependencies": {
     "next": "^16.4.0",
+    "postgres": "^3.4.9",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   }

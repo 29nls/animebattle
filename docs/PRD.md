@@ -471,10 +471,11 @@ Qualifier adalah modifier pada klaim, bukan bagian dari tier.
 
 | Qualifier | Semantik | Efek pada engine |
 |---|---|---|
-| `at_least` | nilai minimum yang terkonfirmasi | `effective_rank = rank` ; `confidence_penalty = 0.10` |
+| `at_least` | nilai minimum yang terkonfirmasi | `confidence_penalty = 0.10` (tidak meredam gap) |
 | `possibly` | kemungkinan, bukti lemah | `confidence_penalty = 0.25` ; gap dianggap setengah |
 | `likely` | kemungkinan kuat | `confidence_penalty = 0.15` ; gap ×0,75 |
-| `up_to` | batas atas | `effective_rank = rank` ; gap dihitung ke atas tapi dibatasi `+2 rank` |
+| `up_to` | batas atas | `confidence_penalty = 0.15` ; gap = selisih terhadap lawan **dibatasi atas `+2 rank`** (rank sisi tersebut dicek `min(rank, rank_lawan + 2)` sebelum normalisasi) — batas 0,10 di §17.3 adalah salah ketik; nilai yang dipakai engine adalah 0,15 (tabel `qualifier_penalty` seed) |
+| `at_most` | batas atas kuantitatif (angka) | `confidence_penalty = 0.10` (tidak meredam gap ordinal) |
 | `higher_with` | naik bila kondisi tertentu (mis. equipment/form tambahan) | dihitung sebagai *conditional edge*, hanya aktif bila kondisi terpenuhi (criteria match) |
 | `far_higher_with` | seperti di atas dengan magnitudo lebih besar | conditional edge dengan bobot 1,5× |
 | `varies` | nilai tidak tetap | **MVP:** metrik dikeluarkan dari skoring, ditulis di `limitations[]` sebagai `varies_metric:<metric>:<side>`, dan `confidence` diturunkan (0,30). Menampilkan dua skenario (typical/best-case) **belum** diimplementasikan karena memerlukan kolom tambahan `best_case_scale_id`/`typical_scale_id` pada `statistics`; tanpa data itu, dua skenario hanya akan menjadi tebakan. Dicatat sebagai penyempurnaan Phase 2 |
@@ -508,8 +509,8 @@ Qualifier adalah modifier pada klaim, bukan bagian dari tier.
 | `intelligence` | ordinal | ladder deskriptif | ✔ 4 |
 | `battle_iq` | ordinal | ladder deskriptif | ✔ 6 |
 | `experience` | ordinal/numerik | tahun aktif | ✔ 3 |
-| `hax_tier_max` | turunan | rank tertinggi ability kategori "offensive hax" | ✔ 10 (bersama rule engine) |
-| `resistance_coverage` | turunan | rasio kategori hax yang ditahan | ✔ 5 |
+| `hax_tier_max` | turunan | tekanan hax efektif hasil rule engine (bukan rank tertinggi) | ✔ 10 (bersama rule engine) |
+| `resistance_coverage` | turunan | rasio kategori ofensif lawan yang ditahan | ✔ 5 |
 | `abilities` | relasional | count + kategori | ✔ 6 |
 
 Total bobot default = **100**.
@@ -623,20 +624,20 @@ character_resistances (character_version_id, resistance_type_id, level, evidence
 | Konsep | Definisi operasional | Alasan |
 |---|---|---|
 | `resistance_level` | Tingkat penahanan pada kategori tertentu untuk form tertentu | Membandingkan kemampuan hax dengan daya tahan lawan |
-| `coverage_ratio` | jumlah kategori dengan level ≥ moderate ÷ jumlah kategori hax yang dimiliki lawan | Proksi "seberapa kebal secara umum" |
+| `coverage_ratio` | jumlah kategori ofensif lawan yang status interaksinya ≠ `effective` aturan/matriks ÷ jumlah kategori ofensif lawan — status `blocked`/`reduced`/`negated` semuanya dihitung "ditahan" | Proksi "seberapa kebal" yang konsisten dengan matriks §15.3. Sisi tanpa resistensi terdokumentasi mencatat `no_documented_resistances:<side>` di `assumptions`, bukan dianggap nol pasrah |
 | `resistance_gap` | `attack_level − resistance_level` per kategori | Menentukan status interaksi (blocked/reduced/effective) |
 | `not_documented` ≠ `none` | Tidak ada data ditampilkan sebagai `Unknown`, **bukan** `none` | Kejujuran data; menghindari hukuman otomatis pada karakter berdata minim |
 
 ### 15.3 Matriks status interaksi (dipakai rule engine)
 
-| attack_level \ resistance_level | none | limited | moderate | high | absolute |
+Status default bila TIDAK ADA aturan `hax_interactions` pasangan ability↔resistensi; aturan data menggantikan sel matriks yang cocok (lihat `resolveResistance` di `hax-engine.ts`).| attack_level \ resistance_level | none | limited | moderate | high | absolute |
 |---|---|---|---|---|---|
 | weak | effective | effective | reduced | blocked | blocked |
 | medium | effective | reduced | reduced | blocked | blocked |
 | strong | effective | effective | reduced | reduced | blocked |
 | absolute/negation | effective | reduced | reduced | blocked | blocked* |
 
-`blocked*` = hanya jika resistance memiliki `level_evidence` yang bersumber; jika tidak, tetap `reduced` dan dicatat sebagai `assumption` dengan penalti confidence 0,2.
+`blocked*` = hanya jika resistance memiliki `level_evidence` yang bersumber; jika tidak, tetap `reduced` dengan multiplier 0,5 dan dicatat sebagai `resistance_evidence_missing:downgraded_to_reduced` (RS-1; penalti sesuai aturan confidence, bukan angka 0,2 tetap).
 
 **Aturan RS-1:** Resistance tanpa sumber **tidak boleh** menghasilkan status `blocked`. Maksimal `reduced`.
 **Aturan RS-2:** Resistance terhadap kategori "Negation" hanya berlaku lintas kategori yang dinyatakan eksplisit pada `hax_interactions` (tidak ada resistensi generik universal).
@@ -754,7 +755,7 @@ type BattleResult = {
   difficulty: "low" | "mid" | "high" | "extreme";
   battle_length: "short" | "medium" | "long";
   decisive_edges: DecisiveEdge[];
-  ability_outcomes: AbilityOutcome[];           // hasil rule engine hax: blocked/reduced/applied/unresisted
+  ability_outcomes: AbilityOutcome[];           // hasil rule engine hax: status ∈ effective/reduced/blocked/negated/bypasses/inactive
   score_breakdown: ScoreContribution[];         // per metrik: nilai a_i, bobot, kontribusi
   weighted_score: number;                       // S setelah normalisasi bobot
   dominance: DominanceResult;                   // hasil Layer 1 + alasan bila tidak diterapkan
@@ -778,9 +779,9 @@ type BattleResult = {
 | `unknown_metric:<metrik>:<a\|b>` | metrik bernilai `unknown` → tidak dapat dibandingkan | `gates.ts` & `qualifiers.ts` |
 | `varies_metric:<metrik>:<a\|b>` | metrik bernilai `varies` → dikeluarkan dari skoring | `qualifiers.ts` |
 
-**Yang belum dijadikan kode — dan sengaja tidak saya tulis seolah ada:** kualifikasi lemah (`possibly`, `at least`, …) dan konflik antar sumber **tidak** muncul sebagai entri `limitations[]`. Keduanya sudah memengaruhi hasil lewat jalur lain: kualifikasi lewat penalti `qualifier_penalty` (§17.3), konflik lewat penalti `per_unresolved_conflict` pada `confidence`. Menambah kode `qualifier:*`/`conflict:*` ke `limitations[]` adalah pekerjaan Sprint 3–4 (dibutuhkan saat UI admin menampilkan alasan keyakinan rendah per sisi); sampai itu ada, klaim di dokumen ini dibatasi pada tiga keluarga di atas.
+**Yang belum dijadikan kode — dan sengaja tidak saya tulis seolah ada:** kualifikasi lemah (`possibly`, `at least`, …) dan konflik antar sumber **tidak** muncul sebagai entri `limitations[]`. Keduanya sudah memengaruhi hasil lewat jalur lain: kualifikasi lewat penalti `qualifier_penalty` (§17.3) dan penghitung kualifikasi berat pada `confidence`, konflik lewat penalti `per_unresolved_conflict` pada `confidence`. Menambah kode `qualifier:*`/`conflict:*` ke `limitations[]` adalah pekerjaan Sprint 3–4 (dibutuhkan saat UI admin menampilkan alasan keyakinan rendah per sisi); sampai itu ada, klaim di dokumen ini dibatasi pada tiga keluarga di atas. Selain itu `assumptions[]` memuat penanda dari cakupan resistensi (`no_documented_resistances:<side>`), ability (`no_documented_abilities:<side>`), dan rezim non-fisik (`nonphysical_metric:<metric>`); penanda `no_documented_resistances:<side>` adalah yang memicu kewajiban UI "no documented resistances" (§8.5).
 
-**Placeholder saat `winner = "insufficient_data"`.** Kolom DB bersifat `NOT NULL`, jadi hasil tanpa pemenang tetap mengisi field: `difficulty = "extreme"`, `battle_length = "short"`, `decisive_edges = []`, `score_breakdown = []`, `weighted_score = 0`, `coverage = {a:0,b:0}`, `confidence = confidence.floor`, `low_confidence = true`, dan `assumptions` memuat penanda `insufficient_data_placeholder_fields`.
+**Placeholder saat `winner = "insufficient_data"`.** Kolom DB bersifat `NOT NULL`, jadi hasil tanpa pemenang tetap mengisi field: `difficulty = "extreme"` (placeholder terdeklarasi — bukan temuan analisis; lihat aturan UI di bawah), `battle_length = "short"`, `decisive_edges = []`, `ability_outcomes = []`, `score_breakdown = []`, `weighted_score = 0`, `coverage = {a:0,b:0}`, `confidence = confidence.floor`, `low_confidence = true`, `win_probability = {a:0.5, b:0.5}`, dan `assumptions` memuat penanda `insufficient_data_placeholder_fields`. Nama-nama ini mengunci perilaku `insufficientResult()` di `engine.ts` dan kasus `incomplete-*` di case library.
 
 **Aturan UI yang mengikat (bukan saran):** bila `assumptions` memuat `insufficient_data_placeholder_fields`, UI **wajib** menampilkan status "data tidak memadai" beserta daftar field yang hilang, dan **wajib tidak** menampilkan `difficulty`/`battle_length`/`weighted_score` sebagai temuan analisis. Tanpa aturan ini, `difficulty="extreme"` pada hasil tanpa pemenang akan terbaca pengguna sebagai "pertarungan sangat sulit", padahal artinya "tidak ada simulasi yang dijalankan". Kasus `incomplete-01`…`incomplete-03` mengunci perilaku ini.
 
@@ -792,10 +793,11 @@ type BattleResult = {
 
 | Tipe metrik | Formula `a_i` |
 |---|---|
-| Ordinal ber-rank (tier, AP, durability, speed, dst.) | `a_i = clamp((rank_A − rank_B) / N_i, −1, 1)` dengan `N_i` = span normalisasi metrik (tier: 8; AP: 10; speed: 10; range: 8; stamina: 2; intelligence: 2; battle IQ: 2) |
-| Turunan (`hax_tier_max`) | `a_i = clamp((haxRankA − haxRankB) / 6, −1, 1)` lalu dikoreksi oleh hasil rule engine (±0,3) |
-| Turunan (`resistance_coverage`) | `a_i = clamp((covA − covB) × 4, −1, 1)` |
-| Numerik berkuantifikasi (`experience_years`) | `a_i = clamp(log10(yA+1)/log10(yB+1) − 1, −1, 1)` |
+| Ordinal ber-rank (tier, AP, durability, speed, dst.) | `a_i = clamp((rank_A − rank_B) / N_i, −1, 1)` dengan `N_i` = span normalisasi per metrik di rule set `normalization_spans` (tier: 8; AP: 10; durability: 10; striking: 10; lifting: 10; speed: 10; reaction: 8; combat: 8; range: 8; stamina: 2; intelligence: 2; battle IQ: 2; experience: 4). Nilai sumber kebenarannya `battle_rule_sets.constants.normalization_spans` — tabel ini hanyalah nilai default dari seed |
+| `hax` (turunan rule engine) | `a_hax = clamp((tekanan_hax_A − tekanan_hax_B) / 4, −1, 1)` — tekanan = Σ efektivitas × bobot kecakapan atas ability ofensif yang tidak inaktif |
+| `resistances` (turunan cakupan) | `a_res = clamp((covA − covB) × 4, −1, 1)` — cakupan = rasio kategori ofensif lawan yang ditahan (status ≠ effective) |
+| `abilities` (turunan katalog) | `a_ab = clamp((jumlah_ability_A − jumlah_ability_B)/6 + (skor_kecakapan_A − skor_kecakapan_B)/12, −1, 1)` — kecakapan: novice 0,5 · intermediate 0,75 · advanced 1 · master 1,25 · godlike 1,5 |
+| Numerik berkuantifikasi (`experience_years`) | `a_i = clamp(log10(yA+1)/log10(yB+1) − 1, −1, 1)`; bila salah satu sisi ≤ 0 tahun nilainya 0 karena rasio tidak bermakna |
 | Missing pada satu sisi | `a_i = 0` + entri `limitations[]` + `data_gap++` |
 
 ### 17.2 Bobot default (`battle_rule_sets.weights`)
@@ -840,7 +842,7 @@ confidence = 1,00 − 0,08·(metrik_skoring_hilang_A + metrik_skoring_hilang_B)
                     − 0,10·konflik_belum_terselesaikan     (floor 0.25)
 ```
 
-**Catatan penting soal `qualifier_penalty`:** tabel penalti bertipe per-kualifikasi (`possibly: 0.25`, `varies: 0.30`, `unknown: 0.40`, `at_least/at_most/up_to/higher_with: 0.10`, `likely: 0.15`, `exact: 0`). Yang dipakai engine adalah **nilai terbesar**, bukan akumulasi — alasannya, sepuluh klaim `possibly` tidak membuat model sepuluh kali lebih ragu dibanding satu klaim `possibly`; keraguan dibatasi oleh kualifikasi terlemah yang ada di meja. Batas 0,20 mencegah satu kualifikasi `varies` melemparkan hasil ke 0,50 dan meniadakan seluruh perhitungan statistik.
+**Catatan penting soal `qualifier_penalty`:** tabel penalti bertipe per-kualifikasi (`possibly: 0.25`, `varies: 0.30`, `unknown: 0.40`, `at_least/at_most/higher_with: 0.10`, `up_to: 0.15`, `likely: 0.15`, `exact: 0` — sumber: seed `qualifier_penalty`, cermin di `src/services/battle/fixtures/rule-set.default.json`). Yang dipakai engine adalah **nilai terbesar**, bukan akumulasi — alasannya, sepuluh klaim `possibly` tidak membuat model sepuluh kali lebih ragu dibanding satu klaim `possibly`; keraguan dibatasi oleh kualifikasi terlemah yang ada di meja. Batas 0,20 mencegah satu kualifikasi `varies` melemparkan hasil ke 0,50 dan meniadakan seluruh perhitungan statistik. Yang dicacah untuk aturan "kualifikasi berat" (penalti confidence) adalah kualifikasi `possibly`/`varies`/`unknown` dengan status `current` per sisi.
 
 **Catatan soal `confidence`:** hanya metrik yang **ikut menskor** yang dihitung hilang. Metrik `varies`/`unknown` yang memang sengaja dikeluarkan tidak dihukum dua kali (sekali dikeluarkan dari skor, sekali menurunkan keyakinan) — penalti untuk kasus itu datang dari jalur `qualifier_penalty`, bukan dari `per_missing_metric`.
 
@@ -1413,7 +1415,7 @@ LIMIT $2;
 | Rate limiting | Per IP (Upstash/KV) + per token; tier berbeda untuk anonim vs admin | Endpoint simulasi 30/min/IP; search 60/min/IP; import 60/jam/admin |
 | Bot mitigation | Turnstile/hCaptcha pada `POST /api/battle/simulate` (anonim) dan `/api/reports` saat skor risiko tinggi | Hanya trigger bila anomali, bukan semua request |
 | Input validation | zod di boundary API + server action; whitelist enum; reject unknown keys | Tidak ada parsing longgar |
-| SQL injection | Parameterized query/supabase-js; **tidak ada** string SQL dari input; `search_path` dipatok | Anti-injeksi |
+| SQL injection | Parameterized query lewat `SqlClient` (postgres.js `unsafe` + array parameter); **tidak ada** string SQL dari input; `search_path` dipatok | Anti-injeksi |
 | XSS | Escaping default React; `dangerouslySetInnerHTML` dilarang kecuali untuk konten tersanitasi dari parser (disanitasi DOMPurify allow-list terbatas); CSP ketat | `script-src 'self' 'nonce-…'` |
 | CSRF | SameSite=Lax + double-submit token untuk mutasi berbasis cookie | Server action & route handler divalidasi origin |
 | SSRF | Fetcher ingestion hanya ke domain allow-list sumber; resolve DNS + blokir IP privat/loopback/link-local; tolak redirect ke host di luar allow-list | Sangat penting karena sistem melakukan fetch URL |
@@ -1777,17 +1779,17 @@ Skala: Dampak (1–5) × Kemungkinan (1–5) = severity.
 | Data fetching | Server Component + native fetch + React `cache`; TanStack Query hanya untuk interaksi kompleks admin | SWR | Mengurangi JS klien; server-side filtering alami |
 | Validasi | zod (boundary API) + generated types dari DB | Valibot | Satu sumber kebenaran validasi; bagus dengan TypeScript |
 | Database | PostgreSQL 15+ (Supabase managed) | Neon, RDS | FTS + `pg_trgm` + `unaccent` + JSONB + RLS dalam satu mesin → menghapus kebutuhan search engine di MVP |
-| ORM / query | Supabase client + SQL/RPC untuk query agregat; migrasi SQL versioned | Prisma, Drizzle | Kontrol penuh atas query (penting untuk tuning & indexing); menghindari ORM yang menyembunyikan N+1 |
+| ORM / query | Driver `postgres` (postgres.js) di belakang antarmuka `SqlClient` yang diinjeksi + SQL/RPC untuk query agregat; migrasi SQL versioned | Prisma, Drizzle, supabase-js | Kontrol penuh atas query (penting untuk tuning & indexing); menghindari ORM yang menyembunyikan N+1; satu pintu database memudahkan pengujian tanpa DB nyata (implementasi `SqlClient` diinjeksi: PGlite untuk skema, postgres.js untuk runtime) |
 | Auth | Supabase Auth (magic link + OAuth, MFA admin) | Clerk, Auth.js | Sudah sepaket dengan DB & RLS → kontrol akses per-baris tanpa lapisan tambahan |
 | Storage & CDN | Supabase Storage + `next/image` | S3 + CloudFront | Sederhana; transformasi gambar terbantu |
 | Queue / jobs | Tabel `ingestion_jobs` + cron platform (Vercel Cron) | Upstash QStash, Redis+BullMQ | Transaksional, dapat diaudit, tanpa broker tambahan pada MVP; upgrade path jelas |
 | Cache | ISR + Next `unstable_cache` + Upstash Redis (KV) | Redis mandiri | Murah, serverless, cukup untuk invalidation key-level |
 | Input/worker HTTP fetch | `undici`/native fetch + `robots-parser` + p-queue | Axios | Kontrol timeout/retry/conditional GET yang tepat |
-| Testing | Vitest (unit engine), Testcontainers/`supabase start` (integrasi DB), Playwright (E2E), Lighthouse CI | Jest | Cepat, cocok dengan TypeScript, dan mencakup tiga lapisan penting |
+| Testing | `node --test` dengan TypeScript asli (type stripping) untuk unit engine — bukan Vitest/Jest; runner skrip `.mjs` untuk case library & skema (PGlite sebagai Postgres di-uji); Playwright (E2E), Lighthouse CI | Jest/Vitest | `node --test` berjalan `.ts` langsung tanpa build step, jadi unit test memakai konfigurasi TS yang sama persis dengan runtime produksi; tanpa dependensi test framework tambahan |
 | Observability | Sentry + Vercel Analytics + Postgres slow-query log + uptime monitor | Datadog | Cukup & murah untuk tim kecil |
 | CI/CD | GitHub Actions: lint → typecheck → unit → integrasi DB → Lighthouse → deploy preview | — | Gerbang kualitas otomatis sebelum rilis |
 | Deployment | Vercel (web) + Supabase (data) + cron worker | Fly.io, Render | Zero-ops untuk tim kecil; biaya awal sangat rendah |
-| Package manager | pnpm | npm | Instalasi cepat & hemat disk di CI |
+| Package manager | npm (lockfile `package-lock.json` di-commit) | pnpm | Repo ini berjalan dengan npm sejak commit pertama; mengubah manajer berarti mengubah lockfile & CI tanpa keuntungan fungsional saat ini |
 
 **Catatan pilihan yang sengaja dihindari:** tidak memakai SPA penuh (melanggar target SEO/JS), tidak memakai vector DB (tidak dibutuhkan untuk pencarian nama), tidak memakai microservices (overhead operasional tak sebanding pada tahap ini), tidak memakai ORM dengan lazy-loading tersembunyi (menyembunyikan N+1 yang justru risiko utama kami).
 
@@ -1903,7 +1905,7 @@ anime-vs-battle/
 │     └─ __tests__/rules.test.mjs       # uji unit + regresi bug yang ditemukan
 ├─ tests/
 │  ├─ architecture/fixtures/            # [ada] fixture melanggar/bersih + expected.mjs & probe zona
-│  ├─ battle/                           # unit + integrasi engine
+│  ├─ battle-engine/                    # [ada] 213 unit test engine per modul (node --test)
 │  ├─ ingestion/                        # idempotency, resume, rate limit, robots
 │  └─ e2e/                              # Playwright: search → battle → share
 ├─ scripts/
@@ -1938,7 +1940,7 @@ Lint batas dibangun di atas enam zona yang didefinisikan sekali di `tools/archit
 | Zona | Jalur | Aturan yang berlaku |
 |---|---|---|
 | `engine` | `src/services/battle/**` | Murni: hanya impor relatif **di dalam zonanya** + `node:crypto.createHash`. Global `Date`/`process`/`console`/`fetch` dan anggota non-deterministik (`Math.random`, `randomUUID`) dilarang |
-| `node-runtime` | `src/lib/**`, `src/services/queue/**` | Wajib impor relatif ber-ekstensi `.ts` (dimuat Node dengan type stripping); dilarang mencapai ingestion |
+| `node-runtime` | `src/lib/**`, `src/services/queue/**` | Wajib impor relatif ber-ekstensi `.ts` untuk modul internal (dimuat Node dengan type stripping); specifier bare paket (`postgres`, `node:crypto`) tetap sah; dilarang mencapai ingestion |
 | `ingestion-worker` | `worker/**`, `src/services/ingestion/**` | Wajib relatif; **diizinkan** memuat ingestion |
 | `web-request` | `app/**` (kecuali cron), `src/features/**`, `src/components/**` | Dilarang mencapai ingestion (AC-25) |
 | `scheduled-worker` | `app/api/cron/**` | Diizinkan mengerjakan antrian (dipicu penjadwal, bukan pengguna) |

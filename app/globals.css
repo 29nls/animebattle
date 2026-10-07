@@ -9,43 +9,392 @@
  * menuntut audit seluruh komponen.
  */
 @theme {
-  --color-surface-0: oklch(0.16 0.02 265);
-  --color-surface-1: oklch(0.21 0.025 265);
-  --color-surface-2: oklch(0.27 0.03 265);
-  --color-surface-3: oklch(0.34 0.035 265);
+  /* ─── Surface palette (deep dark with subtle blue undertone) ─── */
+  --color-surface-0: oklch(0.13 0.015 270);
+  --color-surface-1: oklch(0.17 0.02 268);
+  --color-surface-2: oklch(0.22 0.025 266);
+  --color-surface-3: oklch(0.28 0.03 265);
+  --color-surface-4: oklch(0.34 0.03 264);
 
-  --color-ink-0: oklch(0.98 0.005 265);
-  --color-ink-1: oklch(0.86 0.01 265);
-  --color-ink-2: oklch(0.7 0.015 265);
-  --color-ink-3: oklch(0.55 0.02 265);
+  /* ─── Ink (text) ─── */
+  --color-ink-0: oklch(0.97 0.005 265);
+  --color-ink-1: oklch(0.88 0.01 265);
+  --color-ink-2: oklch(0.68 0.015 265);
+  --color-ink-3: oklch(0.52 0.02 265);
 
-  --color-accent-a: oklch(0.7 0.19 25);
-  --color-accent-b: oklch(0.72 0.16 250);
-  --color-accent-win: oklch(0.78 0.15 150);
-  --color-accent-flag: oklch(0.82 0.14 85);
+  /* ─── Accent colors ─── */
+  --color-accent-a: oklch(0.72 0.22 25);
+  --color-accent-b: oklch(0.7 0.18 255);
+  --color-accent-win: oklch(0.76 0.17 155);
+  --color-accent-lose: oklch(0.7 0.19 25);
+  --color-accent-flag: oklch(0.8 0.15 85);
+  --color-accent-draw: oklch(0.75 0.12 200);
 
-  --color-line: oklch(0.32 0.02 265);
-  --color-line-strong: oklch(0.45 0.03 265);
+  /* ─── Borders ─── */
+  --color-line: oklch(0.28 0.02 268);
+  --color-line-strong: oklch(0.42 0.03 265);
+  --color-line-glow: oklch(0.5 0.1 255 / 0.3);
 
+  /* ─── Gradient tokens ─── */
+  --color-grad-a-from: oklch(0.65 0.25 20);
+  --color-grad-a-to: oklch(0.55 0.2 350);
+  --color-grad-b-from: oklch(0.6 0.2 250);
+  --color-grad-b-to: oklch(0.5 0.18 280);
+  --color-grad-win-from: oklch(0.7 0.2 150);
+  --color-grad-win-to: oklch(0.6 0.15 180);
+
+  /* ─── Fonts (Google Fonts: Inter loaded via next/font) ─── */
   --font-sans:
-    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+  --font-display:
+    'Inter', ui-sans-serif, system-ui, sans-serif;
+
+  /* ─── Spacing & radius ─── */
+  --radius-card: 0.875rem;
+  --radius-pill: 9999px;
+
+  /* ─── Shadows ─── */
+  --shadow-card: 0 2px 12px oklch(0 0 0 / 0.25), 0 0 1px oklch(0 0 0 / 0.4);
+  --shadow-card-hover: 0 8px 32px oklch(0 0 0 / 0.35), 0 0 1px oklch(0 0 0 / 0.5);
+  --shadow-glow-a: 0 0 30px oklch(0.65 0.25 20 / 0.2);
+  --shadow-glow-b: 0 0 30px oklch(0.6 0.2 250 / 0.2);
 }
 
+/* ─── Base ─── */
 html {
   color-scheme: dark;
   background-color: var(--color-surface-0);
   color: var(--color-ink-1);
   -webkit-font-smoothing: antialiased;
+  scroll-behavior: smooth;
 }
 
 body {
   font-family: var(--font-sans);
   min-height: 100dvh;
+  overflow-x: hidden;
 }
 
-/* Fokus keyboard harus selalu terlihat; aksesibilitas bukan tambahan (PRD §29). */
+/* ─── Accessibility ─── */
 :focus-visible {
   outline: 2px solid var(--color-accent-b);
   outline-offset: 2px;
+}
+
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-surface-0);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface-3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-surface-4);
+}
+
+/* ─── Animations ─── */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in-left {
+  from { opacity: 0; transform: translateX(-24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+@keyframes vs-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+
+@keyframes gradient-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animate-fade-in { animation: fade-in 0.5s ease-out both; }
+.animate-fade-in-up { animation: fade-in-up 0.6s ease-out both; }
+.animate-slide-left { animation: slide-in-left 0.5s ease-out both; }
+.animate-slide-right { animation: slide-in-right 0.5s ease-out both; }
+.animate-pulse-glow { animation: pulse-glow 3s ease-in-out infinite; }
+.animate-float { animation: float 4s ease-in-out infinite; }
+.animate-vs-pulse { animation: vs-pulse 2.5s ease-in-out infinite; }
+.animate-gradient {
+  background-size: 200% 200%;
+  animation: gradient-shift 4s ease-in-out infinite;
+}
+
+.delay-100 { animation-delay: 0.1s; }
+.delay-200 { animation-delay: 0.2s; }
+.delay-300 { animation-delay: 0.3s; }
+.delay-400 { animation-delay: 0.4s; }
+.delay-500 { animation-delay: 0.5s; }
+
+/* ─── Glass card ─── */
+.glass {
+  background: oklch(0.17 0.02 268 / 0.7);
+  backdrop-filter: blur(16px) saturate(1.4);
+  border: 1px solid oklch(0.4 0.04 265 / 0.15);
+}
+
+.glass-strong {
+  background: oklch(0.2 0.025 268 / 0.85);
+  backdrop-filter: blur(24px) saturate(1.5);
+  border: 1px solid oklch(0.5 0.04 265 / 0.2);
+}
+
+/* ─── Card hover effects ─── */
+.card-hover {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card-hover);
+  border-color: oklch(0.5 0.06 265 / 0.3);
+}
+
+/* ─── VS Divider ─── */
+.vs-badge {
+  background: linear-gradient(135deg, var(--color-grad-a-from), var(--color-grad-a-to));
+  box-shadow: 0 0 24px oklch(0.65 0.25 20 / 0.3), 0 0 48px oklch(0.65 0.25 20 / 0.15);
+}
+
+/* ─── Stat bar ─── */
+.stat-bar {
+  background: var(--color-surface-2);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.stat-bar-fill-a {
+  background: linear-gradient(90deg, var(--color-grad-a-from), var(--color-accent-a));
+  border-radius: 4px;
+  transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.stat-bar-fill-b {
+  background: linear-gradient(90deg, var(--color-accent-b), var(--color-grad-b-to));
+  border-radius: 4px;
+  transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ─── Tier badges ─── */
+.tier-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.2em 0.55em;
+  border-radius: 4px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.tier-peak { background: linear-gradient(135deg, oklch(0.7 0.2 60), oklch(0.65 0.22 40)); color: oklch(0.15 0.01 40); }
+.tier-high { background: oklch(0.65 0.18 25 / 0.2); color: var(--color-accent-a); border: 1px solid oklch(0.65 0.18 25 / 0.3); }
+.tier-mid  { background: oklch(0.6 0.15 250 / 0.2); color: var(--color-accent-b); border: 1px solid oklch(0.6 0.15 250 / 0.3); }
+.tier-low  { background: oklch(0.6 0.1 155 / 0.2); color: oklch(0.75 0.12 155); border: 1px solid oklch(0.6 0.1 155 / 0.3); }
+
+/* ─── Advantage indicators ─── */
+.advantage-a {
+  color: var(--color-accent-a);
+  background: oklch(0.65 0.18 25 / 0.1);
+}
+
+.advantage-b {
+  color: var(--color-accent-b);
+  background: oklch(0.6 0.15 250 / 0.1);
+}
+
+.advantage-equal {
+  color: var(--color-ink-2);
+  background: oklch(0.5 0.02 265 / 0.1);
+}
+
+.advantage-unknown {
+  color: var(--color-ink-3);
+  background: oklch(0.3 0.01 265 / 0.15);
+}
+
+/* ─── Hero BG pattern ─── */
+.hero-grid {
+  background-image:
+    linear-gradient(oklch(0.3 0.04 265 / 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(0.3 0.04 265 / 0.12) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.hero-radial {
+  background: radial-gradient(ellipse 60% 50% at 50% -10%, oklch(0.5 0.15 255 / 0.15) 0%, transparent 70%);
+}
+
+/* ─── Gradient text ─── */
+.text-gradient-hero {
+  background: linear-gradient(135deg, oklch(0.9 0.01 265) 0%, oklch(0.75 0.15 255) 50%, oklch(0.72 0.2 25) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.text-gradient-vs {
+  background: linear-gradient(135deg, var(--color-accent-a), oklch(0.8 0.18 50));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ─── Button styles ─── */
+.btn-primary {
+  background: linear-gradient(135deg, var(--color-accent-b), oklch(0.6 0.2 270));
+  color: white;
+  font-weight: 600;
+  border-radius: 0.625rem;
+  padding: 0.625rem 1.5rem;
+  transition: all 0.25s ease;
+  box-shadow: 0 2px 12px oklch(0.6 0.2 255 / 0.25);
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px oklch(0.6 0.2 255 / 0.4);
+}
+
+.btn-battle {
+  background: linear-gradient(135deg, var(--color-grad-a-from), var(--color-accent-a));
+  color: white;
+  font-weight: 700;
+  border-radius: 0.625rem;
+  padding: 0.75rem 2rem;
+  transition: all 0.25s ease;
+  box-shadow: 0 2px 16px oklch(0.65 0.25 20 / 0.3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.875rem;
+}
+
+.btn-battle:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 28px oklch(0.65 0.25 20 / 0.45);
+}
+
+.btn-battle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* ─── Select & Input ─── */
+.input-field {
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-line);
+  border-radius: 0.625rem;
+  padding: 0.625rem 0.875rem;
+  color: var(--color-ink-0);
+  transition: all 0.2s ease;
+  font-size: 0.875rem;
+  width: 100%;
+}
+
+.input-field:focus {
+  border-color: var(--color-accent-b);
+  box-shadow: 0 0 0 3px oklch(0.6 0.2 255 / 0.15);
+  outline: none;
+}
+
+.input-field::placeholder {
+  color: var(--color-ink-3);
+}
+
+/* ─── Loading skeleton ─── */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--color-surface-2);
+  border-radius: 0.5rem;
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, oklch(0.35 0.02 265 / 0.3), transparent);
+  animation: shimmer 1.8s infinite;
+}
+
+/* ─── Probability bar ─── */
+.prob-bar-wrapper {
+  display: flex;
+  height: 2.5rem;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  position: relative;
+}
+
+.prob-bar-a {
+  background: linear-gradient(90deg, var(--color-grad-a-from), var(--color-accent-a));
+  transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-left: 0.75rem;
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: white;
+  text-shadow: 0 1px 3px oklch(0 0 0 / 0.5);
+}
+
+.prob-bar-b {
+  background: linear-gradient(90deg, var(--color-accent-b), var(--color-grad-b-to));
+  transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 0.75rem;
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: white;
+  text-shadow: 0 1px 3px oklch(0 0 0 / 0.5);
+}
+
+/* ─── Responsive ─── */
+@media (max-width: 640px) {
+  .hide-mobile { display: none; }
 }

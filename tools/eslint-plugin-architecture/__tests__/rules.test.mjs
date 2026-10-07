@@ -111,7 +111,7 @@ test('no-select-star: bentuk yang harus ditolak dan yang harus lolos', () => {
         errors: [{ messageId: 'unverifiable' }],
       },
       {
-        // REGRESI 3: bintang lewat konstanta pada rantai builder.
+        // REGRESI 3-noselect: bintang lewat konstanta pada rantai builder.
         code: 'const columns = "*"; db.from("battle_results").select(columns);',
         options: [{ largeTables: LARGE_TABLES }],
         errors: [{ messageId: 'largeTable' }],
@@ -138,6 +138,21 @@ test('boundary-import: larangan lintas zona', () => {
         code: 'import { enqueueIngestionJob } from "../../services/queue/ingestion-jobs.ts";',
         filename: '/repo/src/features/admin/run.ts',
         options: [BOUNDARY_OPTIONS],
+      },
+      {
+        // REGRESI 3-boundary (ditemukan pada driver `postgres` di `src/lib/db/client.ts`):
+        // specifier BARE dari node_modules BETUL-BETUL diselesaikan Node saat
+        // type stripping — melarangnya berarti menghukum kode yang benar. Yang
+        // ditandai hanya alias lintasan (`@/...`), bukan paket apa pun, dan
+        // prefix builtin `node:` juga tetap sah.
+        code: "import postgres from 'postgres';",
+        filename: '/repo/src/lib/db/client.ts',
+        options: [{ zone: 'node-runtime', relativeImportsOnly: true }],
+      },
+      {
+        code: 'import { createHash } from "node:crypto";',
+        filename: '/repo/src/lib/db/client.ts',
+        options: [{ zone: 'node-runtime', relativeImportsOnly: true }],
       },
       // Zona yang mengizinkan ingestion.
       {

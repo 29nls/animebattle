@@ -52,6 +52,10 @@ export function setSqlClient(client: SqlClient | null): void {
   injected = client;
 }
 
+import postgres from 'postgres';
+
+let defaultClient: SqlClient | null = null;
+
 export function getSqlClient(): SqlClient {
   if (injected) return injected;
 
@@ -62,8 +66,18 @@ export function getSqlClient(): SqlClient {
     );
   }
 
-  throw new DatabaseNotConfiguredError(
-    'driver Postgres',
-    'Sprint 1 memasang driver dan mengganti badan fungsi ini; antarmuka SqlClient sengaja tidak berubah agar pemanggil tidak perlu disunting.',
-  );
+  if (!defaultClient) {
+    const sql = postgres(process.env.DATABASE_URL, {
+      max: 10, // batas koneksi agar tidak membanjiri pool
+    });
+    
+    defaultClient = {
+      async query<T = Row>(text: string, params?: readonly unknown[]): Promise<T[]> {
+        // postgres.js unsafe method mendukung sintaks $1, $2 beserta array parameternya
+        return (await sql.unsafe(text, params as any[] || [])) as T[];
+      }
+    };
+  }
+
+  return defaultClient;
 }

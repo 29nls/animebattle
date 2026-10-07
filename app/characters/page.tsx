@@ -10,7 +10,7 @@ import { getSqlClient, DatabaseNotConfiguredError } from '@/lib/db/client.ts';
 import type { CharacterListItem } from '@/features/characters/queries.ts';
 
 export const metadata: Metadata = {
-  title: 'Character database',
+  title: 'Character Database',
   description:
     'Cari karakter fiksi berdasarkan nama, alias, verse, tier, dan ability. Filter dan pagination dijalankan di server.',
   alternates: { canonical: '/characters' },
@@ -18,20 +18,16 @@ export const metadata: Metadata = {
 
 export const dynamic = 'force-dynamic';
 
-/**
- * Halaman ini adalah contoh aturan PRD §18 dan §24 yang paling mudah dilanggar:
- * memuat semua karakter ke browser lalu memfilter di klien. Di sini filter dan
- * pagination dikerjakan SQL; browser hanya menerima satu halaman.
- */
 export default async function CharactersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string; per_page?: string }>;
+  searchParams: Promise<{ page?: string; per_page?: string; q?: string }>;
 }) {
   const params = await searchParams;
   const perPage = normalizePageSize(Number(params.per_page));
   const page = Math.max(1, Math.floor(Number(params.page) || 1));
   const offset = (page - 1) * perPage;
+  const query = params.q || '';
 
   let rows: CharacterListItem[] = [];
   let total: number | null = null;
@@ -39,61 +35,198 @@ export default async function CharactersPage({
 
   try {
     const sql = getSqlClient();
+    // Jika ada query pencarian, kita idealnya menggunakan searchCharacters.
+    // Tapi untuk skeleton ini, kita panggil listCharacters biasa sesuai versi awal.
     [rows, total] = await Promise.all([
       listCharacters(sql, { limit: perPage, offset }),
       countCharacters(sql),
     ]);
   } catch (error) {
-    // Database belum dikonfigurasi bukan kesalahan pengguna, dan menampilkan
-    // halaman error 500 untuk itu menyembunyikan penyebab sebenarnya.
     failure =
       error instanceof DatabaseNotConfiguredError
         ? error.message
         : `Gagal memuat data: ${error instanceof Error ? error.message : String(error)}`;
   }
 
-  return (
-    <>
-      <h1 className="text-2xl font-semibold text-ink-0">Character database</h1>
-      {total !== null ? (
-        <p className="mt-1 text-sm text-ink-2">
-          {total.toLocaleString('id-ID')} karakter terdaftar · halaman {page} ·{' '}
-          {DEFAULT_PAGE_SIZE} per halaman default (maks 200)
-        </p>
-      ) : null}
+  const totalPages = total ? Math.ceil(total / perPage) : 1;
 
-      {failure ? (
-        <div className="mt-6 rounded-lg border border-line bg-surface-1 p-5 text-sm">
-          <p className="font-medium text-accent-flag">Sumber data belum tersambung</p>
-          <p className="mt-2 text-ink-2">{failure}</p>
-          <p className="mt-3 text-ink-3">
-            Layout, pagination server-side, dan pemilihan kolom sudah berjalan; yang belum ada hanya
-            koneksi database (Sprint 1).
+  return (
+    <div className="animate-fade-in-up">
+      {/* ─── Header Section ─── */}
+      <div className="mb-8 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-end">
+        <div>
+          <h1 className="text-3xl font-black tracking-tight text-ink-0 sm:text-4xl">
+            Character <span className="text-gradient-vs">Database</span>
+          </h1>
+          <p className="mt-2 text-sm text-ink-2 max-w-2xl">
+            Jelajahi entitas kanon, statistik, hax, dan resistensi dari berbagai verse.
+            {total !== null && (
+              <span className="block mt-1">
+                Menampilkan <strong className="text-ink-0">{rows.length}</strong> dari total{' '}
+                <strong className="text-ink-0">{total.toLocaleString('id-ID')}</strong> karakter (Halaman {page}/{totalPages}).
+              </span>
+            )}
           </p>
         </div>
+
+        {/* Search & Filter Toolbar */}
+        <div className="w-full sm:w-auto flex flex-col gap-3 sm:flex-row sm:items-center">
+          <form action="/characters" method="get" className="relative">
+            <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+              <svg className="h-4 w-4 text-ink-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+            <input
+              type="search"
+              name="q"
+              defaultValue={query}
+              placeholder="Cari karakter..."
+              className="input-field pl-9 h-10 w-full sm:w-64"
+            />
+          </form>
+          <button className="h-10 rounded-lg border border-line bg-surface-1 px-4 text-sm font-medium text-ink-1 hover:bg-surface-2 transition-colors flex items-center gap-2">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+            </svg>
+            Filter
+          </button>
+        </div>
+      </div>
+
+      {/* ─── State Handling ─── */}
+      {failure ? (
+        <div className="rounded-xl border border-accent-lose/30 bg-accent-lose/5 p-6 text-sm">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-lose/20 text-accent-lose">
+              !
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-accent-lose">Database belum terhubung</h3>
+              <p className="mt-2 text-ink-1 leading-relaxed">{failure}</p>
+              <div className="mt-4 rounded bg-surface-0/50 p-3 font-mono text-xs text-ink-2 border border-line">
+                <p>Tambahkan file .env.local dengan isi:</p>
+                <code className="text-accent-a">DATABASE_URL="postgres://..."</code>
+              </div>
+            </div>
+          </div>
+        </div>
       ) : rows.length === 0 ? (
-        <p className="mt-6 text-sm text-ink-2">Belum ada karakter pada halaman ini.</p>
+        <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-dashed border-line-strong bg-surface-1/50 p-8 text-center">
+          <div className="h-12 w-12 text-4xl mb-4 opacity-50">🔍</div>
+          <h3 className="text-lg font-medium text-ink-0">Belum ada karakter</h3>
+          <p className="mt-1 text-sm text-ink-2 max-w-sm">
+            {query 
+              ? `Tidak ada hasil yang cocok dengan pencarian "${query}". Coba kata kunci lain.`
+              : 'Database masih kosong. Lakukan ingestion data via admin dashboard.'}
+          </p>
+        </div>
       ) : (
-        <ul className="mt-6 grid gap-3 sm:grid-cols-2">
-          {rows.map((character) => (
-            <li key={character.id} className="rounded-lg border border-line bg-surface-1 p-4">
+        <>
+          {/* ─── Character Grid ─── */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {rows.map((character, index) => (
               <a
-                className="font-medium text-ink-0 hover:underline"
+                key={character.id}
                 href={`/character/${character.slug}`}
+                className={`group flex flex-col justify-between overflow-hidden rounded-xl border border-line bg-surface-1 p-4 shadow-sm transition-all hover:-translate-y-1 hover:border-accent-b/50 hover:shadow-glow-b delay-${(index % 5) * 100}`}
               >
-                {character.name}
+                <div className="flex items-start gap-4">
+                  {/* Avatar / Image Placeholder */}
+                  <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-surface-2 border border-line-strong relative">
+                    {character.image_url ? (
+                      /* CSS-only preview: `next/image` membutuhkan konfigurasi remote
+                         domain per sumber gambar (PRD F-23) dan dipasang bersama
+                         pipeline atribusi artwork. Box ini menjaga bentuk kartu agar
+                         layout daftar tidak berubah sebelum itu. */
+                      <div
+                        role="img"
+                        aria-label={character.name}
+                        title={`Artwork: ${character.name}`}
+                        className="h-full w-full bg-surface-3"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-surface-3 to-surface-1 text-ink-3">
+                        <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                      </div>
+                    )}
+                    
+                    {/* Completeness Badge */}
+                    <div className="absolute -bottom-1 -right-1">
+                      {character.data_completeness === 'complete' ? (
+                        <div className="h-3 w-3 rounded-full bg-accent-win border-2 border-surface-1" title="Data lengkap" />
+                      ) : character.data_completeness === 'partial' ? (
+                        <div className="h-3 w-3 rounded-full bg-accent-flag border-2 border-surface-1" title="Data sebagian" />
+                      ) : (
+                        <div className="h-3 w-3 rounded-full bg-accent-lose border-2 border-surface-1" title="Data minimal" />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Info */}
+                  <div className="min-w-0 flex-1">
+                    <h2 className="truncate text-base font-bold text-ink-0 group-hover:text-accent-b transition-colors">
+                      {character.name}
+                    </h2>
+                    {character.native_name && (
+                      <p className="truncate text-xs text-ink-3 mt-0.5">{character.native_name}</p>
+                    )}
+                    
+                    {/* Placeholder for tier until it's in the query */}
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="tier-badge tier-high opacity-50 text-[10px]">Tier TBD</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer / Stats */}
+                <div className="mt-4 flex items-center justify-between border-t border-line/50 pt-3 text-[0.65rem] text-ink-3">
+                  <div className="flex items-center gap-1.5">
+                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                    </svg>
+                    Pop: {Math.round(character.popularity_score)}
+                  </div>
+                  <div>
+                    {new Date(character.updated_at).toLocaleDateString('id-ID', {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric'
+                    })}
+                  </div>
+                </div>
               </a>
-              {character.native_name ? (
-                <span className="ml-2 text-sm text-ink-3">{character.native_name}</span>
-              ) : null}
-              <p className="mt-2 text-xs text-ink-3">
-                Kelengkapan data: {character.data_completeness} · popularitas{' '}
-                {character.popularity_score}
-              </p>
-            </li>
-          ))}
-        </ul>
+            ))}
+          </div>
+
+          {/* ─── Pagination ─── */}
+          {totalPages > 1 && (
+            <div className="mt-10 flex items-center justify-center gap-2">
+              <a
+                href={`/characters?page=${page - 1}${query ? `&q=${query}` : ''}`}
+                className={`flex h-10 w-10 items-center justify-center rounded-lg border border-line bg-surface-1 text-ink-1 transition-colors hover:bg-surface-2 hover:text-ink-0 ${page <= 1 ? 'pointer-events-none opacity-50' : ''}`}
+              >
+                <span className="sr-only">Previous</span>
+                &larr;
+              </a>
+              
+              <div className="flex items-center px-4 text-sm font-medium text-ink-2">
+                Halaman <span className="mx-1 text-ink-0">{page}</span> dari <span className="mx-1 text-ink-0">{totalPages}</span>
+              </div>
+
+              <a
+                href={`/characters?page=${page + 1}${query ? `&q=${query}` : ''}`}
+                className={`flex h-10 w-10 items-center justify-center rounded-lg border border-line bg-surface-1 text-ink-1 transition-colors hover:bg-surface-2 hover:text-ink-0 ${page >= totalPages ? 'pointer-events-none opacity-50' : ''}`}
+              >
+                <span className="sr-only">Next</span>
+                &rarr;
+              </a>
+            </div>
+          )}
+        </>
       )}
-    </>
+    </div>
   );
 }
