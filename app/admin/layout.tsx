@@ -1,3 +1,4 @@
+import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
 /**
@@ -5,6 +6,12 @@ import type { ReactNode } from 'react';
  * Terpisah dari layout publik agar guard role (Sprint 0) hanya
  * perlu disisipkan di satu tempat.
  */
+// PRD §27: /admin/* wajib noindex — robots.txt saja tidak mencegah pengindeksan
+// URL yang tertaut dari luar.
+export const metadata: Metadata = {
+  robots: { index: false, follow: false },
+};
+
 export default function AdminLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex flex-col gap-6 lg:flex-row lg:gap-8">

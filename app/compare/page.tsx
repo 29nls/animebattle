@@ -17,8 +17,10 @@ export default async function ComparePage({
   const sideB = params.b?.trim() ?? '';
   const bothChosen = sideA !== '' && sideB !== '';
 
-  // Mock comparison stats
-  const stats = [
+  // Mock comparison stats. Indikator mengikuti kontrak US-14/§8.4:
+  // Advantage A | Advantage B | Equal | Unknown (dengan alasan).
+  type Indicator = 'a' | 'b' | 'equal' | 'unknown';
+  const stats: { name: string; a: string; b: string; advantage: Indicator; reason?: string }[] = [
     { name: 'Attack Potency', a: 'Multiverse level', b: 'Universe level+', advantage: 'a' },
     { name: 'Speed', a: 'Massively FTL+', b: 'Immeasurable', advantage: 'b' },
     { name: 'Durability', a: 'Multiverse level', b: 'Universe level+', advantage: 'a' },
@@ -27,7 +29,21 @@ export default async function ComparePage({
     { name: 'Stamina', a: 'Limitless', b: 'Limitless', advantage: 'equal' },
     { name: 'Intelligence', a: 'Extraordinary Genius', b: 'Supergenius', advantage: 'b' },
     { name: 'Battle IQ', a: 'Extraordinary Genius', b: 'Genius', advantage: 'a' },
+    {
+      name: 'Experience',
+      a: 'Unknown',
+      b: 'Unknown',
+      advantage: 'unknown',
+      reason: 'Belum ada baris statistics untuk metric ini pada form terpilih',
+    },
   ];
+
+  const indicatorStyles: Record<Indicator, { label: string; className: string }> = {
+    a: { label: 'Advantage A', className: 'text-accent-a' },
+    b: { label: 'Advantage B', className: 'text-accent-b' },
+    equal: { label: 'Equal', className: 'text-ink-1' },
+    unknown: { label: 'Unknown', className: 'text-ink-3' },
+  };
 
   return (
     <div className="animate-fade-in">
@@ -111,12 +127,19 @@ export default async function ComparePage({
                   <div className={`text-right px-4 font-medium ${stat.advantage === 'a' ? 'text-accent-a' : 'text-ink-2'}`}>
                     {stat.a}
                   </div>
-                  
+
                   <div className="text-center font-bold text-ink-1 uppercase text-[0.65rem] tracking-widest relative">
                     <span className="relative z-10 bg-surface-1 px-2">{stat.name}</span>
                     <div className="absolute top-1/2 left-0 right-0 h-px bg-line/30 -z-0" />
+                    {/* Indikator 4-keadaan US-14: Unknown tampil abu + tooltip alasan (§8.4) */}
+                    <span
+                      title={stat.reason ?? indicatorStyles[stat.advantage].label}
+                      className={`mt-1 inline-block rounded-full border border-line px-2 py-0.5 normal-case tracking-normal ${indicatorStyles[stat.advantage].className}`}
+                    >
+                      {indicatorStyles[stat.advantage].label}
+                    </span>
                   </div>
-                  
+
                   <div className={`text-left px-4 font-medium ${stat.advantage === 'b' ? 'text-accent-b' : 'text-ink-2'}`}>
                     {stat.b}
                   </div>

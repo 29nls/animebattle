@@ -1,0 +1,69 @@
+# CI — Anime VS Battle
+#
+# Menjalankan kedelapan gerbang verifikasi pada setiap push (dan pull request).
+# Angka yang diharapkan tiap gerbang terdokumentasi di README.md ("Verifikasi")
+# dan docs/CONTRIBUTING.md; test engine menuntut Node >= 22 (type stripping).
+# Penjaga schema (validate:schema) memakai PGlite (Postgres 16 WASM) — bekerja
+# penuh di runner Linux tanpa jaringan/outbound tambahan.
+#
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# Batalkan run lama pada branch yang sama supaya tidak menumpuk gerbang
+# berat (validate:schema / check:battle-guards) berjalan paralel.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verifikasi lengkap (8 gerbang)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependensi (npm ci)
+        run: npm ci
+
+      # ── Gerbang 1: typecheck ─────────────────────────────────────────────
+      - name: Gerbang 1 · Typecheck
+        run: npm run typecheck
+
+      # ── Gerbang 2: lint batas arsitektur ─────────────────────────────────
+      - name: Gerbang 2 · Lint batas arsitektur
+        run: npm run lint
+
+      # ── Gerbang 3: schema + seed di Postgres WASM ───────────────────────
+      - name: Gerbang 3 · Schema (56 uji)
+        run: npm run validate:schema
+
+      # ── Gerbang 4: case library AC-31..34 ─────────────────────────────────
+      - name: Gerbang 4 · Battle cases (425 pemeriksaan)
+        run: npm run validate:battle-cases
+
+      # ── Gerbang 5: mutasi guard AC-36 ────────────────────────────────────
+      - name: Gerbang 5 · Battle guards (6/6 mutasi tertangkap)
+        run: npm run check:battle-guards
+
+      # ── Gerbang 6: invarian arsitektur ─────────────────────────────────
+      - name: Gerbang 6 · Architecture (38 pemeriksaan)
+        run: npm run check:architecture
+
+      # ── Gerbang 7+8: unit engine + RuleTester lint rules ────────────────
+      - name: Gerbang 7+8 · Unit engine & lint rules (213+3)
+        run: npm test

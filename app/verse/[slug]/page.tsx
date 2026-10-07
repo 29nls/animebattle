@@ -27,6 +27,14 @@ export default async function VersePage({
     { id: '3', slug: 'char-3', name: 'Mock Villain', tier: 'Tier 3-A', popularity: 750 },
   ];
 
+  // Blok "Terbaru" — syarat US-04 bersama deskripsi, jumlah karakter,
+  // karakter terkuat, distribusi tier, dan terpopuler.
+  const recentCharacters = [
+    { id: 'r1', slug: 'char-2', name: 'Mock Protagonist', updated: '2 hari lalu' },
+    { id: 'r2', slug: 'char-4', name: 'Mock Rival', updated: '5 hari lalu' },
+    { id: 'r3', slug: 'char-1', name: 'Mock God', updated: '1 minggu lalu' },
+  ];
+
   return (
     <div className="animate-fade-in">
       <div className="mb-6 rounded-lg border border-accent-flag/30 bg-accent-flag/10 p-3 text-sm text-accent-flag flex items-center gap-2">
@@ -111,6 +119,23 @@ export default async function VersePage({
             </ul>
           </div>
           
+          <div className="rounded-2xl border border-line bg-surface-1 p-6">
+            <h2 className="text-lg font-bold text-ink-0 mb-4">Baru Diperbarui</h2>
+            <ul className="space-y-2 text-sm">
+              {recentCharacters.map((char) => (
+                <li key={char.id}>
+                  <a
+                    href={`/character/${char.slug}`}
+                    className="flex items-center justify-between rounded-lg px-2 py-1.5 transition-colors hover:bg-surface-2"
+                  >
+                    <span className="font-medium text-ink-1 hover:text-accent-b">{char.name}</span>
+                    <span className="text-xs text-ink-3">{char.updated}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+
           <div className="rounded-2xl border border-line bg-surface-1 p-6">
             <h2 className="text-lg font-bold text-ink-0 mb-4">Tier Distribution</h2>
             <div className="space-y-2 text-xs">

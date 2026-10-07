@@ -29,17 +29,25 @@ export default function MethodologyPage() {
         <h2 className="text-2xl font-bold mt-12 mb-4">2. Hax Interaction Rules</h2>
         <p>Setiap kemampuan tidak hanya diukur berdasarkan ada/tidaknya, melainkan melalui <em>Hax Interaction Matrix</em>. Contoh:</p>
         <div className="rounded-xl border border-line bg-surface-1 p-4 my-4 font-mono text-xs overflow-x-auto">
-          <code>{`// Jika A memiliki Mind Manipulation dan B memiliki Mind Resistance (Level: Moderate)
-Result: Reduced Effectiveness (30% impact)
+          <code>{`// A menyerang dengan ability level "medium", B punya Mind Resistance "moderate"
+// Matriks §15.3 → status "reduced", multiplier 0,5
 
-// Jika A memiliki Reality Warping dan B memiliki Acasuality (Type 4)
-Result: Bypasses attack completely`}</code>
+// B mengklaim resistance "absolute" TANPA evidence bersumber
+// Aturan RS-1 → status diturunkan ke "reduced", bukan "blocked"
+// (dicatat sebagai resistance_evidence_missing:downgraded_to_reduced)`}</code>
         </div>
 
-        <h2 className="text-2xl font-bold mt-12 mb-4">3. Kualifikasi Klaim & Confidence</h2>
+        <h2 className="text-2xl font-bold mt-12 mb-4">3. Aturan Evidence Resistance</h2>
+        <ul className="list-disc pl-5 space-y-2 mt-4 text-ink-2">
+          <li><strong>RS-1:</strong> Resistance tanpa sumber tidak boleh menghasilkan status <code>blocked</code> — maksimal <code>reduced</code>.</li>
+          <li><strong>RS-2:</strong> Resistance terhadap kategori &quot;Negation&quot; hanya berlaku lintas kategori yang dinyatakan eksplisit pada <code>hax_interactions</code> — tidak ada resistensi generik universal.</li>
+          <li><strong>RS-3:</strong> Level <code>absolute</code> hanya dapat diberikan bila ada ≥ 1 feat bertanda <code>verified</code> yang mendukungnya.</li>
+        </ul>
+
+        <h2 className="text-2xl font-bold mt-12 mb-4">4. Kualifikasi Klaim & Confidence</h2>
         <p>Tidak semua klaim dari sumber setara. Engine memberikan penalti "confidence" untuk statistik yang menggunakan kualifikasi lemah seperti "possibly" atau "likely", serta konflik sumber yang belum terpecahkan.</p>
 
-        <h2 className="text-2xl font-bold mt-12 mb-4">4. Determinisme & Auditability</h2>
+        <h2 className="text-2xl font-bold mt-12 mb-4">5. Determinisme & Auditability</h2>
         <p>Tidak ada probabilitas acak (RNG). Input yang sama dengan versi rule set yang sama selalu menghasilkan <code>input_hash</code> dan hasil yang 100% identik. Setiap angka yang mempengaruhi hasil dilampirkan pada halaman hasil pertarungan.</p>
         
         <div className="mt-12 rounded-xl border border-line-strong bg-surface-2 p-6">
