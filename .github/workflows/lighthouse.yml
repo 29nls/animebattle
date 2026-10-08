@@ -1,0 +1,75 @@
+# Lighthouse CI — Anime VS Battle
+#
+# PRD §39 merencanakan workflow ini berdampingan dengan ci.yml. Targetnya
+# (PRD §29.1, AC-21, AC-22, G8):
+#   - Performance ≥ 90 (AC-21) — diukur pada 4+ template halaman
+#   - SEO ≥ 95 & Accessibility ≥ 95 (AC-22)
+#   - JS klien < 120 KB gzip per halaman data (G8/AC-23, via resource-summary)
+#
+# Workflow ini sengaja TERPISAH dari ci.yml: Lighthouse butuh server produksi
+# yang berjalan + 3 run per halaman, sehingga lambat dan boros. Ia berjalan
+# pada push ke main dan pull_request yang menyentuh UI; hasil diarsipkan
+# sebagai artifact per run (AC-21: "hasil diarsipkan per PR").
+name: Lighthouse CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'src/**'
+      - 'public/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.lighthouserc.json'
+
+# Tidak perlu menumpuk audit berat bila push baru sudah ada.
+concurrency:
+  group: lighthouse-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lighthouse:
+    name: Audit Lighthouse (mobile target §29.1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependensi (npm ci)
+        run: npm ci
+
+      # Tanpa --save: alat audit tidak masuk lockfile produksi.
+      - name: Install @lhci/cli (tanpa menyentuh lockfile)
+        run: npm install --no-save @lhci/cli@0.15.x
+
+      # Audit dijalankan terhadap BUILD PRODUKSI, bukan dev server — angka
+      # dev-server menyesatkan (tanpa minifikasi/ISR). .lighthouserc.json
+      # menuntut `next start`, jadi build wajib dulu.
+      - name: Build produksi
+        run: npm run build
+
+      - name: 'Jalankan Lighthouse CI (autorun: collect, assert, upload)'
+        run: npx lhci autorun
+
+      # AC-21: hasil diarsipkan per PR.
+      - name: Arsipkan laporan Lighthouse
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lighthouse-reports
+          path: |
+            .lighthouseci/**/*.html
+            .lighthouseci/**/*.json
+          retention-days: 14

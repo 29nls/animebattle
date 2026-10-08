@@ -1,0 +1,69 @@
+# Scheduled Ingestion — Anime VS Battle
+#
+# PRD §39 merencanakan workflow ini sebagai pemicu terjadwal dispatcher
+# ingestion (§8.2: cron */15m). Kontrak endpoint yang dipanggil:
+#
+#   GET {DEPLOY_URL}/api/cron/sync
+#   Authorization: Bearer {CRON_SECRET}
+#
+# Endpoint itu satu-satunya jalur request yang sah mengerjakan antrian
+# (zona `scheduled-worker`, tools/architecture/zones.mjs) dan berperilaku
+# fail-closed: tanpa CRON_SECRET di sisi server, ia menolak 503.
+#
+# Status: STUB. Deployment produksi belum ada (Sprint 2), sehingga job ini
+# sengaja **skip dengan pesan jelas** bila secrets belum disetel — bukan
+# mengklaim sukses palsu. Bila secrets tersedia, ia memanggil endpoint
+# sungguhan dan menggagalkan run bila respons tidak 2xx.
+name: Scheduled Ingestion
+
+on:
+  # PRD §8.2: dispatcher cron */15m.
+  schedule:
+    - cron: '*/15 * * * *'
+  # Pemicu manual untuk menguji jalur ini sebelum cron aktif.
+  workflow_dispatch:
+
+# Cron yang menumpuk tidak bermanfaat: job baru menunggu job lama selesai.
+concurrency:
+  group: scheduled-ingest
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    name: Pemicu antrian ingestion (*/15m)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Periksa konfigurasi (fail-closed)
+        run: |
+          if [ -z "${{ secrets.DEPLOY_URL }}" ] || [ -z "${{ secrets.CRON_SECRET }}" ]; then
+            echo "::notice::DEPLOY_URL dan/atau CRON_SECRET belum disetel di repo secrets."
+            echo "::notice::Job ini stub — pemicu cron aktif setelah deployment produksi (Sprint 2)."
+            echo "SKIP=true" >> "$GITHUB_ENV"
+          else
+            echo "SKIP=false" >> "$GITHUB_ENV"
+          fi
+
+      # Endpoint cron mengklaim maksimal 3 job per panggilan (MAX_JOBS_PER_TICK),
+      # sehingga antrean panjang mengalir dalam beberapa tick cron berikutnya.
+      - name: Panggil endpoint cron
+        if: env.SKIP == 'false'
+        run: |
+          http_code=$(curl -sS -o /tmp/cron-response.json -w "%{http_code}" \
+            --max-time 320 \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.DEPLOY_URL }}/api/cron/sync")
+          echo "HTTP $http_code"
+          cat /tmp/cron-response.json
+          case "$http_code" in
+            2??) echo "::notice::Ingestion tick selesai."; exit 0 ;;
+            503) echo "::warning::Endpoint menolak (fail-closed server?) — periksa CRON_SECRET di environment deployment."; exit 1 ;;
+            *)   echo "::error::Endpoint cron membalas $http_code"; exit 1 ;;
+          esac
+
+      - name: Dilewati (stub — secrets belum disetel)
+        if: env.SKIP == 'true'
+        run: echo "Tidak ada yang dilakukan. Isi DEPLOY_URL + CRON_SECRET di repo secrets untuk mengaktifkan."

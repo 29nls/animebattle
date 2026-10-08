@@ -67,3 +67,9 @@ jobs:
       # ── Gerbang 7+8: unit engine + RuleTester lint rules ────────────────
       - name: Gerbang 7+8 · Unit engine & lint rules (213+3)
         run: npm test
+
+      # ── Gerbang 9: build produksi (next build) ─────────────────────────
+      # Menangkap regresi routing/serialiasi RSC yang tidak terlihat oleh
+      # typecheck: halaman yang gagal render server-side tetap lolos tsc.
+      - name: Gerbang 9 · Build produksi (next build)
+        run: npm run build

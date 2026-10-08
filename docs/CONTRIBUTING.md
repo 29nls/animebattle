@@ -46,8 +46,8 @@ npm run lint               # batas arsitektur + next/core-web-vitals
 npm test                   # unit test engine + uji aturan lint
 ```
 
-Angka yang diharapkan (lihat README untuk detail): engine 213/213, lintrules 3/3,
-`check:architecture` 38/38, `validate:battle-cases` 425/425.
+Angka yang diharapkan (lihat README untuk detail): engine 223/223, security 21/21,
+lintrules 3/3, `check:architecture` 38/38, `validate:battle-cases` 425/425.
 
 ## Testing philosophy
 
@@ -58,6 +58,9 @@ Angka yang diharapkan (lihat README untuk detail): engine 213/213, lintrules 3/3
 - Case library end-to-end adalah **data**, bukan kode: `src/services/battle/cases/*.json`.
   Menambah cakupan = menambah JSON + `expect`; engine tidak boleh tahu kasus mana
   yang ada. Guard runner-nya dibuktikan dengan mutasi (`check:battle-guards`).
+  Kasus berlabel juga menjadi input [scripts/calibrate-weights.mjs](scripts/calibrate-weights.mjs)
+  (harness kalibrasi bobot, D19) — labelnya adalah pemenang kanon yang kamu
+  tulis di `expect`, jadi menjaga kejujuran label = menjaga kualitas kalibrasi.
 - Uji aturan lint sendiri ada di `tools/eslint-plugin-architecture/__tests__/`
   (RuleTester). Saat menambah/merubah aturan: sertakan kasus regresi untuk bug
   yang ditemukan — konvensi repo ini.
@@ -72,8 +75,11 @@ Angka yang diharapkan (lihat README untuk detail): engine 213/213, lintrules 3/3
   asersi determinisme.
 - `scripts/run-battle-cases.mjs` — runner case library yang sama yang dipakai CI.
 
-Pastikan nama berkas test mengikuti pola `*.test.ts` di `tests/battle-engine/`
-agar diikat `npm run test:engine`.
+Pastikan nama berkas test mengikuti pola `*.test.ts`: `tests/battle-engine/`
+untuk engine (diikat `npm run test:engine`), `tests/security/` untuk guard &
+integration test rute admin (`npm run test:security`). `npm test` menjalankan
+ketiga suite itu berurutan — suite baru yang tidak terikat salah satu script
+akan lolos diam-diam secara lokal dan hanya gagal di CI.
 
 **Test-driven development.** Pendekatan repo ini:
 

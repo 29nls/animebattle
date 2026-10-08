@@ -16,7 +16,8 @@
     "check:architecture": "node scripts/check-architecture.mjs",
     "test:lint-rules": "node --test tools/eslint-plugin-architecture/__tests__/*.test.mjs",
     "test:engine": "node --test tests/battle-engine/*.test.ts",
-    "test": "npm run test:engine && npm run test:lint-rules"
+    "test:security": "node --import ./tests/security/register-alias.mjs --test tests/security/*.test.ts",
+    "test": "npm run test:engine && npm run test:security && npm run test:lint-rules"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.3.0",

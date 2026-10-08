@@ -1923,6 +1923,16 @@ anime-vs-battle/
 └─ .github/workflows/{ci.yml,lighthouse.yml,scheduled-ingest.yml}
 ```
 
+> **Status penegakan CI (diperbarui):** ketiga workflow pada pohon di atas
+> **telah terpasang** di `.github/workflows/`. `ci.yml` menjalankan sembilan
+> gerbang (typecheck, lint, schema, battle-cases, guards, architecture,
+> test engine+security+lint-rules, build produksi); `lighthouse.yml`
+> menegakkan anggaran §29.1 (AC-21 `error`; AC-22/G8 `warn` hingga Sprint 1);
+> `scheduled-ingest.yml` adalah pemicu cron */15m yang fail-closed hingga
+> deployment produksi tersedia. Guard rute admin memakai bearer secret
+> (`ADMIN_INGESTION_SECRET`) sebagai jembatan §28 sebelum Supabase Auth + RLS
+> + MFA (Sprint 4).
+
 **Aturan arsitektur yang ditegakkan tooling**
 
 | Aturan | Alasan | Penegakan | Status |

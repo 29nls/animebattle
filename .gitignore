@@ -17,3 +17,6 @@ node_modules/
 # ini, hasil pertama dari clone bersih adalah kegagalan typecheck yang tidak
 # mencerminkan masalah nyata — dan verifikasi yang gagal saat pertama dijalankan
 # akan cenderung diabaikan orang.
+
+# Lighthouse CI (artifact lokal)
+.lighthouseci/

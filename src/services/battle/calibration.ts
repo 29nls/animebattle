@@ -37,12 +37,16 @@ export interface LabelledBattleCase {
 
 export interface EvaluationReport {
   total: number;
-  /** Kasus yang dinilai (label a/b DAN engine menghasilkan pemenang). */
+  /**
+   * Kasus yang dinilai: label a/b dipertemukan dengan pemenang a/b, dan
+   * label draw dipertemukan dengan hasil draw. Kasus `insufficient_data`
+   * dikecualikan seluruhnya (tidak ada prediksi yang dapat dibuat).
+   */
   evaluated: number;
   correct: number;
-  /** correct/evaluated; 0 bila tidak ada kasus yang dinilai. */
+  /** correct/evaluated; 0 bila tidak ada kasus yang dinilai. Selalu ≤ 1. */
   accuracy: number;
-  /** Mean squared error probabilitas; 0 bila tidak ada kasus yang dinilai. */
+  /** Mean squared error probabilitas (target 0,5 untuk draw); 0 bila kosong. */
   brier: number;
   drawCount: number;
   insufficientCount: number;
@@ -68,23 +72,23 @@ export function evaluateRuleSet(cases: readonly LabelledBattleCase[], ruleSet: R
       insufficientCount += 1;
       continue;
     }
-    if (result.winner === 'draw' || item.label === 'draw') {
-      drawCount += 1;
-      // Prediksi draw diperlakukan benar hanya bila label juga draw.
-      if (item.label === 'draw') correct += 1;
-      continue;
-    }
-    if (result.winner !== 'a' && result.winner !== 'b') continue;
+
+    const predictedDraw = result.winner === 'draw';
+    if (predictedDraw || item.label === 'draw') drawCount += 1;
+
+    // Prediksi draw adalah klaim yang dapat salah, jadi ikut penyebut:
+    // label draw ↔ hasil draw = benar; label a/b ↔ hasil draw (atau
+    // sebaliknya) = salah, karena menimbulkan/menyembunyikan pemenang.
+    if (predictedDraw !== (item.label === 'draw')) mislabeled.push(item.id);
 
     evaluated += 1;
-    const p = result.win_probability.a;
-    const yA = item.label === 'a' ? 1 : 0;
-    // Brier multikelas dua sisi: Σ_kelas (p_kelas − y_kelas)².
+    const yA = item.label === 'draw' ? 0.5 : item.label === 'a' ? 1 : 0;
+    const p = predictedDraw ? 0.5 : result.win_probability.a;
     brierSum += (p - yA) ** 2 + (1 - p - (1 - yA)) ** 2;
-    if (result.winner === item.label) {
+    if (predictedDraw === (item.label === 'draw') && !predictedDraw && result.winner === item.label) {
       correct += 1;
-    } else {
-      mislabeled.push(item.id);
+    } else if (predictedDraw && item.label === 'draw') {
+      correct += 1;
     }
   }
 
@@ -96,7 +100,7 @@ export function evaluateRuleSet(cases: readonly LabelledBattleCase[], ruleSet: R
     brier: evaluated === 0 ? 0 : brierSum / evaluated,
     drawCount,
     insufficientCount,
-    mislabeled: [...mislabeled].sort(),
+    mislabeled: [...new Set(mislabeled)].sort(),
   };
 }
 

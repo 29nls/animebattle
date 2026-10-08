@@ -23,13 +23,13 @@ import {
 } from '../../src/services/battle/calibration.ts';
 import { runBattle } from '../../src/services/battle/engine.ts';
 import { defaultRuleSet, battleInput, strongerSideA, weakerSideB } from './helpers.ts';
-import type { LabelledBattleCase, WeightKey } from '../../src/services/battle/calibration.ts';
-import type { SideData } from '../../src/services/battle/types.ts';
+import type { LabelledBattleCase } from '../../src/services/battle/calibration.ts';
+import type { SideData, WeightKey } from '../../src/services/battle/types.ts';
 
 /** Kasus sintetis kecil: A lebih kuat → label 'a', B lebih kuat → label 'b'. */
 function makeCase(
   id: string,
-  label: 'a' | 'b',
+  label: 'a' | 'b' | 'draw',
   sideA: SideData,
   sideB: SideData,
 ): LabelledBattleCase {
@@ -55,17 +55,22 @@ describe('evaluateRuleSet', () => {
     assert.equal(report.insufficientCount, 0);
   });
 
-  it('tidak menghitung draw dan insufficient_data pada akurasi', () => {
+  it('menghitung draw pada penyebut, insufficient_data dikecualikan seluruhnya', () => {
+    // Kontrak evaluator: prediksi draw adalah klaim yang dapat salah, jadi
+    // kasus draw dihitung di penyebut. Hanya insufficient_data yang bebas
+    // dikecualikan (tidak ada prediksi yang mungkin di sana — §8.5).
     const cases = [
       ...sampleCases(),
-      makeCase('seri', 'a', sideEVEN(), sideEVEN()), // engine akan menyatakan draw
+      makeCase('seri', 'draw', sideEVEN(), sideEVEN()), // label draw, hasil draw → benar
       makeCase('kurang', 'a', sideTANPA_TIER(), weakerSideB()), // insufficient_data
     ];
     const report = evaluateRuleSet(cases, defaultRuleSet);
     assert.equal(report.total, 6);
     assert.equal(report.drawCount, 1);
     assert.equal(report.insufficientCount, 1);
-    assert.equal(report.evaluated, 4);
+    assert.equal(report.evaluated, 5);
+    assert.ok(report.accuracy <= 1, 'akurasi selalu ≤ 1');
+    assert.ok(!report.mislabeled.includes('seri'));
   });
 
   it('kasus kosong → akurasi 0 dan brier 0 tanpa melempar error', () => {

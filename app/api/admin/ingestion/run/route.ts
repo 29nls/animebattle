@@ -14,15 +14,36 @@
  * kehilangan seluruh pekerjaan saat timeout, dan menyembunyikan status
  * sebenarnya dari admin (PRD §18.1, D10).
  *
- * Otorisasi (`is_admin()`), rate limit (AC-26), dan CSRF ada di Sprint 0/4 dan
- * belum dipasang di scaffold ini — route ini belum boleh diekspos publik.
+ * Keamanan (AC-26, PRD §28): guard otentikasi Bearer fail-closed + rate limit
+ * per identitas (6 permintaan/menit). Tanpa `ADMIN_INGESTION_SECRET`, route ini
+ * menolak 503 untuk SEMUA penelepon — tidak pernah bisa dipanggil publik.
+ * CSRF menyusul bersama migrasi ke Supabase Auth (Sprint 4).
  */
 
+import { adminGuard } from '@/lib/security/admin-guard.ts';
+import { FixedWindowRateLimiter } from '@/lib/security/rate-limiter.ts';
 import { getSqlClient } from '@/lib/db/client.ts';
 import { enqueueIngestionJob } from '@/services/queue/ingestion-jobs.ts';
 import type { IngestionJobScope } from '@/services/queue/ingestion-jobs.ts';
 
 export const dynamic = 'force-dynamic';
+
+// Limit 6/menit: jauh di bawah kebutuhan operasional (tombol Sync Now),
+// jauh di atas yang sah; AC-26 menugaskan 60/jam/admin untuk import.
+const limiter = new FixedWindowRateLimiter(6, 60_000, () => Date.now());
+
+function reject(request: Request): Response | null {
+  const auth = adminGuard(request, process.env, 'ADMIN_INGESTION_SECRET');
+  if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
+  const limit = limiter.check(auth.identity);
+  if (!limit.allowed) {
+    return Response.json(
+      { error: 'Terlalu banyak permintaan.', retry_after_ms: limit.retryAfterMs },
+      { status: 429, headers: { 'retry-after': String(Math.ceil(limit.retryAfterMs / 1000)) } },
+    );
+  }
+  return null;
+}
 
 const SCOPES: readonly IngestionJobScope[] = [
   'incremental',
@@ -40,6 +61,9 @@ function isScope(value: unknown): value is IngestionJobScope {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const denied = reject(request);
+  if (denied) return denied;
+
   let body: unknown;
   try {
     body = await request.json();
