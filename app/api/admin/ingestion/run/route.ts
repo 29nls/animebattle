@@ -20,9 +20,10 @@
  * CSRF menyusul bersama migrasi ke Supabase Auth (Sprint 4).
  */
 
+import { apiError } from '@/lib/errors.ts';
 import { adminGuard } from '@/lib/security/admin-guard.ts';
 import { FixedWindowRateLimiter } from '@/lib/security/rate-limiter.ts';
-import { getSqlClient } from '@/lib/db/client.ts';
+import { getSqlClient, isDatabaseUnavailable } from '@/lib/db/client.ts';
 import { enqueueIngestionJob } from '@/services/queue/ingestion-jobs.ts';
 import type { IngestionJobScope } from '@/services/queue/ingestion-jobs.ts';
 
@@ -34,13 +35,15 @@ const limiter = new FixedWindowRateLimiter(6, 60_000, () => Date.now());
 
 function reject(request: Request): Response | null {
   const auth = adminGuard(request, process.env, 'ADMIN_INGESTION_SECRET');
-  if (!auth.ok) return Response.json({ error: auth.error }, { status: auth.status });
+  if (!auth.ok) {
+    return apiError(auth.status === 503 ? 'UNAVAILABLE' : 'UNAUTHORIZED', auth.error, auth.status);
+  }
   const limit = limiter.check(auth.identity);
   if (!limit.allowed) {
-    return Response.json(
-      { error: 'Terlalu banyak permintaan.', retry_after_ms: limit.retryAfterMs },
-      { status: 429, headers: { 'retry-after': String(Math.ceil(limit.retryAfterMs / 1000)) } },
-    );
+    return apiError('RATE_LIMITED', 'Terlalu banyak permintaan.', 429, {
+      details: { retry_after_ms: limit.retryAfterMs },
+      headers: { 'retry-after': String(Math.ceil(limit.retryAfterMs / 1000)) },
+    });
   }
   return null;
 }
@@ -68,16 +71,13 @@ export async function POST(request: Request): Promise<Response> {
   try {
     body = await request.json();
   } catch {
-    return Response.json({ error: 'Body harus berupa JSON.' }, { status: 400 });
+    return apiError('INVALID_INPUT', 'Body harus berupa JSON.', 400);
   }
 
   const payload = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
   const scope = payload.scope ?? 'manual_run';
   if (!isScope(scope)) {
-    return Response.json(
-      { error: `scope tidak dikenal. Pilihan: ${SCOPES.join(', ')}.` },
-      { status: 400 },
-    );
+    return apiError('INVALID_INPUT', `scope tidak dikenal. Pilihan: ${SCOPES.join(', ')}.`, 400);
   }
 
   const targetRef = typeof payload.target_ref === 'string' ? payload.target_ref : undefined;
@@ -104,6 +104,10 @@ export async function POST(request: Request): Promise<Response> {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return Response.json({ error: message }, { status: 503 });
+    // Admin adalah pemanggil tepercaya, jadi pesan asli tetap ditampilkan;
+    // yang diperbaiki adalah klasifikasinya (gangguan konektivitas → 503).
+    return isDatabaseUnavailable(error)
+      ? apiError('UNAVAILABLE', message, 503)
+      : apiError('INTERNAL', message, 500);
   }
 }

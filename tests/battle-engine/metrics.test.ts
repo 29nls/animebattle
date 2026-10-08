@@ -317,10 +317,18 @@ describe('experienceAdvantage', () => {
     assert.equal(experienceAdvantage(a, b), 1);
   });
 
-  it('memberi -1 bila sisi A tanpa pengalaman dan sisi B punya', () => {
+  it('memberi 0 bila salah satu sisi ≤ 0 tahun — rasio logaritmik tidak bermakna (PRD §17.1)', () => {
     const a = side({ metrics: { experience: 0 } });
     const b = side({ metrics: { experience: 10 } });
-    assert.equal(experienceAdvantage(a, b), -1);
+    assert.equal(experienceAdvantage(a, b), 0);
+    assert.equal(experienceAdvantage(b, a), 0);
+  });
+
+  it('memberi 0 bila pengalaman salah satu sisi tidak terdokumentasi (null), bukan hukuman maksimal', () => {
+    const a = side({ metrics: { experience: null } });
+    const b = side({ metrics: { experience: 10 } });
+    assert.equal(experienceAdvantage(a, b), 0);
+    assert.equal(experienceAdvantage(b, a), 0);
   });
 
   it('memberi nilai negatif proporsional bila A sedikit lebih muda', () => {

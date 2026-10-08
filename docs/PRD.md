@@ -499,8 +499,8 @@ Qualifier adalah modifier pada klaim, bukan bagian dari tier.
 | `tier` | ordinal (FK `tiers`) | ladder tier | ✔ bobot 12 |
 | `attack_potency` | ordinal (FK `stat_scales`) | energi (log10 joule) | ✔ 13 |
 | `durability` | ordinal | energi (log10 joule) | ✔ 10 |
-| `striking_strength` | ordinal | energi (log10 joule) | ✔ 5 |
-| `lifting_strength` | ordinal | massa (log10 kg) | ✔ 3 |
+| `striking_strength` | ordinal | energi (log10 joule) | — disimpan & ditampilkan; **belum diskor** di rule set default |
+| `lifting_strength` | ordinal | massa (log10 kg) | — disimpan & ditampilkan; **belum diskor** di rule set default |
 | `speed` | ordinal + kuantitatif bila ada | m/s (log10), ekstensi non-fisik untuk FTL | ✔ 12 |
 | `reaction_speed` | ordinal | m/s = kecepatan yang bisa direspons | ✔ 5 |
 | `combat_speed` | ordinal | aksi/detik (log10) | ✔ 5 |
@@ -513,7 +513,9 @@ Qualifier adalah modifier pada klaim, bukan bagian dari tier.
 | `resistance_coverage` | turunan | rasio kategori ofensif lawan yang ditahan | ✔ 5 |
 | `abilities` | relasional | count + kategori | ✔ 6 |
 
-Total bobot default = **100**.
+Total bobot default = **100** untuk **14 metrik yang diskor** (§17.2): `tier` 12, `attack_potency` 13, `durability` 10, `speed` 12, `reaction_speed` 5, `combat_speed` 5, `range` 4, `stamina` 5, `intelligence` 4, `battle_iq` 6, `experience` 3, `abilities` 6, `hax` 10, `resistances` 5.
+
+> **Catatan `striking_strength` & `lifting_strength`.** Keduanya metrik ber-rank yang tetap disimpan di `statistics` dan tampil di halaman perbandingan, tetapi **tidak** termasuk `WEIGHT_KEYS` engine (`types.ts`) dan tidak ada di `battle_rule_sets.weights`. Memberi keduanya bobot (mis. 5 dan 3, seperti pada draf tabel sebelumnya) membuat Σw = 108 dan ditolak `validateRuleSet`; itu perubahan rule set + `rule_set_version` baru, bukan sekadar penyuntingan tabel ini.
 
 ### 13.2 Struktur penyimpanan
 
@@ -550,7 +552,7 @@ Format kanonik `stat_value`:
 | `"Up to Solar System level"` | `scale = solar_system`, `qualifier = up_to`, `min = planet` |
 | `"Higher with Ki Charge"` | `scale = …`, `conditions[{type: state, delta_rank: 2}]` |
 | `"Far higher with Ultra Instinct"` | `conditions[{type: form, delta_rank: 4, multiplier: 1.5}]` |
-| `"Varies"` | `qualifier = varies` → engine menjalankan dua skenario (typical/best-case) dan menampilkan keduanya |
+| `"Varies"` | `qualifier = varies` → **MVP:** metrik dikeluarkan dari skoring, dicatat sebagai `varies_metric:<metrik>:<sisi>` di `limitations[]`, dan `confidence` diturunkan (§12.3). Dua skenario (typical/best-case) menunggu kolom `best_case_scale_id`/`typical_scale_id` — Phase 2 |
 | `"Unknown"` | metrik di-skip + dicatat di `limitations[]` |
 
 **Aturan SR-1:** semua representasi menyimpan `raw_text` **apa adanya** agar bukti asli tidak hilang saat normalisasi (audit).
@@ -630,7 +632,9 @@ character_resistances (character_version_id, resistance_type_id, level, evidence
 
 ### 15.3 Matriks status interaksi (dipakai rule engine)
 
-Status default bila TIDAK ADA aturan `hax_interactions` pasangan ability↔resistensi; aturan data menggantikan sel matriks yang cocok (lihat `resolveResistance` di `hax-engine.ts`).| attack_level \ resistance_level | none | limited | moderate | high | absolute |
+Status default bila TIDAK ADA aturan `hax_interactions` pasangan ability↔resistensi; aturan data menggantikan sel matriks yang cocok (lihat `resolveResistance` di `hax-engine.ts`).
+
+| attack_level \ resistance_level | none | limited | moderate | high | absolute |
 |---|---|---|---|---|---|
 | weak | effective | effective | reduced | blocked | blocked |
 | medium | effective | reduced | reduced | blocked | blocked |
@@ -657,8 +661,13 @@ Status default bila TIDAK ADA aturan `hax_interactions` pasangan ability↔resis
 
 ### 16.2 Input
 
+Kontrak pada boundary API (klien → route handler) sengaja berbeda dari kontrak
+engine: klien hanya mengirim ID, server yang memuat data (PRD §36 — klien tidak
+boleh menentukan statistik).
+
 ```ts
-type BattleInput = {
+// Boundary API — sama dengan contoh pada §24.
+type BattleRequest = {
   side_a: { character_version_id: string };
   side_b: { character_version_id: string };
   conditions: {
@@ -674,6 +683,23 @@ type BattleInput = {
 };
 ```
 
+```ts
+// Kontrak engine (route handler → services/battle; sumber: `types.ts`).
+// Data sudah dimuat sebagai SideData hasil RPC `battle_dataset`; kondisi sudah
+// dinormalisasi — engine tidak mengenal ID database maupun I/O (PRD §39).
+type BattleInput = {
+  side_a: SideData;
+  side_b: SideData;
+  conditions: BattleConditions; // battlefield: 'neutral'|'open'|'enclosed'|'urban'|'void'
+                                // starting_distance_rank: number | null
+  rule_set_version?: string;
+};
+```
+
+**Pemetaan antar-lapisan.** `starting_distance_scale_id` → `starting_distance_rank`
+dan `battlefield_id` → enum `battlefield` dilakukan lapisan pemuatan data
+(Sprint 1), bukan engine — itulah harga menjaga engine bebas I/O.
+
 ### 16.3 Alur keputusan berlapis
 
 ```
@@ -688,7 +714,11 @@ LAYER 1  Dominasi mutlak (Absolute Dominance Gate)
          (mismatch-nya ekstrem, tetapi KESULITAN bagi pemenang justru minimal —
           konsisten dengan pemetaan Layer 5; "extreme" pada kesempatan ini akan
           bertabrakan dengan arti difficulty di Layer 5)
-         (dilewati bila hax decisive milik pihak tertinggal ada)
+         (dilewati bila hax decisive milik pihak tertinggal ada, atau bila pihak
+          tertinggal punya resistensi **bersumber** (RS-1) terhadap salah satu
+          kategori ofensif pihak dominan — dicek di `checkDominance()`)
+         (ambang `dominance_gate.speed_delta` bukan syarat gate ini; ia dipakai
+          Layer 2 untuk menolak aktivasi ability yang lebih lambat dari lawan)
 
 LAYER 2  Decisive Edge (hax & win condition)
          Untuk setiap ability ofensif milik A:
@@ -775,7 +805,7 @@ type BattleResult = {
 
 | Pola | Arti | Sumber kode |
 |---|---|---|
-| `missing_metric:<metrik>:<a\|b>` | metrik tidak terdokumentasi pada sisi tersebut | `gates.ts` (metrik wajib) & `metrics.ts` (metrik skoring) |
+| `missing_metric:<metrik>:<a\|b>` | metrik tidak terdokumentasi pada sisi tersebut | `gates.ts` (metrik wajib), `metrics.ts` (metrik ber-rank), & `scoring.ts` (`experience`, yang bukan metrik ber-rank) |
 | `unknown_metric:<metrik>:<a\|b>` | metrik bernilai `unknown` → tidak dapat dibandingkan | `gates.ts` & `qualifiers.ts` |
 | `varies_metric:<metrik>:<a\|b>` | metrik bernilai `varies` → dikeluarkan dari skoring | `qualifiers.ts` |
 
@@ -1176,6 +1206,8 @@ Prinsip: **server-side filtering wajib**, semua endpoint publik read-only, mutas
 
 **Konvensi:** `GET /api/...` cacheable (`s-maxage` + `stale-while-revalidate`), error format seragam `{ error: { code, message, details? } }`, pagination `?page=&per_page=20|50|100|200` (cap 200), semua list mengembalikan `{ data, page, per_page, total, has_more }`.
 
+**Status implementasi (Sprint 0/1 scaffold).** Envelope error sudah diterapkan di seluruh route yang ada melalui [`src/lib/errors.ts`](../src/lib/errors.ts); field tambahan (mis. `retry_after_ms` pada 429) berada di `details`, bukan di akar objek. Tabel rate limit di atas adalah target setelah limiter terdistribusi (Upstash/KV, Sprint 4); implementasi jembatan saat ini memakai limiter in-process per instance — 6/menit untuk `run`/`import` dan 30/menit untuk `metrics`, dengan identitas dari `X-Forwarded-For` (fallback principal statis, mengikuti guard admin). `POST /api/battle/simulate` dan `GET /api/search` belum memakai rate limit; `GET /api/search` juga belum memakai envelope list (§24) — keduanya Sprint 1/Sprint 4. Klasifikasi error mengikuti tabel di bawah: gangguan konektivitas database → 503 `UNAVAILABLE` dengan pesan generik, sedangkan bug → 500 `INTERNAL` dengan pesan generik pada route anonim (detail asli hanya di log server; `isDatabaseUnavailable()` di `src/lib/db/client.ts`). Pengecualian bentuk: `GET /api/health` dan `GET /api/health/ready` mengembalikan dokumen status yang dibaca probe infrastruktur (bukan envelope), namun tidak pernah memuat pesan driver — `database` hanya berisi klasifikasi dan `error` berisi kalimat generik.
+
 | Method | Path | Auth | Fungsi | Cache | Rate limit |
 |---|---|---|---|---|---|
 | GET | `/api/characters` | anon | List + filter + sort + pagination | `s-maxage=300, swr=3600` | 120/min/IP |
@@ -1267,6 +1299,7 @@ Prinsip: **server-side filtering wajib**, semua endpoint publik read-only, mutas
 | `UNAUTHORIZED` / `FORBIDDEN` | 401/403 | Bukan admin | Redirect login |
 | `SOURCE_DISABLED` | 409 | Import dari sumber non-allowed | Pesan kebijakan sumber (IG-3) |
 | `INTERNAL` | 500 | Bug | Halaman error + request id |
+| `UNAVAILABLE` | 503 | Layanan gagal tertutup / belum dikonfigurasi (DB atau secret admin tidak disetel) | Tampilkan pesan operasional; **jangan** retry otomatis — konfigurasi yang hilang bukan gangguan sementara |
 
 ---
 
@@ -1582,7 +1615,7 @@ Tanpa PII, tanpa cookie pihak ketiga untuk tracking, tanpa fingerprinting. Analy
 | M3 | Character page | Semua blok §10/§27 | Komentar, rating |
 | M4 | Character forms | Multi-form, tab, URL per form | Form buatan pengguna |
 | M5 | Tier system | Tabel configurable + qualifier | Kalibrasi komunitas |
-| M6 | Basic statistics | 16 metrik §13 | Simulasi fenomena fisika terperinci |
+| M6 | Basic statistics | 13 metrik tersimpan + 3 metrik turunan (§13.1) | Simulasi fenomena fisika terperinci |
 | M7 | Abilities | Katalog + relasi + evidence | Marketplace ability |
 | M8 | Resistances | Katalog + level + evidence | — |
 | M9 | Ingestion architecture | Job queue, adapter, staging, retry, resumable, admin import | Scraping agresif multi-sumber |
@@ -1692,6 +1725,8 @@ Semua AC diverifikasi dengan bukti konkret (test otomatis, query SQL, laporan Li
 | AC-28 | Determinisme engine | Jalankan 500 pasangan acak 2×: 100% `input_hash` & hasil identik |
 | AC-29 | Hasil dengan data kurang jujur | Form tanpa durability → `insufficient_data` atau flag `low_confidence` + `limitations[]` terisi; tidak ada tebakan diam-diam |
 | AC-30 | Dokumentasi operasional tersedia | Runbook ingestion, conflict review, takedown, dan rollback tersimpan di repo |
+
+**Status bukti per 2026-10-08** (jujur — AC yang belum lulus dilaporkan sebagai belum lulus): AC-21 lulus secara terukur (Performance 100% pada 5 URL build produksi), tetapi diukur dengan **preset desktop** sementara target §29.1 adalah mobile 4G — karena itu CI saat ini menandai AC-22 (a11y 0,94; SEO 0,92) dan AC-23 (`resource-summary:script:size` 142.277 B > 120 KB) sebagai `warn`, bukan `error`. AC-24, AC-27, dan AC-30 belum dikerjakan (Sprint 2/4). AC-25 lulus lewat lint arsitektur. AC-26 sebagian: rute admin dibatasi 6/menit (`run`, `import`) dan 30/menit (`metrics`) serta teruji di `tests/security/`; `POST /api/battle/simulate` belum dibatasi. AC-28 belum dijalankan pada 500 pasangan acak — determinisme baru terbukti pada 39 kasus (AC-35). AC-29 lulus lewat kasus `incomplete-*`. Beralih ke pengukuran mobile dan menaikkan `warn` → `error` adalah pekerjaan Sprint 1.
 
 ### 35.3 Kriteria kualitas simulasi
 
@@ -1861,7 +1896,8 @@ anime-vs-battle/
 │  │  │  ├─ qualifiers.ts
 │  │  │  ├─ difficulty.ts
 │  │  │  ├─ reasoning.ts                # template deterministik + validator RG-1
-│  │  │  ├─ rule-set.ts                 # load & validasi battle_rule_sets
+││  │  ├─ rule-set.ts                    # load & validasi battle_rule_sets
+│  │  ├─ calibration.ts                 # harness kalibrasi bobot (D21): accuracy, Brier, LOO
 │  │  │  ├─ stable-json.ts              # bentuk kanonik input_hash (kunci cache)
 │  │  │  ├─ types.ts                    # kontrak tipe; tanpa nilai runtime
 │  │  │  ├─ index.ts                    # barrel publik engine
@@ -1905,7 +1941,8 @@ anime-vs-battle/
 │     └─ __tests__/rules.test.mjs       # uji unit + regresi bug yang ditemukan
 ├─ tests/
 │  ├─ architecture/fixtures/            # [ada] fixture melanggar/bersih + expected.mjs & probe zona
-│  ├─ battle-engine/                    # [ada] 213 unit test engine per modul (node --test)
+│  ├─ battle-engine/                    # [ada] 225 unit test engine per modul, 8 berkas (node --test)
+│  ├─ security/                         # [ada] 32 test: guard admin, rute cron, kontrak error route (unit & integration handler)
 │  ├─ ingestion/                        # idempotency, resume, rate limit, robots
 │  └─ e2e/                              # Playwright: search → battle → share
 ├─ scripts/
@@ -1913,13 +1950,14 @@ anime-vs-battle/
 │  ├─ run-battle-cases.mjs              # [ada] runner AC-31..34, 425 pemeriksaan
 │  ├─ mutate-battle-guards.mjs          # [ada] uji mutasi guard AC-36 (6 mutasi)
 │  ├─ check-architecture.mjs            # [ada] fixture + false-positive + 4 invarian, 38 pemeriksaan
+│  ├─ calibrate-weights.mjs             # [ada] CLI kalibrasi bobot dari case library (D21)
 │  ├─ refresh-mv.sql                    # [ada] REFRESH MV CONCURRENTLY untuk cron
 │  ├─ seed-bench-10k.ts · seed-bench-100k.ts
 │  ├─ bench-queries.sql · explain-check.ts
 │  └─ import-dataset.ts
 ├─ docs/
 │  ├─ PRD.md · APPENDICES.md · schema.sql · seed.sql
-│  └─ runbooks/{ingestion.md,conflict-review.md,takedown.md,rollback.md}
+│  └─ runbooks/{ingestion.md,conflict-review.md,merge.md,takedown.md,rollback.md,incident.md}
 └─ .github/workflows/{ci.yml,lighthouse.yml,scheduled-ingest.yml}
 ```
 
@@ -1945,7 +1983,7 @@ anime-vs-battle/
 
 ### 39.1 Model zona
 
-Lint batas dibangun di atas enam zona yang didefinisikan sekali di `tools/architecture/zones.mjs`. Zona adalah **satu-satunya** sumber kebenaran: `eslint.config.mjs` merakit konfigurasinya, dan `scripts/check-architecture.mjs` memverifikasi cakupannya.
+Lint batas dibangun di atas lima zona yang didefinisikan sekali di `tools/architecture/zones.mjs`. Zona adalah **satu-satunya** sumber kebenaran: `eslint.config.mjs` merakit konfigurasinya, dan `scripts/check-architecture.mjs` memverifikasi cakupannya.
 
 | Zona | Jalur | Aturan yang berlaku |
 |---|---|---|
@@ -2082,6 +2120,7 @@ Jika R1 (akses sumber) memaksa pembatasan impor, **Sprint 2 tetap dapat selesai*
 | D18 | Cap pagination 200 & tanpa endpoint bulk | Endpoint ekspor lengkap | Melindungi data dan biaya; mencegah kloning produk |
 | D19 | Case library sebagai artefak wajib | Mengandalkan uji manual | Satu-satunya cara menjaga kualitas engine agar tidak regresi saat bobot diubah |
 | D20 | i18n & multi-bahasa ditunda ke Phase 2 | i18n sejak Sprint 0 | Fokus MVP pada data & engine; i18n menambah kompleksitas konten (alias, transliterasi) |
+| D21 | Kalibrasi bobot dari case library berlabel (`calibration.ts`, `scripts/calibrate-weights.mjs`); hasilnya = **usulan rule set versi baru** | Tuning bobot manual / grid-search tanpa pembanding | Label `expect.winner` membuat setiap usulan bobot dapat diuji ulang lewat runner; kalibrasi tidak pernah menulis bobot secara diam-diam — perubahan tetap melewati `rule_set_version` + case library (D19) |
 
 ---
 

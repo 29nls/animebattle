@@ -3,6 +3,10 @@ node_modules/
 .DS_Store
 *.log
 .env*
+# Kecuali template: `.env.example` harus ikut ter-commit, jika tidak kontributor
+# baru tidak punya daftar variabel lingkungan yang dibutuhkan (dan rute admin
+# akan tampak "rusak" hanya karena secret belum disetel).
+!.env.example
 .freebuff/
 
 # Next.js

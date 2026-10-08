@@ -181,11 +181,18 @@ export function proficiencyWeight(proficiency: string): number {
 /**
  * Metrik `experience` bersifat numerik (tahun), bukan ordinal: PRD §17.1 memakai
  * rasio logaritmik. Mengembalikan a_i pada [-1, 1].
+ *
+ * Dua kasus sengaja bernilai netral 0, sesuai PRD §17.1: salah satu sisi
+ * tidak terdokumentasi (`null`) atau ≤ 0 tahun. Rasio logaritmiknya tidak
+ * bermakna (penyebut nol), dan mengubahnya menjadi ±1 akan memberi hukuman
+ * maksimal justru pada data yang tidak diketahui. Kekurangan data itu tetap
+ * terlihat lewat `missingScoringMetricCount` (keyakinan) dan entri
+ * `missing_metric:experience:*` (keterbatasan) di `scoring.ts`.
  */
 export function experienceAdvantage(sideA: SideData, sideB: SideData): number {
-  const yearsA = sideA.metrics.experience ?? 0;
-  const yearsB = sideB.metrics.experience ?? 0;
-  if (yearsA <= 0 && yearsB <= 0) return 0;
+  const yearsA = sideA.metrics.experience;
+  const yearsB = sideB.metrics.experience;
+  if (yearsA === null || yearsB === null || yearsA <= 0 || yearsB <= 0) return 0;
   const value = Math.log10(yearsA + 1) / Math.log10(yearsB + 1) - 1;
   return clamp(value, -1, 1);
 }

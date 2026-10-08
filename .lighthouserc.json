@@ -1,5 +1,5 @@
 {
-  "$comment": "Konfigurasi Lighthouse CI (PRD §29.1, AC-21, AC-22, G8). Anggaran mengikuti target PRD: Performance >= 90 (mobile), SEO >= 95, Accessibility >= 95, Best-Practices >= 90, dan berat JS klien < 120 KB gzip per halaman data. Start server memakai output produksi (next start) sesuai kontrak gerbang 9 di ci.yml.",
+  "$comment": "Konfigurasi Lighthouse CI (PRD §29.1, AC-21, AC-22, G8). Anggaran mengikuti target PRD: Performance >= 90 (mobile), SEO >= 95, Accessibility >= 95, Best-Practices >= 90, dan berat JS klien < 120 KB gzip per halaman data. Preset yang dipakai saat ini `desktop` (scaffold), sedangkan target §29.1 adalah mobile 4G — beralih ke preset mobile adalah pekerjaan Sprint 1. Hasil terukur: Performance 100% (AC-21), Best-Practices lulus, a11y 0,94 / SEO 0,92 (AC-22) dan script 142.277 B (AC-23). Start server memakai output produksi (next start) sesuai kontrak gerbang 9 di ci.yml.",
   "ci": {
     "collect": {
       "startServerCommand": "npm run start",
@@ -18,7 +18,7 @@
       }
     },
     "assert": {
-      "$comment": "Tahap scaffold: AC-21 (Performance >= 90) dipaksa sebagai ERROR — saat ini 100% halaman lulus. AC-22 (a11y/SEO >= 95) dan G8 (JS < 120 KB) berstatus WARN karena hasil terukur hari ini 0.94 / 0.92 / 142 KB; naikkan ke error saat Sprint 1 menyalakan halaman berbasis database (lihat docs/PRD.md §35.2).",
+      "$comment": "Tahap scaffold: AC-21 (Performance >= 90) dipaksa sebagai ERROR — saat ini 100% halaman lulus (preset desktop). AC-22 (a11y/SEO >= 95) dan G8/AC-23 (JS < 120 KB) berstatus WARN karena hasil terukur 0.94 / 0.92 / 142 KB; naikkan ke error saat Sprint 1 menyalakan halaman berbasis database dan beralih ke profil mobile (lihat docs/PRD.md §35.2).",
       "assertions": {
         "categories:performance": ["error", { "minScore": 0.9 }],
         "categories:seo": ["warn", { "minScore": 0.95 }],

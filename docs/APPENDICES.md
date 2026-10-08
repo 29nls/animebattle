@@ -563,6 +563,8 @@ Skala effort: S ≤ 3 hari · M ≈ 1 minggu · L ≈ 2 minggu · XL ≥ 3 mingg
 
 Konvensi umum: semua respons JSON; error `{ error: { code, message, details? } }`; list mengembalikan `{ data, page, per_page, total, has_more }`; `per_page ∈ {20,50,100,200}` (cap 200); parameter tidak dikenal ditolak 400.
 
+**Status implementasi (scaffold Sprint 0/1).** Tabel ini kontrak lengkap; yang sudah berjalan baru 8 route: `GET /api/health`, `GET /api/health/ready`, `GET /api/search`, `POST /api/battle/simulate`, `POST /api/admin/ingestion/run`, `POST /api/admin/ingestion/import`, `GET /api/admin/metrics`, dan `GET /api/cron/sync` (baris 44–45 di bawah melengkapinya). Route yang mengembalikan **kesalahan** memakai envelope yang sama (`src/lib/errors.ts`); `GET /api/search` masih mengembalikan array polos tanpa envelope list sampai Sprint 1. Pengecualiannya dua endpoint kesehatan: `/api/health` dan `/api/health/ready` mengembalikan **dokumen status** (`status`/`database`, bukan `{ error: { code } }`) karena itu yang dibaca probe infrastruktur — aturan non-kebocorannya tetap sama, `database: "connection_failed"` hanya klasifikasi sementara pesan driver masuk log server.
+
 | # | Method | Path | Auth | Request (ringkas) | Response (ringkas) | Cache | Rate limit | Lokasi kode |
 |---|---|---|---|---|---|---|---|---|
 | 1 | GET | `/api/characters` | anon | `?q&tier&verse&media&gender&form&ability&resistance&speed&ap&sort&page&per_page` | daftar karakter ringkas | `s-maxage=300, swr=3600` | 120/min/IP | `app/api/characters/route.ts` |
@@ -608,6 +610,8 @@ Konvensi umum: semua respons JSON; error `{ error: { code, message, details? } }
 | 41 | POST | `/api/admin/sources/:id/disable` | admin | `{ reason }` | kill switch aktif | — | 30/hari | `…/[id]/disable/route.ts` |
 | 42 | GET | `/api/admin/metrics` | admin | — | ringkasan sistem | no-store | 300/jam | `app/api/admin/metrics/route.ts` |
 | 43 | GET | `/api/admin/audit` | admin | `?actor&entity&page` | audit log | no-store | 300/jam | `app/api/admin/audit/route.ts` |
+| 44 | GET | `/api/health/ready` | anon | — | kesiapan database; `status` ∈ `ready`/`not_configured`/`unhealthy`, 503 bila belum dikonfigurasi, `database: "connection_failed"` tanpa pesan driver | no-store | 60/min | `app/api/health/ready/route.ts` |
+| 45 | GET | `/api/cron/sync` | cron (Bearer `CRON_SECRET`) | — | `{ processed, count }` — maks 3 job/tick | no-store | — | `app/api/cron/sync/route.ts` |
 
 \* Endpoint publik yang mengizinkan POST dibatasi rate limit + (bila skor risiko tinggi) challenge bot. Semua endpoint publik memverifikasi `X-Robots-Tag: noindex, nofollow` pada respons API agar tidak menjadi konten duplikat.
 
@@ -709,7 +713,7 @@ Konvensi global: `id uuid primary key default gen_random_uuid()`, `created_at ti
 | `characters` | 100.000 | ~120 MB | Termasuk index & trgm |
 | `character_aliases` | 350.000 | ~120 MB | trgm index dominan |
 | `character_versions` | 350.000 | ~180 MB | Banyak FK scale |
-| `statistics` | 5.600.000 | ~900 MB | 16 metrik × 350k, plus superseded |
+| `statistics` | 4.550.000 | ~750 MB | 13 metrik tersimpan × 350k, plus baris superseded |
 | `character_abilities` | 12.000.000 | ~1,4 GB | Rata-rata 34 ability/form |
 | `character_resistances` | 4.000.000 | ~500 MB | — |
 | `feats` | 3.000.000 | ~600 MB | — |

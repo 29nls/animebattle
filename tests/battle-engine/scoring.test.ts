@@ -249,6 +249,16 @@ describe('buildScoreBreakdown — baris turunan', () => {
     const { breakdown } = breakdownOf(a, slowerB());
     assert.equal(row(breakdown, 'experience').note, 'tahun pengalaman tidak terdokumentasi sebagian');
   });
+
+  it('menetralkan pengalaman yang hilang: nilai 0 + entri limitations (PRD §17.1)', () => {
+    // Tanpa aturan ini, `null` yang dikonversi ke 0 tahun menghasilkan rasio
+    // logaritmik −1 — hukuman maksimal untuk data yang justru tidak diketahui.
+    const a = side({ metrics: { experience: null } });
+    const { breakdown, limitations } = breakdownOf(a, slowerB());
+    assert.equal(row(breakdown, 'experience').a_value, 0);
+    assert.ok(limitations.includes('missing_metric:experience:a'));
+    assert.ok(!limitations.includes('missing_metric:experience:b'));
+  });
 });
 
 describe('buildScoreBreakdown — kejujuran data', () => {

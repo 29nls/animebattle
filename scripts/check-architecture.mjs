@@ -139,7 +139,11 @@ function walk(dir) {
 }
 const allFixtures = walk(fixtureDir)
   .map((path) => rel(path))
-  .filter((path) => path.endsWith('.ts'));
+  // `.tsx` wajib ikut: fixture halaman (`app/page.tsx`) menguji bahwa zona
+  // jalur request juga berlaku untuk berkas TSX; menyaring hanya `.ts` membuat
+  // fixture TSX baru dapat hadir di disk tanpa pernah didaftarkan — persis
+  // lubang yang invarian ini ada untuk menutupnya.
+  .filter((path) => path.endsWith('.ts') || path.endsWith('.tsx'));
 const undocumented = allFixtures.filter((path) => !(path in EXPECTED));
 check(
   'invarian: setiap fixture punya harapan',

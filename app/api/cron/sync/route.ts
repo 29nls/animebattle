@@ -18,6 +18,8 @@
  */
 
 import { getSqlClient } from '@/lib/db/client.ts';
+import { apiError } from '@/lib/errors.ts';
+import { secretsMatch } from '@/lib/security/admin-guard.ts';
 import { claimNextPendingJob, markJobCompleted, markJobFailed } from '@/services/queue/job-lifecycle.ts';
 import { runIngestionJob } from '@/services/ingestion/pipeline.ts';
 
@@ -30,14 +32,22 @@ const MAX_JOBS_PER_TICK = 3;
 export async function GET(request: Request): Promise<Response> {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
-    return Response.json(
-      { error: 'CRON_SECRET belum dikonfigurasi; endpoint ini sengaja gagal tertutup.' },
-      { status: 503 },
+    return apiError(
+      'UNAVAILABLE',
+      'CRON_SECRET belum dikonfigurasi; endpoint ini sengaja gagal tertutup.',
+      503,
     );
   }
 
-  if (request.headers.get('authorization') !== `Bearer ${secret}`) {
-    return Response.json({ error: 'Tidak berwenang.' }, { status: 401 });
+  // Perbandingan timing-safe, sama seperti guard rute admin: perbandingan string
+  // biasa (`!==`) membocorkan panjang/prefiks secret lewat waktu eksekusi.
+  const [scheme, ...rest] = (request.headers.get('authorization') ?? '').trim().split(/\s+/);
+  if (
+    (scheme ?? '').toLowerCase() !== 'bearer' ||
+    rest.length === 0 ||
+    !secretsMatch(rest.join(' '), secret)
+  ) {
+    return apiError('UNAUTHORIZED', 'Tidak berwenang.', 401);
   }
 
   const sql = getSqlClient();

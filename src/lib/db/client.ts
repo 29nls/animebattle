@@ -42,6 +42,49 @@ export class DatabaseNotConfiguredError extends Error {
   }
 }
 
+/**
+ * Kode error Node/driver yang berarti database **tidak dapat dihubungi** —
+ * gangguan infrastruktur, bukan bug aplikasi. Route memakainya untuk menjawab
+ * 503 `UNAVAILABLE` alih-alih 500 `INTERNAL`, supaya klien dan monitor tidak
+ * menyalahkan kode atas jaringan/kredensial yang bermasalah (PRD §24).
+ */
+const CONNECTIVITY_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ECONNABORTED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'EPIPE',
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'CERT_HAS_EXPIRED',
+]);
+
+/**
+ * Apakah error ini berarti database tidak tersedia (bukan bug kode)?
+ *
+ * Mencakup: konfigurasi yang hilang, kode konektivitas Node/TLS, SQLSTATE
+ * kelas `08` (connection exception), dan shutdown server. Sengaja **tidak**
+ * menebak dari pesan kecuali untuk kasus TLS yang muncul sebagai pesan tanpa
+ * `code` pada sebagian versi Node.
+ */
+export function isDatabaseUnavailable(error: unknown): boolean {
+  if (error instanceof DatabaseNotConfiguredError) return true;
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  if (typeof code === 'string') {
+    if (CONNECTIVITY_CODES.has(code)) return true;
+    if (/^08[0-9A-Z]{3}$/.test(code)) return true;
+    if (code === '57P01' || code === '57P03') return true;
+  }
+  const message = error instanceof Error ? error.message : '';
+  return /self-signed certificate|certificate chain|unable to verify|getaddrinfo/i.test(message);
+}
+
 let injected: SqlClient | null = null;
 
 /**

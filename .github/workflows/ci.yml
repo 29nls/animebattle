@@ -1,6 +1,6 @@
 # CI — Anime VS Battle
 #
-# Menjalankan kedelapan gerbang verifikasi pada setiap push (dan pull request).
+# Menjalankan kesembilan gerbang verifikasi pada setiap push (dan pull request).
 # Angka yang diharapkan tiap gerbang terdokumentasi di README.md ("Verifikasi")
 # dan docs/CONTRIBUTING.md; test engine menuntut Node >= 22 (type stripping).
 # Penjaga schema (validate:schema) memakai PGlite (Postgres 16 WASM) — bekerja
@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   verify:
-    name: Verifikasi lengkap (8 gerbang)
+    name: Verifikasi lengkap (9 gerbang)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -64,8 +64,8 @@ jobs:
       - name: Gerbang 6 · Architecture (38 pemeriksaan)
         run: npm run check:architecture
 
-      # ── Gerbang 7+8: unit engine + RuleTester lint rules ────────────────
-      - name: Gerbang 7+8 · Unit engine & lint rules (213+3)
+      # ── Gerbang 7+8: engine + security + RuleTester lint rules ──────────
+      - name: Gerbang 7+8 · Unit engine, security & lint rules (225+32+3)
         run: npm test
 
       # ── Gerbang 9: build produksi (next build) ─────────────────────────

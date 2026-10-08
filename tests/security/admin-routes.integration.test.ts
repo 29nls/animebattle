@@ -19,7 +19,7 @@ const ENV_KEY = 'ADMIN_INGESTION_SECRET';
 
 const { POST: runPost } = await import('../../app/api/admin/ingestion/run/route.ts');
 const { POST: importPost } = await import('../../app/api/admin/ingestion/import/route.ts');
-const { GET: statsGet } = await import('../../app/api/admin/stats/route.ts');
+const { GET: metricsGet } = await import('../../app/api/admin/metrics/route.ts');
 
 function jsonRequest(
   url: string,
@@ -46,8 +46,9 @@ describe('integration — admin ingestion/run', () => {
   it('503 fail-closed tanpa secret — tanpa menyentuh DB', async () => {
     const response = await runPost(jsonRequest('http://localhost/api/admin/ingestion/run', { scope: 'manual_run' }));
     assert.equal(response.status, 503);
-    const data = (await response.json()) as { error: string };
-    assert.match(data.error, /belum dikonfigurasi/);
+    const data = (await response.json()) as { error: { code: string; message: string } };
+    assert.equal(data.error.code, 'UNAVAILABLE');
+    assert.match(data.error.message, /belum dikonfigurasi/);
   });
 
   it('401 dengan secret salah', async () => {
@@ -62,10 +63,11 @@ describe('integration — admin ingestion/run', () => {
       jsonRequest('http://localhost/api/admin/ingestion/run', { scope: 'manual_run' }, { authorization: 'Bearer benar' }),
     );
     assert.equal(response.status, 503);
-    const data = (await response.json()) as { error: string };
+    const data = (await response.json()) as { error: { code: string; message: string } };
+    assert.equal(data.error.code, 'UNAVAILABLE');
     // Pesan berasal dari DB client, bukan guard — artinya auth sudah lewat.
-    assert.doesNotMatch(data.error, /belum dikonfigurasi; rute admin/);
-    assert.match(data.error, /Database belum dikonfigurasi/);
+    assert.doesNotMatch(data.error.message, /belum dikonfigurasi; rute admin/);
+    assert.match(data.error.message, /Database belum dikonfigurasi/);
   });
 
   it('429 setelah melewati batas 6 permintaan valid', async () => {
@@ -78,10 +80,15 @@ describe('integration — admin ingestion/run', () => {
     }
     assert.equal(last!.status, 429);
     assert.ok((last!.headers.get('retry-after') ?? '') !== '');
+    const data = (await last!.json()) as {
+      error: { code: string; message: string; details?: { retry_after_ms?: number } };
+    };
+    assert.equal(data.error.code, 'RATE_LIMITED');
+    assert.ok((data.error.details?.retry_after_ms ?? 0) > 0);
   });
 });
 
-describe('integration — admin ingestion/import & admin/stats', () => {
+describe('integration — admin ingestion/import & admin/metrics', () => {
   beforeEach(() => {
     delete process.env[ENV_KEY];
     delete process.env.DATABASE_URL;
@@ -102,24 +109,28 @@ describe('integration — admin ingestion/import & admin/stats', () => {
       jsonRequest('http://localhost/api/admin/ingestion/import', { scope: 'import_url' }, { authorization: 'Bearer benar' }),
     );
     assert.equal(response.status, 503);
-    const data = (await response.json()) as { error: string };
-    assert.match(data.error, /Database belum dikonfigurasi/);
+    const data = (await response.json()) as { error: { code: string; message: string } };
+    assert.equal(data.error.code, 'UNAVAILABLE');
+    assert.match(data.error.message, /Database belum dikonfigurasi/);
   });
 
-  it('stats: 401 tanpa header, 503 tanpa secret', async () => {
-    const unauth = await statsGet(new Request('http://localhost/api/admin/stats'));
+  it('metrics: 503 tanpa secret (fail-closed), 401 dengan secret salah', async () => {
+    const unauth = await metricsGet(new Request('http://localhost/api/admin/metrics'));
     assert.equal(unauth.status, 503); // fail-closed: tanpa secret, bahkan header pun tak relevan
 
     process.env[ENV_KEY] = 'benar';
-    const wrong = await statsGet(new Request('http://localhost/api/admin/stats', { headers: { authorization: 'Bearer salah' } }));
+    const wrong = await metricsGet(new Request('http://localhost/api/admin/metrics', { headers: { authorization: 'Bearer salah' } }));
     assert.equal(wrong.status, 401);
+    const data = (await wrong.json()) as { error: { code: string } };
+    assert.equal(data.error.code, 'UNAUTHORIZED');
   });
 
-  it('stats: guard lolos → 503 dari DB (urutan benar)', async () => {
+  it('metrics: guard lolos → 503 dari DB (urutan benar)', async () => {
     process.env[ENV_KEY] = 'benar';
-    const response = await statsGet(new Request('http://localhost/api/admin/stats', { headers: { authorization: 'Bearer benar' } }));
+    const response = await metricsGet(new Request('http://localhost/api/admin/metrics', { headers: { authorization: 'Bearer benar' } }));
     assert.equal(response.status, 503);
-    const data = (await response.json()) as { error: string };
-    assert.match(data.error, /Database belum dikonfigurasi/);
+    const data = (await response.json()) as { error: { code: string; message: string } };
+    assert.equal(data.error.code, 'UNAVAILABLE');
+    assert.match(data.error.message, /Database belum dikonfigurasi/);
   });
 });

@@ -17,7 +17,8 @@
  */
 
 import { simulateFromSides, simulateFromVersions } from '@/features/battle/simulate.ts';
-import { getSqlClient } from '@/lib/db/client.ts';
+import { DatabaseNotConfiguredError, getSqlClient, isDatabaseUnavailable } from '@/lib/db/client.ts';
+import { apiError } from '@/lib/errors.ts';
 import { validateRuleSet } from '@/services/battle/index.ts';
 import type {
   BattleConditions,
@@ -90,7 +91,7 @@ export async function POST(request: Request): Promise<Response> {
   try {
     body = await request.json();
   } catch {
-    return Response.json({ error: 'Body harus berupa JSON.' }, { status: 400 });
+    return apiError('INVALID_INPUT', 'Body harus berupa JSON.', 400);
   }
 
   const payload = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
@@ -102,12 +103,10 @@ export async function POST(request: Request): Promise<Response> {
   // Jalur pratinjau: klien memasok datanya sendiri.
   if (payload.sides !== undefined) {
     if (!previewAllowed) {
-      return Response.json(
-        {
-          error:
-            'Jalur pratinjau tidak aktif. Kirim side_a_version_id/side_b_version_id, atau set ALLOW_BATTLE_PREVIEW=1 pada lingkungan non-produksi.',
-        },
-        { status: 403 },
+      return apiError(
+        'FORBIDDEN',
+        'Jalur pratinjau tidak aktif. Kirim side_a_version_id/side_b_version_id, atau set ALLOW_BATTLE_PREVIEW=1 pada lingkungan non-produksi.',
+        403,
       );
     }
 
@@ -116,7 +115,7 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json(simulateFromSides({ ...sides, conditions }, DEFAULT_RULE_SET));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return Response.json({ error: message }, { status: 400 });
+      return apiError('INVALID_INPUT', message, 400);
     }
   }
 
@@ -124,10 +123,7 @@ export async function POST(request: Request): Promise<Response> {
   const a = payload.side_a_version_id;
   const b = payload.side_b_version_id;
   if (typeof a !== 'string' || typeof b !== 'string') {
-    return Response.json(
-      { error: 'Butuh side_a_version_id dan side_b_version_id (string UUID).' },
-      { status: 400 },
-    );
+    return apiError('INVALID_INPUT', 'Butuh side_a_version_id dan side_b_version_id (string UUID).', 400);
   }
 
   // Divalidasi SEBELUM menyentuh database. Sebelumnya pemeriksaan ini ada di
@@ -136,12 +132,10 @@ export async function POST(request: Request): Promise<Response> {
   // belum dikonfigurasi", dan pesan itu menyalahkan konfigurasi server atas
   // kesalahan pemanggil.
   if (a === b) {
-    return Response.json(
-      {
-        error:
-          'Kedua sisi memakai form yang sama. Pertarungan karakter dengan dirinya sendiri tidak menghasilkan analisis apa pun.',
-      },
-      { status: 400 },
+    return apiError(
+      'INVALID_INPUT',
+      'Kedua sisi memakai form yang sama. Pertarungan karakter dengan dirinya sendiri tidak menghasilkan analisis apa pun.',
+      400,
     );
   }
 
@@ -155,7 +149,15 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const status = message.includes('Database belum dikonfigurasi') ? 503 : 400;
-    return Response.json({ error: message }, { status });
+    // Konfigurasi yang hilang: pesannya operasional dan berguna bagi operator.
+    if (error instanceof DatabaseNotConfiguredError) {
+      return apiError('UNAVAILABLE', message, 503);
+    }
+    // Konektivitas: 503 + pesan generik (detail driver tidak untuk pemanggil anonim).
+    if (isDatabaseUnavailable(error)) {
+      console.error('[api/battle/simulate] database tidak dapat dihubungi:', error);
+      return apiError('UNAVAILABLE', 'Database tidak dapat dihubungi saat ini.', 503);
+    }
+    return apiError('INVALID_INPUT', message, 400);
   }
 }

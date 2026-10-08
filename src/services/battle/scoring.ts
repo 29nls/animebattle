@@ -60,6 +60,11 @@ export function buildScoreBreakdown(params: ScoringParams): ScoringOutput {
     for (const l of row.limitations) limitations.add(l);
     for (const a of row.assumptions) assumptions.add(a);
   }
+  // Pengalaman bukan metrik ber-rank, sehingga `prepareRankMetric` tidak
+  // mencatat kekurangannya. PRD §17.1 menuntut entri limitations[] juga untuk
+  // kasus ini — tanpa itu, nilai netral 0 tidak pernah dijelaskan ke pengguna.
+  if (sideA.metrics.experience === null) limitations.add('missing_metric:experience:a');
+  if (sideB.metrics.experience === null) limitations.add('missing_metric:experience:b');
   // Asumsi dari analisis cakupan resistensi (mis. "tidak ada resistensi yang
   // terdokumentasi") harus ikut terbawa; jika tidak, peringatan penting ini
   // hilang dari hasil dan pengguna mengira sisi tersebut benar-benar kebal.

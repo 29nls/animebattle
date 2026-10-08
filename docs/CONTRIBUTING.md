@@ -43,15 +43,15 @@ Sebelum membuka PR, minimal:
 ```bash
 npm run typecheck          # TS strict menolak fixture & tipe salah
 npm run lint               # batas arsitektur + next/core-web-vitals
-npm test                   # unit test engine + uji aturan lint
+npm test                   # unit test engine + security + uji aturan lint
 ```
 
-Angka yang diharapkan (lihat README untuk detail): engine 223/223, security 21/21,
+Angka yang diharapkan (lihat README untuk detail): engine 225/225, security 32/32,
 lintrules 3/3, `check:architecture` 38/38, `validate:battle-cases` 425/425.
 
 ## Testing philosophy
 
-- Test engine ada di `tests/battle-engine/` (7 berkas, Node `node --test`,
+- Test engine ada di `tests/battle-engine/` (8 berkas, Node `node --test`,
   TypeScript asli — **bukan** Jest/Vitest). Fixture dibuat lewat pabrik bertipe di
   `tests/battle-engine/helpers.ts`, sehingga `npm run typecheck` menolak fixture
   tidak sah sebelum test berjalan.
@@ -59,11 +59,16 @@ lintrules 3/3, `check:architecture` 38/38, `validate:battle-cases` 425/425.
   Menambah cakupan = menambah JSON + `expect`; engine tidak boleh tahu kasus mana
   yang ada. Guard runner-nya dibuktikan dengan mutasi (`check:battle-guards`).
   Kasus berlabel juga menjadi input [scripts/calibrate-weights.mjs](scripts/calibrate-weights.mjs)
-  (harness kalibrasi bobot, D19) — labelnya adalah pemenang kanon yang kamu
+  (harness kalibrasi bobot, D21) — labelnya adalah pemenang kanon yang kamu
   tulis di `expect`, jadi menjaga kejujuran label = menjaga kualitas kalibrasi.
 - Uji aturan lint sendiri ada di `tools/eslint-plugin-architecture/__tests__/`
   (RuleTester). Saat menambah/merubah aturan: sertakan kasus regresi untuk bug
-  yang ditemukan — konvensi repo ini.
+  yang ditemukan — konvensi repo ini. Fixture batas tinggal di
+  `tests/architecture/fixtures/` dan **wajib** didaftarkan di `expected.mjs`: baik
+  `.ts` maupun `.tsx` diperiksa oleh invarian "setiap fixture punya harapan".
+- Rute API baru wajib memakai envelope error dari `src/lib/errors.ts`
+  (`apiError`) — `{ error: { code, message, details? } }` sesuai PRD §24 — dan
+  kontrak handler-nya diuji di `tests/security/` dengan `Request` nyata (tanpa DB).
 - TDD: tulis test yang memferifikasi kontrak sebelum memperbaiki bug; buktikan
   test merah dulu, lalu hijau. Integration test (database) memakai Runner
   `validate:schema` — jalankan itu ketika menyentuh `docs/schema.sql` atau seed.
