@@ -14,7 +14,7 @@ Repo ini berisi **dokumentasi perencanaan plus empat bagian yang sudah benar-ben
 | [docs/seed.sql](docs/seed.sql) | Seed konfigurasi: ladder tier, skala stat per metrik, kategori ability, tipe resistensi, aturan interaksi hax, rule set battle default | 566 |
 | [scripts/validate-schema.mjs](scripts/validate-schema.mjs) | Validator: menjalankan DDL + seed di Postgres nyata lalu 56 uji fungsional | 614 |
 | [scripts/refresh-mv.sql](scripts/refresh-mv.sql) | Refresh materialized view `CONCURRENTLY` (di luar transaksi) untuk cron | 29 |
-| [docs/runbooks/](docs/runbooks/) | Runbook operasional (AC-30): [ingestion.md](docs/runbooks/ingestion.md) sudah ditulis; lima lainnya rencana Sprint 4 | — |
+| [docs/runbooks/](docs/runbooks/) | Runbook operasional (AC-30): **enam lengkap** — [ingestion](docs/runbooks/ingestion.md), [conflict-review](docs/runbooks/conflict-review.md), [merge](docs/runbooks/merge.md), [takedown](docs/runbooks/takedown.md), [rollback](docs/runbooks/rollback.md), [incident](docs/runbooks/incident.md); SQL lima runbook baru teruji di PGlite (2026-10-09) | — |
 
 ### Aplikasi & lint batas arsitektur (kode berjalan)
 
