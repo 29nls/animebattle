@@ -3,6 +3,9 @@ import type { Metadata } from 'next';
 export const metadata: Metadata = {
   title: 'Methodology',
   description: 'Metodologi dan cara kerja Anime VS Battle Engine.',
+  // Mewarisi canonical '/' dari layout → audit Lighthouse `canonical` gagal
+  // ("Points to the domain's root URL") — harus self-canonical (AC-22).
+  alternates: { canonical: '/legal/methodology' },
 };
 
 export default function MethodologyPage() {

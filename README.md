@@ -1,6 +1,6 @@
 # Anime VS Battle — Dokumentasi Produk
 
-Repo ini berisi **dokumentasi perencanaan plus tiga bagian yang sudah benar-benar berjalan**: skema database, **battle engine** beserta case library-nya, dan **scaffolding Next.js dengan lint batas arsitektur**. Isinya adalah PRD lengkap, diagram arsitektur, spesifikasi database, dan skrip verifikasi untuk produk **Anime VS Battle**: platform database karakter fiksi ber-form dengan mesin simulasi pertarungan yang deterministic dan traceable.
+Repo ini berisi **dokumentasi perencanaan plus empat bagian yang sudah benar-benar berjalan**: skema database, **battle engine** beserta case library-nya, **pipeline ingestion** (antrian → worker → staging → upsert ber-atribusi) dengan **panel admin** yang membaca database sungguhan, dan **scaffolding Next.js dengan lint batas arsitektur**. Isinya adalah PRD lengkap, diagram arsitektur, spesifikasi database, dan skrip verifikasi untuk produk **Anime VS Battle**: platform database karakter fiksi ber-form dengan mesin simulasi pertarungan yang deterministic dan traceable.
 
 > **Orisinalitas.** Semua taksonomi, skala nilai, aturan engine, dan struktur data di dokumen ini dirancang sendiri. Tidak ada desain visual, branding, CSS, kode sumber, atau aset dari platform lain yang disalin.
 
@@ -8,28 +8,30 @@ Repo ini berisi **dokumentasi perencanaan plus tiga bagian yang sudah benar-bena
 
 | Dokumen | Isi | Baris |
 |---|---|---|
-| [docs/PRD.md](docs/PRD.md) | PRD utama: 40 seksi (executive summary → roadmap), decision log 21 entri, risk register 18 risiko, glosarium | 2.103 |
-| [docs/APPENDICES.md](docs/APPENDICES.md) | Lampiran A–J: architecture diagram, ERD, DFD, battle engine flow, ingestion pipeline, feature matrix, API endpoint table, database table specification, user journey, roadmap — plus **Lampiran K**: format data case library | 952 |
+| [docs/PRD.md](docs/PRD.md) | PRD utama: 40 seksi (executive summary → roadmap), decision log 22 entri, risk register 18 risiko, glosarium | 2.166 |
+| [docs/APPENDICES.md](docs/APPENDICES.md) | Lampiran A–J: architecture diagram, ERD, DFD, battle engine flow, ingestion pipeline, feature matrix, API endpoint table, database table specification, user journey, roadmap — plus **Lampiran K**: format data case library | 956 |
 | [docs/schema.sql](docs/schema.sql) | PostgreSQL DDL lengkap: 37 tabel, 3 materialized view, index, constraint, trigger integritas, RLS, RPC | 1.633 |
 | [docs/seed.sql](docs/seed.sql) | Seed konfigurasi: ladder tier, skala stat per metrik, kategori ability, tipe resistensi, aturan interaksi hax, rule set battle default | 566 |
 | [scripts/validate-schema.mjs](scripts/validate-schema.mjs) | Validator: menjalankan DDL + seed di Postgres nyata lalu 56 uji fungsional | 614 |
 | [scripts/refresh-mv.sql](scripts/refresh-mv.sql) | Refresh materialized view `CONCURRENTLY` (di luar transaksi) untuk cron | 29 |
-| [docs/runbooks/README.md](docs/runbooks/README.md) | Rencana runbook operasional wajib (AC-30) | 24 |
+| [docs/runbooks/](docs/runbooks/) | Runbook operasional (AC-30): [ingestion.md](docs/runbooks/ingestion.md) sudah ditulis; lima lainnya rencana Sprint 4 | — |
 
 ### Aplikasi & lint batas arsitektur (kode berjalan)
 
 | Berkas | Isi | Baris |
 |---|---|---|
-| [app/](app/) | Next.js App Router: homepage VS bar, `/characters` (pagination server-side), `/versus`, `/compare`, `/verse/[slug]`, halaman legal, dan **8 route API** (`health`, `health/ready`, `search`, `battle/simulate`, `admin/ingestion/run`, `admin/ingestion/import`, `admin/metrics`, `cron/sync`) | — |
+| [app/](app/) | Next.js App Router: homepage VS bar, `/characters` (pagination server-side), `/versus`, `/compare`, `/verse/[slug]`, halaman legal, panel `/admin` (login sesi + dashboard + job ingestion + konflik), dan **12 route API** (`health`, `health/ready`, `search`, `battle/simulate`, `admin/ingestion/run`, `admin/ingestion/import`, `admin/ingestion/jobs`, `admin/ingestion/jobs/:id/errors`, `admin/ingestion/jobs/:id/retry`, `admin/ingestion/jobs/:id/cancel`, `admin/metrics`, `cron/sync`) | — |
 | [src/lib/security/](src/lib/security/) | Guard otentikasi rute admin (**fail-closed** Bearer + `timingSafeEqual`) dan rate limiter jendela-tetap murni (jam disuntikkan) — AC-26/§28 tahap jembatan sebelum Supabase Auth | — |
-| [.github/workflows/](.github/workflows/) | Trio workflow PRD §39, **terpasang**: `ci.yml` (9 gerbang), `lighthouse.yml` (anggaran §29.1/AC-21–22), `scheduled-ingest.yml` (cron */15m, fail-closed stub) | — |
-| [src/services/queue/](src/services/queue/) | Antrian job: `enqueueIngestionJob` (dipakai jalur request), `claimNextPendingJob`/`markJobCompleted`/`markJobFailed` (dipakai worker) | — |
+| [.github/workflows/](.github/workflows/) | Trio workflow PRD §39, **terpasang**: `ci.yml` (9 gerbang), `lighthouse.yml` (anggaran §29.1/AC-21–23, profil mobile, kelima assertion `error`), `scheduled-ingest.yml` (cron */15m, fail-closed stub) | — |
+| [src/services/queue/](src/services/queue/) | Antrian job: `enqueueIngestionJob`/`retryIngestionJob`/`cancelIngestionJob` (jalur request) dan `claimNextPendingJob`/`markJobCompleted`/`markJobFailed` (worker, termasuk backoff eksponensial & kegagalan terminal) | — |
+| [src/services/ingestion/](src/services/ingestion/) | Pipeline 7 tahap: registry sumber + allow-list, gerbang `robots.txt` fail-closed, token bucket per host, fetcher ber-SSRF (redirect manual + penolakan alamat privat), parser dataset JSON, validator, dan upsert idempoten ber-atribusi | — |
+| [src/features/admin/](src/features/admin/) | Query panel admin (ringkasan, job + atribusi, error), penyiapan impor di jalur request (staging + antrian), guard rute, dan token sesi `HMAC` untuk halaman `/admin` | — |
 | [src/features/](src/features/) | Query karakter (kolom eksplisit) dan penghubung data→engine (`battle_dataset` → `runBattle`) | — |
 | [worker/ingest.ts](worker/ingest.ts) | Entrypoint worker: satu job, lalu keluar — proses terpisah dari web | — |
 | [tools/architecture/](tools/architecture/) | Definisi zona, klasifikasi tabel besar, perakit aturan ESLint | 351 |
 | [tools/eslint-plugin-architecture/](tools/eslint-plugin-architecture/) | Tiga rule batas arsitektur + uji unitnya | 968 |
 | [tests/architecture/fixtures/](tests/architecture/fixtures/) | 22 fixture (melanggar & bersih) + `expected.mjs`, termasuk probe per-zona untuk AC-25 | — |
-| [scripts/check-architecture.mjs](scripts/check-architecture.mjs) | Pemeriksa: fixture, false-positive pada kode nyata, dan empat invarian | 336 |
+| [scripts/check-architecture.mjs](scripts/check-architecture.mjs) | Pemeriksa: fixture, false-positive pada kode nyata, dan empat invarian | 340 |
 
 **Tiga aturan yang ditegakkan, dan mengapa ditulis sendiri** (detail: [PRD §39.1](docs/PRD.md#391-model-zona)):
 
@@ -43,12 +45,12 @@ Repo ini berisi **dokumentasi perencanaan plus tiga bagian yang sudah benar-bena
 
 | Berkas | Isi | Baris |
 |---|---|---|
-| [src/services/battle/](src/services/battle/) | Engine 8 lapis: `gates` (kelayakan + dominasi), `hax-engine` (ability ↔ resistance ↔ counter), `metrics`, `scoring`, `qualifiers`, `difficulty`, `reasoning`, `rule-set`, `stable-json` — plus **`calibration`** (D21: harness kalibrasi bobot murni, koordinat-descent dengan Σ=100 dijaga eksak) | 2.686 |
+| [src/services/battle/](src/services/battle/) | Engine 8 lapis: `gates` (kelayakan + dominasi), `hax-engine` (ability ↔ resistance ↔ counter), `metrics`, `scoring`, `qualifiers`, `difficulty`, `reasoning`, `rule-set`, `stable-json` — plus **`calibration`** (D21: harness kalibrasi bobot murni, koordinat-descent dengan Σ=100 dijaga eksak) | 2.698 |
 | [src/services/battle/cases/](src/services/battle/cases/) | Case library AC-31: **39 kasus dalam 6 berkas** + `roster.json` fixture sintetis | ~919 |
 | [src/services/battle/fixtures/rule-set.default.json](src/services/battle/fixtures/rule-set.default.json) | Cermin rule set dari [docs/seed.sql](docs/seed.sql); uji drift otomatis menjaga keduanya identik | 156 |
 | [scripts/run-battle-cases.mjs](scripts/run-battle-cases.mjs) | Runner: mengeksekusi seluruh kasus, memeriksa harapan, determinisme, RG-1, invarian AC-32, sensitivitas AC-33 | 471 |
 | [scripts/mutate-battle-guards.mjs](scripts/mutate-battle-guards.mjs) | Uji mutasi guard: membuktikan runner menolak library rusak, dengan alasan yang spesifik | 162 |
-| [tests/battle-engine/](tests/battle-engine/) | **225 unit test** per modul: normalisasi metrik, gate, rule engine hax, scoring, kalibrasi Layer 4–5, harness kalibrasi bobot, reasoning/RG-1, plus determinisme dan kemurnian | 2.943 |
+| [tests/battle-engine/](tests/battle-engine/) | **225 unit test** per modul: normalisasi metrik, gate, rule engine hax, scoring, kalibrasi Layer 4–5, harness kalibrasi bobot, reasoning/RG-1, plus determinisme dan kemurnian | 2.961 |
 | [tests/security/](tests/security/) | **32 test keamanan**: guard fail-closed, pembanding timing-safe, rate limiter, dan klasifikasi error database (unit) + **17 test yang memanggil handler rute** dengan `Request` nyata — 8 rute admin (503/401/429), 3 rute cron (fail-closed + timing-safe), 6 kontrak error route anonim (503 vs 500, tanpa bocoran pesan driver, termasuk `no-store` pada `/api/health/ready`), semuanya tanpa DB | — |
 | [scripts/calibrate-weights.mjs](scripts/calibrate-weights.mjs) | CLI harness kalibrasi (D21): muat kasus berlabel → baseline vs hasil kalibrasi vs leave-one-out; label `insufficient_data` dikecualikan secara prinsip | — |
 
@@ -65,9 +67,10 @@ SEO). Nilai nyata **tidak pernah** di-commit: `.env*` ada di `.gitignore`, dan
 | Variabel | Fungsi | Perilaku bila kosong |
 |---|---|---|
 | `DATABASE_URL` | Satu-satunya koneksi Postgres | `/api/health/ready` → 503 `not_configured`; route berbasis DB → 503 `UNAVAILABLE` dengan pesan generik (detail driver hanya di log server, termasuk pada `/api/health/ready`) |
-| `ADMIN_INGESTION_SECRET` | Bearer token rute `/api/admin/*` (jembatan §28 sebelum Supabase Auth) | Rute admin **fail-closed**: 503 untuk semua penelepon |
+| `ADMIN_INGESTION_SECRET` | Bearer token rute `/api/admin/*` **dan** token login panel `/admin` (cookie sesi HMAC 12 jam) — jembatan §28 sebelum Supabase Auth | Rute API dan seluruh halaman `/admin/*` **fail-closed**: 503 untuk rute, panel terkunci untuk halaman |
 | `CRON_SECRET` | Bearer token `GET /api/cron/sync` | Endpoint cron **fail-closed**: 503 |
 | `ALLOW_BATTLE_PREVIEW` | `1` membuka jalur pratinjau simulasi (body berisi `sides`) — hanya bila `NODE_ENV !== 'production'` | Jalur pratinjau menolak 403 |
+| `ALLOW_DEMO_DATA` | `1` memakai **dataset demo sintetis** (`src/features/demo`) bila `DATABASE_URL` kosong, supaya halaman karakter/verse dan alur battle dapat dijalankan tanpa PostgreSQL | Dataset demo tidak dipakai — halaman menampilkan status database |
 | `NEXT_PUBLIC_SITE_URL` | Base URL metadata/OG/robots/sitemap | Default `http://localhost:3000` |
 
 Rahasia Bearer cukup string acak panjang (`openssl rand -hex 32`); rotasi =
@@ -84,15 +87,20 @@ npm run lint                   # ESLint: lint batas arsitektur
 npm run check:architecture     # fixture + false-positive + 4 invarian batas
 npm run test:engine            # 225 unit test engine per modul (tanpa database)
 npm run test:security          # guard admin + rute cron + rate limiter (unit & integration handler)
+npm run test:web               # dataset demo + pemilih sumber data + token sesi admin (tanpa database)
+npm run test:ingestion         # pipeline + route admin + cron di atas skema nyata (PGlite)
 npm run test:lint-rules        # uji unit aturan lint (RuleTester)
-npm test                        # ketiganya sekaligus (225 + 32 + 3)
+npm run test:lighthouse-config # guard anggaran Lighthouse CI (AC-21–23 tetap `error`)
+npm test                        # keenamnya sekaligus (225 + 32 + 13 + 28 + 3 + 4)
 npm run validate:schema        # skema + seed, keluar 1 bila ada uji gagal
 npm run validate:battle-cases  # engine + case library
 npm run check:battle-guards    # uji mutasi: guard runner benar-benar menolak library rusak
 npm run build                  # Next.js production build
 ```
 
-Keluaran yang diharapkan: `Total: 56 · lulus 56 · gagal 0` (skema) dan `Total: 425 · gagal 0` (case library), serta `ℹ tests 225 · ℹ pass 225` (unit test engine), `ℹ tests 32 · ℹ pass 32` (keamanan), `ℹ tests 3 · ℹ pass 3` (aturan lint).
+Keluaran yang diharapkan: `Total: 56 · lulus 56 · gagal 0` (skema) dan `Total: 425 · gagal 0` (case library), serta `ℹ tests 225 · ℹ pass 225` (unit test engine), `ℹ tests 32 · ℹ pass 32` (keamanan), `ℹ tests 13 · ℹ pass 13` (dataset demo, pemilihan sumber data, token sesi admin), `ℹ tests 28 · ℹ pass 28` (pipeline ingestion + route admin + cron di atas skema nyata), `ℹ tests 3 · ℹ pass 3` (aturan lint), `ℹ tests 4 · ℹ pass 4` (guard konfigurasi Lighthouse) — total 305 uji pada `npm test`.
+
+Pipeline ingestion diuji dengan cara yang sama seperti skema: **dieksekusi di atas DDL sungguhan**. `tests/ingestion/` memuat `docs/schema.sql` + `docs/seed.sql` ke PGlite, menyuntikkan klien itu lewat `setSqlClient()`, lalu menjalankan jalur produksi apa adanya — `POST /api/admin/ingestion/import` (hanya staging + antrian) → `GET /api/cron/sync` (worker) → `runIngestionJob` (fetch/parse/normalize/validate/dedupe/upsert) → `GET /api/admin/ingestion/jobs` + `.../errors` (panel). Yang dibuktikan di sana: menjalankan dataset yang sama **3×** menghasilkan `records_created = 0` pada eksekusi kedua dan ketiga (AC-08), kegagalan per record muncul di `ingestion_errors` dengan tipe dan pesan penyebabnya (AC-10), atribusi (`source_id`/`source_url`/`source_name`) terisi di setiap baris kanonik, dan kebijakan sumber benar-benar menggigit: allow-list, `robots.txt` (termasuk gagal tertutup), penolakan alamat privat (SSRF), `Retry-After`, serta token bucket per host. Fetch dan DNS disuntik, jadi hasilnya deterministik dan tidak menyentuh jaringan.
 
 ### Yang dibuktikan runner engine (bukan diklaim)
 
@@ -113,6 +121,8 @@ Keluaran yang diharapkan: `Total: 56 · lulus 56 · gagal 0` (skema) dan `Total:
 Uji mutasi dijalankan oleh [scripts/mutate-battle-guards.mjs](scripts/mutate-battle-guards.mjs): setiap mutasi diterapkan ke `cases/*.json`, runner dijalankan sebagai proses terpisah, dan hasilnya **harus** non-zero **dengan alasan yang benar** (bukan sekadar ada kegagalan di suatu tempat). Berkas selalu dipulihkan, dan pemulihannya diverifikasi lewat sha256. Script ini juga sudah diuji gagal: bila penolakan yang diharapkan tidak muncul, ia keluar dengan status 1.
 
 **Batasan verifikasi (jujur):** PGlite adalah Postgres WASM, sehingga `REFRESH MATERIALIZED VIEW CONCURRENTLY` dan kebijakan RLS berbasis klaim JWT Supabase (butuh `auth.uid()` nyata) tidak diuji di sana. Dua hal itu perlu diverifikasi sekali di instance Supabase sebelum rilis. Semua bagian lain dari skema dijalankan apa adanya.
+
+Batas yang sama berlaku untuk pipeline ingestion: gerbang, staging, error, dan idempotensinya dibuktikan di atas PGlite dengan klien yang disuntikkan — **bukan** lewat koneksi `postgres` sungguhan, dan belum lewat satu pun sumber HTTP nyata. Yang belum terverifikasi karena itu: perilaku driver `postgres` di jalur worker, `REFRESH MATERIALIZED VIEW` setelah impor besar, dan cache `robots.txt` lintas job. Halaman `/admin` sudah dijalankan di `next dev` untuk keadaan gagal-tertutup (panel terkunci tanpa secret, rute admin 503 tanpa `DATABASE_URL`, redirect login), sedangkan tampilan berisi data memerlukan PostgreSQL yang dapat dijangkau.
 
 ## Empat keputusan yang membentuk seluruh produk
 
@@ -141,9 +151,11 @@ Uji mutasi dijalankan oleh [scripts/mutate-battle-guards.mjs](scripts/mutate-bat
 | Scaffolding Next.js + lint batas | Selesai & terverifikasi (38 pemeriksaan batas, build hijau) |
 | Guard keamanan rute (admin + cron) + suite security | Selesai & terverifikasi (32 test; `ADMIN_INGESTION_SECRET`/`CRON_SECRET` fail-closed — Supabase Auth menyusul Sprint 4) |
 | Harness kalibrasi bobot (D21) | Selesai — modul murni + CLI; dataset berlabel produksi menyusul dengan battle history |
-| Anggaran performa (Lighthouse CI) | Terpasang & terukur lokal (build produksi, preset desktop, 5 URL): Performance 100% (AC-21), Best-Practices lulus; a11y 0,94 / SEO 0,92 / script 142 KB masih **WARN** (AC-22/23) — naik ke `error` di Sprint 1 |
+| Pipeline ingestion + panel admin (Sprint 2) | Selesai & terverifikasi di atas skema nyata (27 uji PGlite): antrian → staging → 7 tahap → upsert idempoten ber-atribusi (AC-08), panel error per job (AC-10), allow-list/robots/SSRF/rate limit, retry & cancel; halaman `/admin` berpenjaga sesi membaca database sungguhan. Jalur DB pada instance PostgreSQL/Supabase sungguhan menyusul — lihat batasan verifikasi |
+| Anggaran performa (Lighthouse CI) | Terpasang & terukur lokal (build produksi, **profil mobile**, 5 URL): Performance 94–96 (best-of-3, agregasi `optimistic`), Best-Practices 96, a11y 100, SEO 100 (AC-21/22 lulus); script 142,3 KB ≤ 150 KB (AC-23, anggaran dikalibrasi — PRD §35.2) — **kelima assertion `error`** |
 | Pipeline CI/CD (PRD §39) | Terpasang: `ci.yml` 9 gerbang, `lighthouse.yml`, `scheduled-ingest.yml`; eksekusi runner pertama menunggu push ke GitHub |
-| Pipeline ingestion, UI/UX penuh, auth, benchmark 10k | Belum dimulai (Sprint 1–2 pada [roadmap pengembangan](docs/PRD.md#40-implementation-roadmap)) |
+| Alur inti UI: `/versus` → `/versus/result` + halaman karakter/verse | Selesai di atas **dataset demo sintetis** (`ALLOW_DEMO_DATA=1`) dengan engine asli: pemenang, probabilitas, reasoning ber-rujukan, score breakdown, limitations, dan disclaimer §18.4 dirender dari `runBattle` — bukan angka mock. Jalur database tetap prioritas begitu `DATABASE_URL` diisi |
+| Adapter crawling per sumber, search hybrid, auth Supabase, benchmark 10k, UI/UX penuh | Belum dimulai (Sprint 2–5 pada [roadmap pengembangan](docs/PRD.md#40-implementation-roadmap)) |
 
 ## Pertanyaan terbuka yang butuh keputusan manusia
 

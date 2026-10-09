@@ -5,7 +5,8 @@
  * Pola: kolom eksplisit, join terkecil, pagination/limit pada subquery.
  */
 
-import type { SqlClient } from '../../lib/db/client.ts';
+import { demoCharacterDetail, demoEnabled } from '../demo/provider.ts';
+import { getSqlClient, isDatabaseConfigured, type SqlClient } from '../../lib/db/client.ts';
 
 export interface CharacterDetail {
   id: string;
@@ -197,4 +198,62 @@ export async function listCharacterSources(
       order by cs.fetched_at desc nulls last`,
     [characterId],
   );
+}
+
+/** Dari mana data detail berasal — halaman menampilkan penanda bila `demo`. */
+export type CharacterDetailSource = 'database' | 'demo';
+
+export interface CharacterDetailBundle {
+  character: CharacterDetail;
+  forms: CharacterFormItem[];
+  /** Form yang sedang dipilih (default = `is_default`, atau form pertama). */
+  activeForm: CharacterFormItem | null;
+  statistics: FormStatistic[];
+  abilities: FormAbility[];
+  resistances: FormResistance[];
+  sources: CharacterSourceItem[];
+  source: CharacterDetailSource;
+}
+
+/**
+ * Pemilih sumber data untuk `/character/[slug]`.
+ *
+ * Aturan prioritas sama dengan daftar karakter: database dulu; dataset demo hanya
+ * bila database belum dikonfigurasi dan `ALLOW_DEMO_DATA=1`. Form aktif dipilih
+ * sekali di sini supaya halaman tidak menebak-nebak urutan prioritasnya.
+ */
+export async function loadCharacterDetail(
+  slug: string,
+  formSlug?: string,
+): Promise<CharacterDetailBundle | null> {
+  if (demoEnabled() && !isDatabaseConfigured()) {
+    const demo = demoCharacterDetail(slug, formSlug);
+    if (!demo) return null;
+    const activeForm =
+      demo.forms.find((form) => form.slug === formSlug) ??
+      demo.forms.find((form) => form.is_default) ??
+      demo.forms[0] ??
+      null;
+    return { ...demo, activeForm, source: 'demo' };
+  }
+
+  const sql = getSqlClient();
+  const character = await getCharacterBySlug(sql, slug);
+  if (!character) return null;
+
+  const forms = await listCharacterForms(sql, character.id);
+  const activeForm =
+    forms.find((form) => form.slug === formSlug) ??
+    forms.find((form) => form.is_default) ??
+    forms[0] ??
+    null;
+
+  const [statistics, abilities, resistances, sources] = await Promise.all([
+    activeForm ? listFormStatistics(sql, activeForm.id) : Promise.resolve([]),
+    activeForm ? listFormAbilities(sql, activeForm.id) : Promise.resolve([]),
+    activeForm ? listFormResistances(sql, activeForm.id) : Promise.resolve([]),
+    listCharacterSources(sql, character.id),
+  ]);
+
+  return { character, forms, activeForm, statistics, abilities, resistances, sources, source: 'database' };
 }

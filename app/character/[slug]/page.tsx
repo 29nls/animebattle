@@ -1,17 +1,51 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
+import { loadCharacterDetail } from '@/features/characters/detail-queries.ts';
+import { DEMO_LABEL, DEMO_NOTICE } from '@/features/demo/provider.ts';
+
 export const dynamic = 'force-dynamic';
 
-export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+function titleFromSlug(slug: string): string {
+  return slug.replace(/-/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<Metadata> {
   const { slug } = await params;
-  const name = slug.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  const bundle = await loadCharacterDetail(slug);
+  const name = bundle?.character.name ?? titleFromSlug(slug);
+
   return {
-    title: `${name}`,
-    description: `Statistik, abilities, resistances, dan form dari ${name}.`,
+    title: name,
+    description: bundle?.character.description ?? `Statistik, abilities, resistances, dan form dari ${name}.`,
     alternates: { canonical: `/character/${slug}` },
   };
 }
+
+function metricLabel(metric: string): string {
+  return metric.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+/** Urutan tampil yang stabil: metrik penentu lebih dulu, pengalaman terakhir. */
+const METRIC_ORDER = [
+  'tier',
+  'attack_potency',
+  'durability',
+  'speed',
+  'reaction_speed',
+  'combat_speed',
+  'range',
+  'striking_strength',
+  'lifting_strength',
+  'stamina',
+  'intelligence',
+  'battle_iq',
+  'experience',
+];
 
 export default async function CharacterPage({
   params,
@@ -22,64 +56,88 @@ export default async function CharacterPage({
 }) {
   const { slug } = await params;
   const query = await searchParams;
-  const activeFormSlug = query.form || 'default';
-  const name = slug.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  const bundle = await loadCharacterDetail(slug, query.form);
 
-  // Mock data for UI presentation (Sprint 1 DB connection will replace this)
-  const isMock = true;
-  const mockForms = [
-    { slug: 'default', name: 'Base Form', era: 'Pre-Timeskip', is_default: true },
-    { slug: 'awakened', name: 'Awakened State', era: 'War Arc', is_default: false },
-    { slug: 'final', name: 'Final Form', era: 'End of Series', is_default: false },
-  ];
+  if (!bundle) notFound();
+
+  const { character, forms, activeForm, statistics, abilities, resistances, sources, source } = bundle;
+  const orderedStatistics = statistics.slice().sort((a, b) => {
+    const indexA = METRIC_ORDER.indexOf(a.metric);
+    const indexB = METRIC_ORDER.indexOf(b.metric);
+    return (indexA === -1 ? 99 : indexA) - (indexB === -1 ? 99 : indexB);
+  });
 
   return (
     <div className="animate-fade-in">
-      {/* ─── Warning Mock Data ─── */}
-      {isMock && (
-        <div className="mb-6 rounded-lg border border-accent-flag/30 bg-accent-flag/10 p-3 text-sm text-accent-flag flex items-center gap-2">
-          <svg className="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          <p>Tampilan ini menggunakan data mock. Koneksi ke `battle_dataset` sedang dalam pengembangan (Sprint 1).</p>
+      {source === 'demo' && (
+        <div className="mb-6 rounded-lg border border-accent-flag/30 bg-accent-flag/10 p-3 text-sm text-accent-flag flex items-start gap-2">
+          <span className="mt-0.5">⚠️</span>
+          <p>
+            <strong>{DEMO_LABEL}.</strong> {DEMO_NOTICE}
+          </p>
         </div>
       )}
 
       {/* ─── Hero Section ─── */}
       <div className="relative overflow-hidden rounded-2xl border border-line-strong bg-surface-1 shadow-card">
         <div className="absolute inset-0 bg-gradient-to-r from-accent-a/10 to-transparent opacity-50 pointer-events-none" />
-        
+
         <div className="relative flex flex-col gap-6 p-6 sm:flex-row sm:items-end sm:p-8">
-          {/* Avatar */}
           <div className="relative h-32 w-32 shrink-0 sm:h-40 sm:w-40">
-            <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-accent-a to-accent-b blur-md opacity-40 animate-pulse-glow" />
+            <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-accent-a to-accent-b blur-md opacity-40" />
             <div className="relative h-full w-full overflow-hidden rounded-2xl border-2 border-line-strong bg-surface-2">
               <div className="flex h-full w-full items-center justify-center text-4xl text-ink-3">👤</div>
             </div>
           </div>
 
-          {/* Info */}
           <div className="flex-1">
             <div className="flex flex-wrap items-center gap-3 mb-2">
-              <span className="tier-badge tier-peak text-xs px-2 py-0.5">Tier 2-A</span>
+              {activeForm?.tier_code && <span className="tier-badge tier-peak text-xs px-2 py-0.5">{activeForm.tier_code}</span>}
               <span className="rounded bg-surface-3 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider text-ink-1">
-                Data Lengkap
+                {character.data_completeness === 'complete'
+                  ? 'Data Lengkap'
+                  : character.data_completeness === 'partial'
+                    ? 'Data Sebagian'
+                    : 'Data Minimal'}
               </span>
+              {source === 'demo' && (
+                <span className="rounded bg-accent-flag/10 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider text-accent-flag">
+                  Demo
+                </span>
+              )}
             </div>
-            
-            <h1 className="text-3xl font-black text-ink-0 sm:text-5xl">{name}</h1>
-            
+
+            <h1 className="text-3xl font-black text-ink-0 sm:text-5xl">{character.name}</h1>
+            {character.native_name && <p className="mt-1 text-sm text-ink-3">{character.native_name}</p>}
+
             <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-ink-2">
-              <p><span className="font-semibold text-ink-3">Asal:</span> Mock Verse Universe</p>
-              <p><span className="font-semibold text-ink-3">Klasifikasi:</span> Human, Fighter</p>
-              <p><span className="font-semibold text-ink-3">Gender:</span> Male</p>
+              <p>
+                <span className="font-semibold text-ink-3">Verse:</span>{' '}
+                <a href={`/verse/${character.verse_slug}`} className="text-accent-b hover:underline">
+                  {character.verse_name}
+                </a>
+              </p>
+              {character.classification && (
+                <p>
+                  <span className="font-semibold text-ink-3">Klasifikasi:</span> {character.classification}
+                </p>
+              )}
+              {character.gender && (
+                <p>
+                  <span className="font-semibold text-ink-3">Gender:</span> {character.gender}
+                </p>
+              )}
+              {character.age && (
+                <p>
+                  <span className="font-semibold text-ink-3">Usia:</span> {character.age}
+                </p>
+              )}
             </div>
           </div>
 
-          {/* Battle Action */}
           <div className="sm:ml-auto">
-            <a 
-              href={`/versus?a=${slug}&af=${activeFormSlug}`}
+            <a
+              href={`/versus?a=${character.slug}/${activeForm?.slug ?? 'base'}`}
               className="btn-battle flex w-full items-center justify-center gap-2 sm:w-auto"
             >
               Battle Character
@@ -93,11 +151,11 @@ export default async function CharacterPage({
 
       {/* ─── Form Tabs (Era/Versi) ─── */}
       <div className="mt-8 flex flex-wrap gap-2 border-b border-line pb-px">
-        {mockForms.map((form) => {
-          const isActive = form.slug === activeFormSlug;
+        {forms.map((form) => {
+          const isActive = form.id === activeForm?.id;
           return (
             <a
-              key={form.slug}
+              key={form.id}
               href={`/character/${slug}?form=${form.slug}`}
               className={`relative rounded-t-lg px-4 py-2.5 text-sm font-medium transition-colors ${
                 isActive
@@ -106,136 +164,134 @@ export default async function CharacterPage({
               }`}
             >
               {form.name}
-              {form.is_default && (
-                <span className="ml-2 text-[0.6rem] uppercase tracking-wider text-ink-3">(Default)</span>
-              )}
-              {isActive && (
-                <div className="absolute -bottom-px left-0 right-0 h-px bg-surface-2" />
-              )}
+              {form.era && <span className="ml-2 text-[0.6rem] uppercase tracking-wider text-ink-3">{form.era}</span>}
+              {form.is_default && <span className="ml-2 text-[0.6rem] uppercase tracking-wider text-ink-3">(Default)</span>}
             </a>
           );
         })}
       </div>
 
+      {activeForm?.description && <p className="mt-4 text-sm text-ink-2">{activeForm.description}</p>}
+
       <div className="mt-6 grid gap-8 lg:grid-cols-[2fr_1fr]">
-        
-        {/* ─── Left Column (Stats & Core) ─── */}
+        {/* ─── Left Column (Stats & Abilities) ─── */}
         <div className="space-y-8">
-          
-          {/* Stat Grid */}
           <section className="rounded-2xl border border-line bg-surface-1 p-6">
             <h2 className="mb-6 flex items-center gap-2 text-xl font-bold text-ink-0">
               <span className="text-accent-a">📊</span> Combat Statistics
             </h2>
-            
-            <div className="grid gap-4 sm:grid-cols-2">
-              {/* Mock Stat items */}
-              <div className="rounded-xl border border-line-strong bg-surface-0/50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wider text-ink-3 mb-1">Attack Potency</p>
-                <p className="text-sm font-medium text-ink-0">Multiverse level+</p>
-                <p className="mt-1 text-xs text-ink-2 italic">"Mampu menghancurkan ruang dan waktu..."</p>
+
+            {orderedStatistics.length === 0 ? (
+              <p className="text-sm text-ink-3">Belum ada statistik terdokumentasi untuk form ini.</p>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {orderedStatistics.map((stat) => (
+                  <div key={stat.metric} className="rounded-xl border border-line-strong bg-surface-0/50 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-ink-3">
+                        {metricLabel(stat.metric)}
+                      </p>
+                      {stat.qualifier !== 'exact' && (
+                        <span className="rounded bg-accent-flag/10 px-1.5 py-0.5 text-[0.6rem] font-bold uppercase text-accent-flag">
+                          {stat.qualifier}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-sm font-medium text-ink-0">{stat.raw_text}</p>
+                    <p className="mt-1 text-[0.65rem] text-ink-3">
+                      Confidence {Math.round(stat.confidence * 100)}%
+                      {stat.source_name ? ` · ${stat.source_name}` : ''}
+                    </p>
+                  </div>
+                ))}
               </div>
-              
-              <div className="rounded-xl border border-line-strong bg-surface-0/50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wider text-ink-3 mb-1">Speed</p>
-                <p className="text-sm font-medium text-ink-0">Massively FTL+</p>
-                <p className="mt-1 text-xs text-ink-2 italic">"Melingkupi alam semesta dalam sedetik"</p>
-              </div>
-              
-              <div className="rounded-xl border border-line-strong bg-surface-0/50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wider text-ink-3 mb-1">Durability</p>
-                <p className="text-sm font-medium text-ink-0">Multiverse level+</p>
-                <p className="mt-1 text-xs text-ink-2 italic">"Menerima serangan eksistensial tanpa luka"</p>
-              </div>
-              
-              <div className="rounded-xl border border-line-strong bg-surface-0/50 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wider text-ink-3 mb-1">Stamina</p>
-                <p className="text-sm font-medium text-ink-0">Limitless</p>
-                <p className="mt-1 text-xs text-ink-2 italic">"Bertarung tanpa henti selama 1000 tahun"</p>
-              </div>
-            </div>
+            )}
           </section>
 
-          {/* Abilities (Hax) */}
           <section className="rounded-2xl border border-line bg-surface-1 p-6">
             <h2 className="mb-6 flex items-center gap-2 text-xl font-bold text-ink-0">
-              <span className="text-accent-b">✨</span> Abilities & Hax
+              <span className="text-accent-b">✨</span> Abilities &amp; Hax
             </h2>
-            
-            <div className="space-y-3">
-              <div className="group rounded-xl border border-line-strong bg-surface-0/50 p-4 transition-colors hover:border-accent-b/50">
-                <div className="flex items-start justify-between">
-                  <h3 className="font-bold text-ink-0 group-hover:text-accent-b transition-colors">Time Manipulation</h3>
-                  <span className="rounded bg-accent-b/10 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider text-accent-b">Master</span>
-                </div>
-                <p className="mt-2 text-sm text-ink-2">Dapat menghentikan waktu secara instan dan menyerang saat musuh terdiam.</p>
-                <p className="mt-3 border-l-2 border-line-strong pl-3 text-xs italic text-ink-3">Bukti: Manga Chapter 142, hal 15.</p>
-              </div>
-              
-              <div className="group rounded-xl border border-line-strong bg-surface-0/50 p-4 transition-colors hover:border-accent-b/50">
-                <div className="flex items-start justify-between">
-                  <h3 className="font-bold text-ink-0 group-hover:text-accent-b transition-colors">Existence Erasure</h3>
-                  <span className="rounded bg-accent-b/10 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider text-accent-b">Advanced</span>
-                </div>
-                <p className="mt-2 text-sm text-ink-2">Menghapus target dari realitas. Membutuhkan kontak fisik.</p>
-                <p className="mt-3 border-l-2 border-line-strong pl-3 text-xs italic text-ink-3">Bukti: Novel Vol 4.</p>
-              </div>
-            </div>
-          </section>
 
+            {abilities.length === 0 ? (
+              <p className="text-sm text-ink-3">Tidak ada ability tercatat untuk form ini (bukan berarti tidak punya).</p>
+            ) : (
+              <div className="space-y-3">
+                {abilities.map((ability) => (
+                  <div
+                    key={ability.id}
+                    className="group rounded-xl border border-line-strong bg-surface-0/50 p-4 transition-colors hover:border-accent-b/50"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="font-bold text-ink-0 group-hover:text-accent-b transition-colors">
+                        {ability.ability_name}
+                      </h3>
+                      <span className="rounded bg-accent-b/10 px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider text-accent-b">
+                        {ability.proficiency}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2 text-[0.65rem] text-ink-3">
+                      <span className="rounded bg-surface-2 px-1.5 py-0.5">{ability.category_name}</span>
+                      <span className="rounded bg-surface-2 px-1.5 py-0.5">Aktivasi: {ability.activation_speed}</span>
+                      {ability.is_passive && <span className="rounded bg-surface-2 px-1.5 py-0.5">Pasif</span>}
+                      {ability.is_offensive && <span className="rounded bg-surface-2 px-1.5 py-0.5">Ofensif</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         </div>
 
         {/* ─── Right Column (Resistances & Meta) ─── */}
         <div className="space-y-8">
-          
-          {/* Resistances */}
           <section className="rounded-2xl border border-line bg-surface-1 p-6">
             <h2 className="mb-6 flex items-center gap-2 text-xl font-bold text-ink-0">
               <span className="text-accent-win">🛡️</span> Resistances
             </h2>
-            
-            <ul className="space-y-3">
-              <li className="flex items-center justify-between rounded-lg bg-surface-2 px-3 py-2 text-sm border border-line">
-                <span className="font-medium text-ink-1">Mind Manipulation</span>
-                <span className="text-xs font-bold text-accent-win">Absolute</span>
-              </li>
-              <li className="flex items-center justify-between rounded-lg bg-surface-2 px-3 py-2 text-sm border border-line">
-                <span className="font-medium text-ink-1">Soul Manipulation</span>
-                <span className="text-xs font-bold text-accent-win">High</span>
-              </li>
-              <li className="flex items-center justify-between rounded-lg bg-surface-2 px-3 py-2 text-sm border border-line">
-                <span className="font-medium text-ink-1">Space-Time Hax</span>
-                <span className="text-xs font-bold text-accent-win">Moderate</span>
-              </li>
-              <li className="flex items-center justify-between rounded-lg bg-surface-2 px-3 py-2 text-sm border border-line opacity-50">
-                <span className="font-medium text-ink-1">Poison</span>
-                <span className="text-xs font-bold text-ink-3">None</span>
-              </li>
-            </ul>
-          </section>
 
-          {/* Sources (Traceability) */}
-          <section className="rounded-2xl border border-line bg-surface-1 p-6">
-            <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-ink-3">
-              Data Traceability
-            </h2>
-            <div className="space-y-3">
-              <p className="text-xs text-ink-2 leading-relaxed">
-                Setiap klaim angka dan kemampuan yang digunakan dalam engine berasal dari sumber tercatat.
-              </p>
-              <ul className="space-y-2 border-t border-line/50 pt-3">
-                <li className="flex flex-col gap-1">
-                  <a href="#" className="text-xs font-medium text-accent-b hover:underline">Official Databook Vol 3</a>
-                  <span className="text-[0.65rem] text-ink-3">Fetched: 05 Oct 2026 • Verified</span>
-                </li>
-                <li className="flex flex-col gap-1">
-                  <a href="#" className="text-xs font-medium text-accent-b hover:underline">Manga Chapter 100-150</a>
-                  <span className="text-[0.65rem] text-ink-3">Fetched: 01 Oct 2026 • Verified</span>
-                </li>
+            {resistances.length === 0 ? (
+              <p className="text-sm text-ink-3">Tidak ada resistensi tercatat — kemampuan hax lawan akan bekerja penuh.</p>
+            ) : (
+              <ul className="space-y-3">
+                {resistances.map((entry) => (
+                  <li
+                    key={entry.id}
+                    className="flex items-center justify-between rounded-lg bg-surface-2 px-3 py-2 text-sm border border-line"
+                  >
+                    <span className="font-medium text-ink-1">{entry.resistance_type_name}</span>
+                    <span className="text-right">
+                      <span className="block text-xs font-bold text-accent-win">{entry.level_label}</span>
+                      <span className="block text-[0.6rem] text-ink-3">
+                        {entry.verification_status === 'verified' ? 'Tersumber' : entry.verification_status}
+                      </span>
+                    </span>
+                  </li>
+                ))}
               </ul>
-            </div>
+            )}
           </section>
 
+          <section className="rounded-2xl border border-line bg-surface-1 p-6">
+            <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-ink-3">Data Traceability</h2>
+            {sources.length === 0 ? (
+              <p className="text-xs text-ink-3">
+                Belum ada sumber tercatat untuk karakter ini — bertentangan dengan AC-09 dan perlu diperbaiki sebelum rilis.
+              </p>
+            ) : (
+              <ul className="space-y-2 border-t border-line/50 pt-3">
+                {sources.map((entry) => (
+                  <li key={entry.source_id} className="flex flex-col gap-1">
+                    <span className="text-xs font-medium text-accent-b">{entry.source_name}</span>
+                    <span className="text-[0.65rem] text-ink-3">
+                      {entry.fetched_at ? `Diambil: ${entry.fetched_at.slice(0, 10)}` : 'Waktu pengambilan tidak diketahui'} ·{' '}
+                      {entry.verification_status}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         </div>
       </div>
     </div>

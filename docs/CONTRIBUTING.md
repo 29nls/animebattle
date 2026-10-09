@@ -43,11 +43,12 @@ Sebelum membuka PR, minimal:
 ```bash
 npm run typecheck          # TS strict menolak fixture & tipe salah
 npm run lint               # batas arsitektur + next/core-web-vitals
-npm test                   # unit test engine + security + uji aturan lint
+npm test                   # unit test engine + security + aturan lint + guard anggaran
 ```
 
 Angka yang diharapkan (lihat README untuk detail): engine 225/225, security 32/32,
-lintrules 3/3, `check:architecture` 38/38, `validate:battle-cases` 425/425.
+web 13/13, ingestion 28/28, lintrules 3/3, lighthouse-config 4/4,
+`check:architecture` 38/38, `validate:battle-cases` 425/425.
 
 ## Testing philosophy
 
@@ -69,6 +70,19 @@ lintrules 3/3, `check:architecture` 38/38, `validate:battle-cases` 425/425.
 - Rute API baru wajib memakai envelope error dari `src/lib/errors.ts`
   (`apiError`) — `{ error: { code, message, details? } }` sesuai PRD §24 — dan
   kontrak handler-nya diuji di `tests/security/` dengan `Request` nyata (tanpa DB).
+- Jalur yang menyentuh database diuji di `tests/ingestion/` dengan cara yang sama
+  seperti `validate:schema`: `docs/schema.sql` + `docs/seed.sql` dieksekusi di
+  PGlite, lalu klien itu disuntikkan lewat `setSqlClient()` dan **kode produksi
+  dijalankan apa adanya** (route handler, pipeline, query panel). Jangan menulis
+  mock SQL — test semacam itu akan lulus pada skema yang salah, dan itu sudah
+  pernah terjadi: query konflik menyebut tabel `source_conflicts` yang tidak ada,
+  dan baru ketahuan saat uji ini dijalankan. Fetch/DNS/jam disuntik lewat opsi
+  pipeline (`fetchImpl`, `dnsLookup`, `clock`), sehingga kebijakan robots, SSRF,
+  rate limit, dan retry dapat diuji deterministik tanpa jaringan.
+- Modul `services/ingestion/*` **tidak boleh** diimpor dari `app/**` (non-cron) atau
+  `src/features/**` (AC-25). Jalur request hanya menulis baris antrian/staging;
+  aturan itu ditegakkan lint, jadi jangan "memindahkan" logika impor ke route
+  demi menghindari worker — itu justru pelanggaran yang paling mahal.
 - TDD: tulis test yang memferifikasi kontrak sebelum memperbaiki bug; buktikan
   test merah dulu, lalu hijau. Integration test (database) memakai Runner
   `validate:schema` — jalankan itu ketika menyentuh `docs/schema.sql` atau seed.
@@ -82,9 +96,12 @@ lintrules 3/3, `check:architecture` 38/38, `validate:battle-cases` 425/425.
 
 Pastikan nama berkas test mengikuti pola `*.test.ts`: `tests/battle-engine/`
 untuk engine (diikat `npm run test:engine`), `tests/security/` untuk guard &
-integration test rute admin (`npm run test:security`). `npm test` menjalankan
-ketiga suite itu berurutan — suite baru yang tidak terikat salah satu script
-akan lolos diam-diam secara lokal dan hanya gagal di CI.
+integration test rute admin (`npm run test:security`), `tests/web/` untuk
+halaman/dataset demo + token sesi (`npm run test:web`), dan `tests/ingestion/`
+untuk pipeline + rute ingestion di atas skema nyata (`npm run test:ingestion`,
+memakai loader alias yang sama dengan suite security karena route memakai `@/`).
+`npm test` menjalankan keenam suite itu berurutan — suite baru yang tidak
+terikat salah satu script akan lolos diam-diam secara lokal dan hanya gagal di CI.
 
 **Test-driven development.** Pendekatan repo ini:
 

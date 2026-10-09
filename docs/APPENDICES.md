@@ -138,7 +138,7 @@ flowchart TB
 
 | Lapisan | Tanggung jawab | Alasan dipisahkan |
 |---|---|---|
-| Client | Interaksi & render | `<120 KB` JS per halaman; tidak ada logika bisnis |
+| Client | Interaksi & render | `< 150 KB` JS transfer per URL (anggaran dikalibrasi — PRD §29.1/§35.2); tidak ada logika bisnis |
 | Edge/CDN | Cache & ISR | Konten data jarang berubah; menurunkan TTFB dan beban DB |
 | RSC pages | Render server-side + SEO | HTML awal harus berisi konten (kebutuhan crawler) |
 | Route handlers | Kontrak API stabil | Dipakai juga oleh admin & (nanti) public API |

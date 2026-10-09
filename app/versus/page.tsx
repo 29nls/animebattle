@@ -1,5 +1,8 @@
 import type { Metadata } from 'next';
 
+import { demoBattleOptionGroups, demoEnabled } from '@/features/demo/provider.ts';
+import { isDatabaseConfigured } from '@/lib/db/client.ts';
+
 export const metadata: Metadata = {
   title: 'Battle Builder',
   description:
@@ -16,6 +19,11 @@ export default async function VersusPage({
   const sideA = params.a?.trim() ?? '';
   const sideB = params.b?.trim() ?? '';
   const bothChosen = sideA !== '' && sideB !== '';
+  // Picker berbasis dataset demo dipakai HANYA bila database belum dikonfigurasi
+  // dan operator mengaktifkan ALLOW_DEMO_DATA=1; jalur database tidak diubah.
+  const demoPicker = demoEnabled() && !isDatabaseConfigured();
+  const optionGroups = demoPicker ? demoBattleOptionGroups() : null;
+  const canSubmit = demoPicker ? true : bothChosen;
 
   return (
     <div className="animate-fade-in">
@@ -32,6 +40,12 @@ export default async function VersusPage({
 
       {/* ─── Builder Form ─── */}
       <form action="/versus/result" method="GET" className="space-y-8">
+        {demoPicker && (
+          <div className="rounded-xl border border-accent-flag/30 bg-accent-flag/10 p-4 text-sm text-accent-flag">
+            <strong>Mode demo.</strong> Pilihan di bawah berasal dari dataset demo sintetis (bukan data kanon);
+            simulasi dihitung engine asli dengan rule set default.
+          </div>
+        )}
         {/* Character Selection Grid */}
         <div className="relative grid gap-4 sm:grid-cols-[1fr_auto_1fr] lg:gap-8 items-stretch">
           
@@ -46,32 +60,55 @@ export default async function VersusPage({
             </div>
             
             <div className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3">Character</label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    name="char_a"
-                    defaultValue={sideA}
-                    placeholder="Pilih karakter..."
+              {demoPicker && optionGroups ? (
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3">Character &amp; Form</label>
+                  <select
+                    name="form_a"
                     className="input-field"
                     required
-                  />
-                  <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink-0">
-                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                  </button>
+                    defaultValue={
+                      optionGroups.some((group) => group.options.some((option) => option.value === sideA))
+                        ? sideA
+                        : optionGroups[0]?.options[0]?.value
+                    }
+                  >
+                    {optionGroups.map((group) => (
+                      <optgroup key={group.label} label={group.label}>
+                        {group.options.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
                 </div>
-              </div>
-              
-              <div className={sideA ? 'opacity-100' : 'opacity-50 pointer-events-none'}>
-                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3">Version / Era</label>
-                <select name="form_a" className="input-field appearance-none bg-[url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%236b7280%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E')] bg-[length:1em] bg-[right_0.75rem_center] bg-no-repeat">
-                  <option value="">Pilih form...</option>
-                  <option value="default">Default Form (Auto-selected)</option>
-                </select>
-              </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3">Character</label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        name="char_a"
+                        defaultValue={sideA}
+                        placeholder="Pilih karakter..."
+                        className="input-field"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className={sideA ? 'opacity-100' : 'opacity-50 pointer-events-none'}>
+                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3">Version / Era</label>
+                    <select name="form_a" className="input-field">
+                      <option value="">Pilih form...</option>
+                      <option value="default">Default Form (Auto-selected)</option>
+                    </select>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -93,32 +130,46 @@ export default async function VersusPage({
             </div>
             
             <div className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3">Character</label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    name="char_b"
-                    defaultValue={sideB}
-                    placeholder="Pilih karakter..."
-                    className="input-field"
-                    required
-                  />
-                  <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-ink-3 hover:text-ink-0">
-                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                  </button>
+              {demoPicker && optionGroups ? (
+                <div>
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3">Character &amp; Form</label>
+                  <select name="form_b" className="input-field" required defaultValue={optionGroups[1]?.options[0]?.value}>
+                    {optionGroups.map((group) => (
+                      <optgroup key={group.label} label={group.label}>
+                        {group.options.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
                 </div>
-              </div>
-              
-              <div className={sideB ? 'opacity-100' : 'opacity-50 pointer-events-none'}>
-                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3">Version / Era</label>
-                <select name="form_b" className="input-field appearance-none bg-[url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%236b7280%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E')] bg-[length:1em] bg-[right_0.75rem_center] bg-no-repeat">
-                  <option value="">Pilih form...</option>
-                  <option value="default">Default Form (Auto-selected)</option>
-                </select>
-              </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3">Character</label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        name="char_b"
+                        defaultValue={sideB}
+                        placeholder="Pilih karakter..."
+                        className="input-field"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className={sideB ? 'opacity-100' : 'opacity-50 pointer-events-none'}>
+                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3">Version / Era</label>
+                    <select name="form_b" className="input-field">
+                      <option value="">Pilih form...</option>
+                      <option value="default">Default Form (Auto-selected)</option>
+                    </select>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -187,8 +238,8 @@ export default async function VersusPage({
         <div className="flex justify-center pt-4">
           <button
             type="submit"
-            disabled={!bothChosen}
-            className={`btn-battle text-lg px-8 py-4 flex items-center gap-3 ${!bothChosen ? 'opacity-50 cursor-not-allowed' : 'animate-vs-pulse'}`}
+            disabled={!canSubmit}
+            className={`btn-battle text-lg px-8 py-4 flex items-center gap-3 ${!canSubmit ? 'opacity-50 cursor-not-allowed' : 'animate-vs-pulse'}`}
           >
             Run Simulation
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -197,7 +248,7 @@ export default async function VersusPage({
           </button>
         </div>
         
-        {!bothChosen && (
+        {!bothChosen && !demoPicker && (
           <p className="text-center text-xs text-ink-3 mt-4">
             Pilih Character A dan Character B untuk mengaktifkan simulasi.
           </p>

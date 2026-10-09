@@ -1,12 +1,8 @@
 import type { Metadata } from 'next';
 
-import {
-  DEFAULT_PAGE_SIZE,
-  countCharacters,
-  listCharacters,
-  normalizePageSize,
-} from '@/features/characters/queries.ts';
-import { getSqlClient, DatabaseNotConfiguredError } from '@/lib/db/client.ts';
+import { loadCharacterList, normalizePageSize } from '@/features/characters/queries.ts';
+import { DatabaseNotConfiguredError } from '@/lib/db/client.ts';
+import { DEMO_LABEL, DEMO_NOTICE } from '@/features/demo/provider.ts';
 import type { CharacterListItem } from '@/features/characters/queries.ts';
 
 export const metadata: Metadata = {
@@ -32,15 +28,15 @@ export default async function CharactersPage({
   let rows: CharacterListItem[] = [];
   let total: number | null = null;
   let failure: string | null = null;
+  let demoSource = false;
 
   try {
-    const sql = getSqlClient();
-    // Jika ada query pencarian, kita idealnya menggunakan searchCharacters.
-    // Tapi untuk skeleton ini, kita panggil listCharacters biasa sesuai versi awal.
-    [rows, total] = await Promise.all([
-      listCharacters(sql, { limit: perPage, offset }),
-      countCharacters(sql),
-    ]);
+    // Pemilih sumber data: database dulu; dataset demo hanya bila database belum
+    // dikonfigurasi dan ALLOW_DEMO_DATA=1 (lihat features/characters/queries.ts).
+    const loaded = await loadCharacterList({ limit: perPage, offset, query });
+    rows = loaded.rows;
+    total = loaded.total;
+    demoSource = loaded.source === 'demo';
   } catch (error) {
     failure =
       error instanceof DatabaseNotConfiguredError
@@ -52,6 +48,12 @@ export default async function CharactersPage({
 
   return (
     <div className="animate-fade-in-up">
+      {demoSource && (
+        <div className="mb-6 rounded-lg border border-accent-flag/30 bg-accent-flag/10 p-3 text-sm text-accent-flag">
+          <strong>{DEMO_LABEL}.</strong> {DEMO_NOTICE}
+        </div>
+      )}
+
       {/* ─── Header Section ─── */}
       <div className="mb-8 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-end">
         <div>
@@ -102,11 +104,13 @@ export default async function CharactersPage({
               !
             </div>
             <div>
-              <h3 className="text-base font-bold text-accent-lose">Database belum terhubung</h3>
+              <h2 className="text-base font-bold text-accent-lose">Database belum terhubung</h2>
               <p className="mt-2 text-ink-1 leading-relaxed">{failure}</p>
               <div className="mt-4 rounded bg-surface-0/50 p-3 font-mono text-xs text-ink-2 border border-line">
-                <p>Tambahkan file .env.local dengan isi:</p>
+                <p>Pilih salah satu di .env.local:</p>
                 <code className="text-accent-a">DATABASE_URL="postgres://..."</code>
+                <p className="mt-2">atau jalankan mode demo tanpa database:</p>
+                <code className="text-accent-a">ALLOW_DEMO_DATA=1</code>
               </div>
             </div>
           </div>
@@ -114,7 +118,7 @@ export default async function CharactersPage({
       ) : rows.length === 0 ? (
         <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-dashed border-line-strong bg-surface-1/50 p-8 text-center">
           <div className="h-12 w-12 text-4xl mb-4 opacity-50">🔍</div>
-          <h3 className="text-lg font-medium text-ink-0">Belum ada karakter</h3>
+          <h2 className="text-lg font-medium text-ink-0">Belum ada karakter</h2>
           <p className="mt-1 text-sm text-ink-2 max-w-sm">
             {query 
               ? `Tidak ada hasil yang cocok dengan pencarian "${query}". Coba kata kunci lain.`
@@ -174,9 +178,12 @@ export default async function CharactersPage({
                       <p className="truncate text-xs text-ink-3 mt-0.5">{character.native_name}</p>
                     )}
                     
-                    {/* Placeholder for tier until it's in the query */}
                     <div className="mt-2 flex items-center gap-2">
-                      <span className="tier-badge tier-high opacity-50 text-[10px]">Tier TBD</span>
+                      {character.tier_code ? (
+                        <span className="tier-badge tier-high text-[10px]">{character.tier_code}</span>
+                      ) : (
+                        <span className="tier-badge tier-high opacity-50 text-[10px]">Tier TBD</span>
+                      )}
                     </div>
                   </div>
                 </div>

@@ -3,6 +3,9 @@ import type { Metadata } from 'next';
 export const metadata: Metadata = {
   title: 'Takedown Request',
   description: 'Ajukan permintaan penghapusan konten yang melanggar hak cipta.',
+  // Self-canonical seperti halaman legal lain (warisan '/' dari layout tidak
+  // valid menurut audit Lighthouse `canonical`).
+  alternates: { canonical: '/legal/takedown' },
 };
 
 export default function TakedownPage() {

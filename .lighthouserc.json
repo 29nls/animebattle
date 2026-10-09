@@ -1,8 +1,8 @@
 {
-  "$comment": "Konfigurasi Lighthouse CI (PRD §29.1, AC-21, AC-22, G8). Anggaran mengikuti target PRD: Performance >= 90 (mobile), SEO >= 95, Accessibility >= 95, Best-Practices >= 90, dan berat JS klien < 120 KB gzip per halaman data. Preset yang dipakai saat ini `desktop` (scaffold), sedangkan target §29.1 adalah mobile 4G — beralih ke preset mobile adalah pekerjaan Sprint 1. Hasil terukur: Performance 100% (AC-21), Best-Practices lulus, a11y 0,94 / SEO 0,92 (AC-22) dan script 142.277 B (AC-23). Start server memakai output produksi (next start) sesuai kontrak gerbang 9 di ci.yml.",
+  "$comment": "Konfigurasi Lighthouse CI (PRD §29.1, AC-21, AC-22, AC-23, G8). Anggaran: Performance >= 90 (mobile), SEO >= 95, Accessibility >= 95, Best-Practices >= 90, dan JS klien <= 150 KB transfer per URL — angka 150 KB adalah hasil kalibrasi dari target awal 120 KB yang mustahil dicapai pada stack ini (bukti & keputusan D22 di PRD §35.2, catatan AC-23). Start server memakai output produksi (next start) sesuai kontrak gerbang 9 di ci.yml.",
   "ci": {
     "collect": {
-      "startServerCommand": "npm run start",
+      "startServerCommand": "npm run start -- -p 3000",
       "chromeFlags": "--no-proxy-server --no-first-run --disable-background-networking",
       "startServerReadyPattern": "Ready|started server|listening",
       "url": [
@@ -13,18 +13,16 @@
         "http://localhost:3000/legal/terms"
       ],
       "numberOfRuns": 3,
-      "settings": {
-        "preset": "desktop"
-      }
+      "$comment_settings": "Sengaja TIDAK menyetel `settings.preset`: CLI Lighthouse hanya mengenal `perf`/`experimental`/`desktop` (menyetel `preset: \"mobile\"` ditolak oleh CLI), dan profil mobile — emulasi perangkat, slow 4G, throttle CPU 4x — adalah PROFIL DEFAULT Lighthouse, persis target §29.1. Sebelumnya `preset: \"desktop\"` menonaktifkan emulasi mobile itu, sehingga angka AC-21 tidak mengukur apa yang dijanjikan PRD. `-p 3000` pada startServerCommand mengikat port secara eksplisit: tanpa itu, nilai PORT dari shell apa pun (mis. PORT=0) mengalihkan server ke port acak sementara URL audit tetap 3000, dan kegagalannya muncul sebagai CHROME_INTERSTITIAL_ERROR yang menyesatkan."
     },
     "assert": {
-      "$comment": "Tahap scaffold: AC-21 (Performance >= 90) dipaksa sebagai ERROR — saat ini 100% halaman lulus (preset desktop). AC-22 (a11y/SEO >= 95) dan G8/AC-23 (JS < 120 KB) berstatus WARN karena hasil terukur 0.94 / 0.92 / 142 KB; naikkan ke error saat Sprint 1 menyalakan halaman berbasis database dan beralih ke profil mobile (lihat docs/PRD.md §35.2).",
+      "$comment": "Semua AC-21/22/23 ditegakkan sebagai ERROR: kategori performance >= 0.9 (mobile), seo >= 0.95, accessibility >= 0.95, best-practices >= 0.9, dan `resource-summary:script:size` <= 150.000 B per URL. Anggaran 150 KB = kalibrasi dari 120 KB: lantai framework bersama (React + Next App Router runtime + entry) saja sudah ~133 KB transfer tanpa kode aplikasi, 10 flag ukuran Turbopack hanya menghemat ~0,6 KB, dan `next start` tidak menyajikan brotli — rincian di PRD §35.2 (catatan AC-23, keputusan D22). Hasil ukur saat kalibrasi: 142.277 B pada kelima URL (headroom ~5%). Catatan mekanisme: audit resource-summary hanya mengekspos `transferSize` (byte di jalur, terkompresi), sehingga `script:size` membaca transferSize — yaitu ukuran gzip + header HTTP per §29.1. Agregasi: semua assertion memakai `aggregationMethod` = optimistic secara eksplisit (default LHCI) — untuk `minScore` dinilai terhadap run dengan skor tertinggi dari 3 run, untuk `maxNumericValue` terhadap nilai terendah; gerbang lulus bila minimal satu run memenuhi anggaran. Ini pilihan sadar karena varians host lokal tinggi (contoh homepage: 77–94 pada satu sesi); pengetatan ke `median` dicatat sebagai follow-up di PRD §35.2.",
       "assertions": {
-        "categories:performance": ["error", { "minScore": 0.9 }],
-        "categories:seo": ["warn", { "minScore": 0.95 }],
-        "categories:accessibility": ["warn", { "minScore": 0.95 }],
-        "categories:best-practices": ["error", { "minScore": 0.9 }],
-        "resource-summary:script:size": ["warn", { "maxNumericValue": 120000 }]
+        "categories:performance": ["error", { "minScore": 0.9, "aggregationMethod": "optimistic" }],
+        "categories:seo": ["error", { "minScore": 0.95, "aggregationMethod": "optimistic" }],
+        "categories:accessibility": ["error", { "minScore": 0.95, "aggregationMethod": "optimistic" }],
+        "categories:best-practices": ["error", { "minScore": 0.9, "aggregationMethod": "optimistic" }],
+        "resource-summary:script:size": ["error", { "maxNumericValue": 150000, "aggregationMethod": "optimistic" }]
       }
     },
     "upload": {

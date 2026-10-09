@@ -137,10 +137,14 @@ export async function markJobFailed(
   sql: SqlClient,
   job_id: string,
   error_message: string,
-  options: BackoffOptions & { error_type?: IngestionErrorType } = {},
+  options: BackoffOptions & { error_type?: IngestionErrorType; terminal?: boolean } = {},
 ): Promise<MarkJobFailedResult> {
   const base = options.base_seconds ?? 2;
   const max = options.max_seconds ?? 3600;
+  // `terminal` dipakai untuk kegagalan yang tidak akan berubah bila diulang
+  // (kebijakan sumber, 401/403, dataset yang tidak sah): mencoba ulang lima kali
+  // hanya menunda terlihatnya masalah di dashboard admin.
+  const terminal = options.terminal ?? false;
 
   const rows = await sql.query<{
     status: 'pending' | 'failed';
@@ -148,9 +152,9 @@ export async function markJobFailed(
     next_attempt_at: string;
   }>(
     `update ingestion_jobs
-        set status = case when retry_count + 1 >= max_retries then 'failed'::job_status_t
+        set status = case when $6::boolean or retry_count + 1 >= max_retries then 'failed'::job_status_t
                           else 'pending'::job_status_t end,
-            completed_at = case when retry_count + 1 >= max_retries then now() else null end,
+            completed_at = case when $6::boolean or retry_count + 1 >= max_retries then now() else null end,
             updated_at = now(),
             retry_count = retry_count + 1,
             error_message = $2,
@@ -158,7 +162,7 @@ export async function markJobFailed(
             next_attempt_at = now() + (interval '1 second' * least($4::double precision, power(2, retry_count + 1) * $5::double precision))
       where id = $1
       returning status, retry_count, next_attempt_at`,
-    [job_id, error_message.slice(0, 2000), options.error_type ?? null, max, base],
+    [job_id, error_message.slice(0, 2000), options.error_type ?? null, max, base, terminal],
   );
 
   const row = rows[0];

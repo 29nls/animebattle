@@ -46,6 +46,8 @@
     "src/**/*.tsx",
     "worker/**/*.ts",
     "tests/battle-engine/**/*.ts",
+    "tests/ingestion/**/*.ts",
+    "tests/web/**/*.ts",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],

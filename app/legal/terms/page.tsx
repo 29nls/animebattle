@@ -3,6 +3,9 @@ import type { Metadata } from 'next';
 export const metadata: Metadata = {
   title: 'Terms of Use',
   description: 'Ketentuan penggunaan layanan Anime VS Battle.',
+  // Tanpa ini, halaman mewarisi canonical '/' dari layout dan audit Lighthouse
+  // `canonical` gagal: "Points to the domain's root URL" (AC-22).
+  alternates: { canonical: '/legal/terms' },
 };
 
 export default function TermsPage() {
@@ -43,7 +46,7 @@ export default function TermsPage() {
           </p>
           <p className="mt-2">
             Jika Anda adalah pemegang hak cipta dan ingin mengajukan permintaan penghapusan data, 
-            silakan kunjungi halaman <a href="/legal/takedown" className="text-accent-b hover:underline">Takedown Request</a>.
+            silakan kunjungi halaman <a href="/legal/takedown" className="text-accent-b underline underline-offset-2 hover:text-ink-0">Takedown Request</a>.
           </p>
         </section>
 

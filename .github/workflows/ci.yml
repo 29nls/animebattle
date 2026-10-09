@@ -2,7 +2,8 @@
 #
 # Menjalankan kesembilan gerbang verifikasi pada setiap push (dan pull request).
 # Angka yang diharapkan tiap gerbang terdokumentasi di README.md ("Verifikasi")
-# dan docs/CONTRIBUTING.md; test engine menuntut Node >= 22 (type stripping).
+# dan docs/CONTRIBUTING.md; test engine, web, dan ingestion menuntut Node >= 22
+# (type stripping).
 # Penjaga schema (validate:schema) memakai PGlite (Postgres 16 WASM) — bekerja
 # penuh di runner Linux tanpa jaringan/outbound tambahan.
 #
@@ -64,8 +65,10 @@ jobs:
       - name: Gerbang 6 · Architecture (38 pemeriksaan)
         run: npm run check:architecture
 
-      # ── Gerbang 7+8: engine + security + RuleTester lint rules ──────────
-      - name: Gerbang 7+8 · Unit engine, security & lint rules (225+32+3)
+      # ── Gerbang 7+8: engine + security + web + ingestion + lint/anggaran ─
+      # Suite ingestion menjalankan pipeline + route admin di atas PGlite
+      # (Postgres WASM) — sama seperti Gerbang 3, tanpa jaringan tambahan.
+      - name: Gerbang 7+8 · Unit engine, security, web, ingestion, lint rules & anggaran (225+32+13+28+3+4)
         run: npm test
 
       # ── Gerbang 9: build produksi (next build) ─────────────────────────

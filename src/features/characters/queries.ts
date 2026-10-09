@@ -15,7 +15,8 @@
  *    (PRD §18, §37).
  */
 
-import type { SqlClient } from '../../lib/db/client.ts';
+import { demoCharacterListItems, demoEnabled } from '../demo/provider.ts';
+import { getSqlClient, isDatabaseConfigured, type SqlClient } from '../../lib/db/client.ts';
 
 /**
  * Kolom yang dibutuhkan kartu daftar. Sengaja bukan `*`: menambah kolom ke sini
@@ -42,6 +43,12 @@ export interface CharacterListItem {
   data_completeness: 'complete' | 'partial' | 'minimal';
   popularity_score: number;
   updated_at: string;
+  /**
+   * Kode tier form default. Hanya diisi jalur demo saat ini; jalur database
+   * menambahkannya bersama join tier ketika halaman daftar mengembalikan tier
+   * (Sprint 1) — sengaja opsional supaya kedua sumber tetap cocok.
+   */
+  tier_code?: string | null;
 }
 
 /** Batas atas yang sama dengan yang dipaksakan fungsional RPC (PRD §18: 20/50/100/200). */
@@ -118,4 +125,37 @@ export async function searchCharacters(
 export async function countCharacters(sql: SqlClient): Promise<number> {
   const rows = await sql.query<{ total: string }>(`select count(*)::text as total from characters`);
   return Number(rows[0]?.total ?? '0');
+}
+
+/** Dari mana baris daftar berasal — halaman menampilkan penanda bila `demo`. */
+export type CharacterListSource = 'database' | 'demo';
+
+export interface CharacterListResult {
+  rows: CharacterListItem[];
+  total: number | null;
+  source: CharacterListSource;
+}
+
+/**
+ * Pemilih sumber data untuk halaman `/characters`.
+ *
+ * Urutan yang disengaja: **database dulu**, demo hanya bila database memang belum
+ * dikonfigurasi dan operator mengaktifkannya (`ALLOW_DEMO_DATA=1`). Database yang
+ * dikonfigurasi tetapi tidak dapat dihubungi sengaja **tidak** ditutupi data demo:
+ * galatnya diteruskan supaya gangguan infrastruktur terlihat, bukan tersamar.
+ */
+export async function loadCharacterList(
+  params: ListCharactersParams & { query?: string } = {},
+): Promise<CharacterListResult> {
+  if (demoEnabled() && !isDatabaseConfigured()) {
+    const rows = demoCharacterListItems(params.query);
+    return { rows, total: rows.length, source: 'demo' };
+  }
+
+  const sql = getSqlClient();
+  const [rows, total] = await Promise.all([
+    listCharacters(sql, { limit: params.limit, offset: params.offset }),
+    countCharacters(sql),
+  ]);
+  return { rows, total, source: 'database' };
 }

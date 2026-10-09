@@ -4,7 +4,8 @@
  * di komponen (PRD §39).
  */
 
-import type { SqlClient } from '../../lib/db/client.ts';
+import { demoEnabled, demoVerseDetail, demoVerseListItems } from '../demo/provider.ts';
+import { getSqlClient, isDatabaseConfigured, type SqlClient } from '../../lib/db/client.ts';
 
 export interface VerseListItem {
   id: string;
@@ -94,4 +95,38 @@ export async function listVerseCharacters(
       limit $2 offset $3`,
     [verseId, limit, offset],
   );
+}
+
+/** Dari mana baris berasal — halaman menampilkan penanda bila `demo`. */
+export type DataSource = 'database' | 'demo';
+
+/** Sumber data daftar verse: database dulu, demo hanya bila belum dikonfigurasi. */
+export async function loadVerseList(): Promise<{ rows: VerseListItem[]; source: DataSource }> {
+  if (demoEnabled() && !isDatabaseConfigured()) {
+    return { rows: demoVerseListItems(), source: 'demo' };
+  }
+
+  const sql = getSqlClient();
+  return { rows: await listVerses(sql), source: 'database' };
+}
+
+export interface VerseDetailBundle {
+  verse: VerseDetail;
+  characters: VerseCharacterItem[];
+  source: DataSource;
+}
+
+/** Sumber data detail verse. Prioritas sama: database dulu, demo bila tidak ada. */
+export async function loadVerseDetail(slug: string): Promise<VerseDetailBundle | null> {
+  if (demoEnabled() && !isDatabaseConfigured()) {
+    const demo = demoVerseDetail(slug);
+    return demo ? { ...demo, source: 'demo' } : null;
+  }
+
+  const sql = getSqlClient();
+  const verse = await getVerseBySlug(sql, slug);
+  if (!verse) return null;
+
+  const characters = await listVerseCharacters(sql, verse.id, { limit: 50 });
+  return { verse, characters, source: 'database' };
 }

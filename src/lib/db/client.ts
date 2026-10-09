@@ -85,6 +85,18 @@ export function isDatabaseUnavailable(error: unknown): boolean {
   return /self-signed certificate|certificate chain|unable to verify|getaddrinfo/i.test(message);
 }
 
+/**
+ * Apakah `DATABASE_URL` tersedia?
+ *
+ * Dipakai pemilih sumber data (database vs dataset demo) — **bukan** pengganti
+ * `getSqlClient()`: fungsi ini hanya membaca konfigurasi, tidak membuka koneksi,
+ * dan tidak menyembunyikan database yang dikonfigurasi tetapi sedang rusak.
+ * Dalam kasus itu galat koneksi asli tetap diteruskan ke pemanggil.
+ */
+export function isDatabaseConfigured(): boolean {
+  return typeof process.env.DATABASE_URL === 'string' && process.env.DATABASE_URL.trim() !== '';
+}
+
 let injected: SqlClient | null = null;
 
 /**

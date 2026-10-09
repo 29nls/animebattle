@@ -290,9 +290,12 @@ check(
 );
 
 // ----------------------- invarian 4: daftar enum route = tipe engine
-// Komentar di route mengklaim daftar ini dijaga uji. Klaim itu harus benar.
+// Komentar di modul kondisi mengklaim daftar ini dijaga uji. Klaim itu harus benar.
+// Daftar enum tinggal di `src/features/battle/conditions.ts` karena dipakai route
+// API **dan** halaman /versus/result; dua salinan akan berbeda pendapat cepat
+// atau lambat, dan bedanya halus (mode tak dikenal jatuh ke default).
 const typesSource = readFileSync(join(root, 'src/services/battle/types.ts'), 'utf8');
-const routeSource = readFileSync(join(root, 'app/api/battle/simulate/route.ts'), 'utf8');
+const conditionsSource = readFileSync(join(root, 'src/features/battle/conditions.ts'), 'utf8');
 
 const ENGINE_TYPES = {
   BattleMode: 'MODES',
@@ -304,10 +307,10 @@ const ENGINE_TYPES = {
 
 for (const [typeName, constName] of Object.entries(ENGINE_TYPES)) {
   const typeMatch = new RegExp(`export type ${typeName} =([^;]+);`).exec(typesSource);
-  const listMatch = new RegExp(`const ${constName} = \\[([^\\]]+)\\]`).exec(routeSource);
+  const listMatch = new RegExp(`const ${constName} = \\[([^\\]]+)\\]`).exec(conditionsSource);
 
   if (!typeMatch || !listMatch) {
-    check(`invarian enum ${typeName}`, false, 'tipe atau daftar route tidak ditemukan');
+    check(`invarian enum ${typeName}`, false, 'tipe engine atau daftar kondisi tidak ditemukan');
     continue;
   }
 
@@ -318,7 +321,7 @@ for (const [typeName, constName] of Object.entries(ENGINE_TYPES)) {
   check(
     `invarian enum ${typeName} ↔ ${constName}`,
     engineValues.join(',') === routeValues.join(','),
-    `engine [${engineValues.join(', ')}] vs route [${routeValues.join(', ')}]`,
+    `engine [${engineValues.join(', ')}] vs kondisi [${routeValues.join(', ')}]`,
   );
 }
 

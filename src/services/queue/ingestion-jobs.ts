@@ -91,3 +91,52 @@ export async function enqueueIngestionJob(
 
   return { job_id: row.id, status: row.status, created_at: row.created_at };
 }
+
+/**
+ * Mengembalikan job yang gagal/parsial ke antrian (tombol Retry di
+ * `/admin/ingestion`).
+ *
+ * `retry_count` tidak direset: riwayat percobaan adalah bagian dari audit, dan
+ * menghapusnya akan membuat job yang berulang gagal terlihat seperti job baru.
+ * `error_message`/`error_type` dibersihkan karena pesan lama sudah tersimpan
+ * lengkap di `ingestion_errors` — membiarkannya hanya membuat baris job
+ * menampilkan kesalahan yang sudah tidak berlaku.
+ *
+ * Job yang sedang `processing` sengaja tidak dapat di-retry: tidak ada cara
+ * membatalkan worker yang sedang berjalan, dan menandainya `pending` di sini
+ * akan menghasilkan dua worker mengerjakan job yang sama.
+ */
+export async function retryIngestionJob(sql: SqlClient, job_id: string): Promise<boolean> {
+  const rows = await sql.query<{ id: string }>(
+    `update ingestion_jobs
+        set status = 'pending',
+            completed_at = null,
+            next_attempt_at = now(),
+            error_message = null,
+            error_type = null,
+            started_at = null,
+            updated_at = now()
+      where id = $1 and status in ('failed', 'partial', 'skipped', 'pending')
+      returning id`,
+    [job_id],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Membatalkan job (tombol Cancel). Hanya job yang belum/sudah selesai — job
+ * `processing` tidak dibatalkan dari sini karena worker yang sedang memegangnya
+ * tidak dapat dihentikan dengan aman (lihat runbook ingestion).
+ */
+export async function cancelIngestionJob(sql: SqlClient, job_id: string): Promise<boolean> {
+  const rows = await sql.query<{ id: string }>(
+    `update ingestion_jobs
+        set status = 'skipped',
+            completed_at = now(),
+            updated_at = now()
+      where id = $1 and status in ('pending', 'failed', 'partial')
+      returning id`,
+    [job_id],
+  );
+  return rows.length > 0;
+}

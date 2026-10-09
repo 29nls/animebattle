@@ -16,75 +16,20 @@
  * Rate limit (AC-26) belum dipasang; lihat catatan di Sprint 4.
  */
 
+import { parseBattleConditions } from '@/features/battle/conditions.ts';
+import { defaultRuleSet } from '@/features/battle/rule-set.ts';
 import { simulateFromSides, simulateFromVersions } from '@/features/battle/simulate.ts';
 import { DatabaseNotConfiguredError, getSqlClient, isDatabaseUnavailable } from '@/lib/db/client.ts';
 import { apiError } from '@/lib/errors.ts';
-import { validateRuleSet } from '@/services/battle/index.ts';
-import type {
-  BattleConditions,
-  BattleInput,
-  RuleSet,
-} from '@/services/battle/types.ts';
-import ruleSetFixture from '@/services/battle/fixtures/rule-set.default.json';
+import type { BattleInput } from '@/services/battle/types.ts';
 
 export const dynamic = 'force-dynamic';
 
-/**
- * Rule set default dari berkas seed.
- *
- * Sementara: produksi harus memuat `battle_rule_sets` versi aktif dari database
- * (PRD §16, BC-4) agar mengubah bobot tidak menuntut deploy. Nilai fixture
- * diverifikasi dengan validator engine **saat modul dimuat**, sehingga berkas
- * yang rusak gagal cepat alih-alih menghasilkan hasil yang tampak wajar.
- */
-const DEFAULT_RULE_SET: RuleSet = (() => {
-  const candidate = ruleSetFixture as unknown as RuleSet;
-  const problems = validateRuleSet(candidate);
-  if (problems.length > 0) {
-    throw new Error(`Rule set default tidak sah: ${problems.join('; ')}`);
-  }
-  return candidate;
-})();
-
-// Daftar ini cermin dari tipe `BattleMode` di engine. Kalau engine menambah mode
-// baru dan daftar ini tidak diperbarui, mode itu diam-diam jatuh ke default —
-// karena itu daftarnya dijaga uji di scripts/check-architecture.mjs.
-const MODES = ['standard', 'equal_speed', 'in_character', 'bloodlusted', 'random_encounter'] as const;
-const BATTLEFIELDS = ['neutral', 'open', 'enclosed', 'urban', 'void'] as const;
-const KNOWLEDGE = ['none', 'partial', 'full'] as const;
-const PREP = ['none', 'short', 'extended'] as const;
-const WIN_CONDITIONS = ['ko', 'death', 'incapacitation', 'bfr', 'submission', 'any'] as const;
-
-function pick<T extends readonly string[]>(
-  allowed: T,
-  value: unknown,
-  fallback: T[number],
-): T[number] {
-  return typeof value === 'string' && (allowed as readonly string[]).includes(value)
-    ? (value as T[number])
-    : fallback;
-}
-
-/**
- * Kondisi pertarungan dibangun **di sini**, bukan diteruskan apa adanya dari
- * body: field tak dikenal tidak pernah sampai ke engine, dan nilai yang tidak
- * sah jatuh ke default yang terdokumentasi (PRD §16.2).
- */
-export function parseConditions(raw: unknown): BattleConditions {
-  const input = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
-  const distance = input.starting_distance_rank;
-
-  return {
-    mode: pick(MODES, input.mode, 'standard'),
-    speed_equalized: input.speed_equalized === true,
-    starting_distance_rank:
-      typeof distance === 'number' && Number.isFinite(distance) ? Math.trunc(distance) : null,
-    battlefield: pick(BATTLEFIELDS, input.battlefield, 'neutral'),
-    knowledge_level: pick(KNOWLEDGE, input.knowledge_level, 'partial'),
-    prep_time: pick(PREP, input.prep_time, 'none'),
-    win_condition: pick(WIN_CONDITIONS, input.win_condition, 'incapacitation'),
-  };
-}
+// Rule set default dan normalisasi kondisi dipindah ke `src/features/battle/`
+// karena dipakai juga oleh halaman `/versus/result`. Route ini tinggal memakai
+// modul yang sama — bobot dan default tidak dapat berbeda antara API dan halaman.
+// Invarian daftar enum tetap dijaga `scripts/check-architecture.mjs`
+// (sekarang membaca `src/features/battle/conditions.ts`).
 
 export async function POST(request: Request): Promise<Response> {
   let body: unknown;
@@ -95,7 +40,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const payload = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
-  const conditions = parseConditions(payload.conditions);
+  const conditions = parseBattleConditions(payload.conditions);
 
   const previewAllowed =
     process.env.NODE_ENV !== 'production' && process.env.ALLOW_BATTLE_PREVIEW === '1';
@@ -112,7 +57,7 @@ export async function POST(request: Request): Promise<Response> {
 
     const sides = payload.sides as BattleInput;
     try {
-      return Response.json(simulateFromSides({ ...sides, conditions }, DEFAULT_RULE_SET));
+      return Response.json(simulateFromSides({ ...sides, conditions }, defaultRuleSet()));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return apiError('INVALID_INPUT', message, 400);
@@ -144,7 +89,7 @@ export async function POST(request: Request): Promise<Response> {
       side_a_version_id: a,
       side_b_version_id: b,
       conditions,
-      rule_set: DEFAULT_RULE_SET,
+      rule_set: defaultRuleSet(),
     });
     return Response.json(result);
   } catch (error) {

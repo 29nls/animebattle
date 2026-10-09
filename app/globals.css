@@ -20,7 +20,9 @@
   --color-ink-0: oklch(0.97 0.005 265);
   --color-ink-1: oklch(0.88 0.01 265);
   --color-ink-2: oklch(0.68 0.015 265);
-  --color-ink-3: oklch(0.52 0.02 265);
+  /* 0.52 → 0.64: kontras WCAG AA (≥ 4,5:1) di semua surface gelap — audit
+     color-contrast Lighthouse (AC-22) gagal pada nilai lama (3,1–3,7:1). */
+  --color-ink-3: oklch(0.64 0.02 265);
 
   /* ─── Accent colors ─── */
   --color-accent-a: oklch(0.72 0.22 25);

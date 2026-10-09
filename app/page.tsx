@@ -156,7 +156,10 @@ export default function HomePage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {/* Skeleton cards for empty state - adhering to PRD §31.4 */}
           {[1, 2, 3].map((i) => (
-            <div key={i} className="flex flex-col justify-between rounded-xl border border-line bg-surface-1 p-4 shadow-sm opacity-50">
+            // Tanpa `opacity-50`: opasitas menurunkan kontras teks menjadi ~2,3:1
+            // dan memicu audit color-contrast Lighthouse (AC-22). Muted-nya tetap
+            // disampaikan lewat skeleton bar + text-ink-3.
+            <div key={i} className="flex flex-col justify-between rounded-xl border border-line bg-surface-1 p-4 shadow-sm">
               <div className="flex items-center justify-between">
                 <div className="h-4 w-24 skeleton" />
                 <span className="text-[0.65rem] font-bold text-ink-3">VS</span>

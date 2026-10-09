@@ -21,7 +21,11 @@ import { getSqlClient } from '@/lib/db/client.ts';
 import { apiError } from '@/lib/errors.ts';
 import { secretsMatch } from '@/lib/security/admin-guard.ts';
 import { claimNextPendingJob, markJobCompleted, markJobFailed } from '@/services/queue/job-lifecycle.ts';
-import { runIngestionJob } from '@/services/ingestion/pipeline.ts';
+import {
+  describeJobFailure,
+  recordJobFailure,
+  runIngestionJob,
+} from '@/services/ingestion/pipeline.ts';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -58,21 +62,31 @@ export async function GET(request: Request): Promise<Response> {
     if (!job) break;
 
     try {
-      const outcome = await runIngestionJob(job);
+      const outcome = await runIngestionJob(job, { sql });
       await markJobCompleted(sql, {
         job_id: job.job_id,
         records_found: outcome.records_found,
         records_created: outcome.records_created,
         records_updated: outcome.records_updated,
         records_failed: outcome.records_failed,
-        parser_version: null,
+        parser_version: outcome.parser_version,
         partial: outcome.records_failed > 0,
       });
-      processed.push({ job_id: job.job_id, outcome: 'completed' });
+      processed.push({ job_id: job.job_id, outcome: outcome.records_failed > 0 ? 'partial' : 'completed' });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const after = await markJobFailed(sql, job.job_id, message);
-      processed.push({ job_id: job.job_id, outcome: after.status });
+      const info = describeJobFailure(error);
+      try {
+        await recordJobFailure(sql, job.job_id, info, job.retry_count + 1);
+      } catch {
+        // Mencatat detail tidak boleh menggagalkan jalur status; baris job tetap
+        // diperbarui di bawah sehingga kegagalan tidak hilang diam-diam.
+      }
+      const after = await markJobFailed(sql, job.job_id, info.message, {
+        error_type: info.error_type,
+        terminal: info.terminal,
+        ...(info.retry_after_seconds === null ? {} : { base_seconds: info.retry_after_seconds }),
+      });
+      processed.push({ job_id: job.job_id, outcome: `${after.status}:${info.error_type}` });
     }
   }
 
