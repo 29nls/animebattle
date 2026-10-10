@@ -3,6 +3,15 @@
  * Semua data diambil di server; browser hanya menerima HTML yang sudah dirender.
  *
  * Pola: kolom eksplisit, join terkecil, pagination/limit pada subquery.
+ *
+ * Catatan 2026-10-10 (kontak pertama dengan database terisi): empat query di
+ * berkas ini menyebut kolom yang tidak ada di `docs/schema.sql` — mis. `sources.url`
+ * (yang ada `base_url`), `ca.activation_speed` (milik katalog `abilities`), dan
+ * `s.scale_rank` (milik `stat_scales.rank`). Tidak ada test yang menjalankannya
+ * di atas DDL, jadi galatnya baru muncul sebagai panel "Database belum terhubung"
+ * di halaman detail setelah ingestion pertama mengisi database. Sekarang
+ * `tests/web/database-queries.test.ts` menjalankan setiap query di berkas ini
+ * terhadap skema sungguhan sebelum halaman di-deploy.
  */
 
 import { demoCharacterDetail, demoEnabled } from '../demo/provider.ts';
@@ -98,11 +107,17 @@ export async function listFormStatistics(
   versionId: string,
 ): Promise<FormStatistic[]> {
   return sql.query<FormStatistic>(
+    // `scale_rank` diambil dari `stat_scales.rank` lewat join; `statistics`
+    // sendiri tidak punya kolom itu (nama `scale_rank` hanya ada di view detail).
+    // `sources` tidak punya `url` — yang ada `base_url`, sedangkan URL halaman
+    // spesifik disimpan per baris di `statistics.source_url`.
     `select s.metric, s.raw_text, s.qualifier,
-            s.scale_rank, s.confidence,
-            src.name as source_name, src.url as source_url,
+            sc.rank as scale_rank, s.confidence,
+            src.name as source_name,
+            coalesce(s.source_url, src.base_url) as source_url,
             s.status
        from statistics s
+       left join stat_scales sc on sc.id = s.scale_id
        left join sources src on src.id = s.source_id
       where s.character_version_id = $1
         and s.status = 'current'
@@ -130,12 +145,15 @@ export async function listFormAbilities(
   versionId: string,
 ): Promise<FormAbility[]> {
   return sql.query<FormAbility>(
+    // `activation_speed`, `is_offensive`, dan `is_passive` adalah properti
+    // katalog `abilities`; `character_abilities` menyimpan pemakaian per form
+    // (proficiency, confidence). Bukti teks per record ada di `evidence_text`.
     `select ca.id, ca.ability_id,
             a.name as ability_name,
             ac.slug as category_slug, ac.name as category_name,
-            ca.activation_speed, ca.proficiency,
-            ca.is_offensive, ca.is_passive,
-            ca.confidence, ca.evidence
+            a.activation_speed, ca.proficiency,
+            a.is_offensive, a.is_passive,
+            ca.confidence, ca.evidence_text as evidence
        from character_abilities ca
        join abilities a on a.id = ca.ability_id
        join ability_categories ac on ac.id = a.category_id
@@ -166,7 +184,7 @@ export async function listFormResistances(
             ac.slug as category_slug,
             cr.level, cr.level_label,
             cr.verification_status, cr.confidence,
-            cr.evidence
+            cr.evidence_text as evidence
        from character_resistances cr
        join resistance_types rt on rt.id = cr.resistance_type_id
        join ability_categories ac on ac.id = rt.category_id
@@ -189,13 +207,20 @@ export async function listCharacterSources(
   characterId: string,
 ): Promise<CharacterSourceItem[]> {
   return sql.query<CharacterSourceItem>(
+    // `character_sources` tidak punya `url`/`fetched_at`/`verification_status`:
+    // URL halaman ada di kolom `source_url`, waktu impor di `imported_at`, dan
+    // status verifikasi yang ditampilkan adalah status entri karakter
+    // (`characters.verification_status`) — sama dengan jalur demo yang memakai
+    // status entri (`imported`), bukan status per baris sumber.
     `select distinct cs.source_id,
-            s.name as source_name, s.url as source_url,
-            cs.fetched_at, cs.verification_status
+            s.name as source_name, cs.source_url,
+            cs.imported_at as fetched_at,
+            c.verification_status
        from character_sources cs
        join sources s on s.id = cs.source_id
+       join characters c on c.id = cs.character_id
       where cs.character_id = $1
-      order by cs.fetched_at desc nulls last`,
+      order by cs.imported_at desc`,
     [characterId],
   );
 }

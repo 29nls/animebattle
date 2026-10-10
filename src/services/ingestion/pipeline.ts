@@ -169,8 +169,11 @@ async function stageRawPage(
 ): Promise<void> {
   const contentHash = datasetContentHash(input.payload);
   await sql.query(
+    // Cast lewat text — lihat `stageDatasetImport`: dengan parameter berketik
+    // jsonb, postgres.js men-JSON.stringify string yang sudah JSON dan datanya
+    // tersimpan sebagai string jsonb, bukan objek.
     `insert into ingestion_raw_pages (job_id, source_id, source_url, parsed_json, parser_version, content_hash)
-     values ($1, $2, $3, $4::jsonb, $5, $6)
+     values ($1, $2, $3, $4::text::jsonb, $5, $6)
      on conflict (source_url, content_hash, parser_version) do nothing`,
     [input.jobId, input.sourceId, input.sourceUrl, JSON.stringify(input.payload), input.parserVersion, contentHash],
   );
@@ -183,8 +186,9 @@ async function writeRecordFailures(
 ): Promise<void> {
   for (const failure of failures) {
     await sql.query(
+      // Cast lewat text — lihat `stageRawPage`.
       `insert into ingestion_errors (job_id, source_url, error_type, error_message, http_status, payload, retry_count)
-       values ($1, $2, $3, $4, $5, $6::jsonb, 0)`,
+       values ($1, $2, $3, $4, $5, $6::text::jsonb, 0)`,
       [
         jobId,
         failure.source_url,
@@ -511,8 +515,9 @@ export async function recordJobFailure(
 ): Promise<void> {
   const payload = createHash('sha256').update(info.message).digest('hex').slice(0, 16);
   await sql.query(
+    // Cast lewat text — lihat `stageRawPage`.
     `insert into ingestion_errors (job_id, error_type, error_message, http_status, payload, retry_count)
-     values ($1, $2, $3, $4, $5::jsonb, $6)`,
+     values ($1, $2, $3, $4, $5::text::jsonb, $6)`,
     [jobId, info.error_type, info.message.slice(0, 2000), info.http_status, JSON.stringify({ context: payload }), retryCount],
   );
 }

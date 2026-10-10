@@ -2,7 +2,18 @@
 
 **Status:** aktif (ditulis bersama implementasi pipeline, Sprint 2/3). Diuji pada
 environment lokal (PGlite, `docs/schema.sql` + `docs/seed.sql`) lewat
-`npm run test:ingestion`; **belum** diuji pada instance Supabase produksi.
+`npm run test:ingestion`, dan **sudah dijalankan sekali pada instance Supabase
+produksi (2026-10-10)**: impor dataset terkelola lewat jalur panel (`POST
+/api/admin/ingestion/import`) → worker (`GET /api/cron/sync`) → 73 baris kanonik
+(1 verse, 3 karakter, 3 form, 27 statistik, 13 ability, 13 resistance) tanpa
+kegagalan per record; menjalankan ulang dataset yang sama menghasilkan
+`records_created = 0`; atribusi per karakter terisi di `character_sources`; dan
+halaman `/characters`, `/verses`, `/character/*`, `/verse/*` dirender dari data
+itu. Empat bug yang hanya muncul di driver sungguhan ditemukan pada jalur ini
+(jsonb staging tersimpan sebagai string, empat kolom query detail tidak ada di
+DDL, `battle_dataset` mengembalikan satu jsonb — bukan setof baris — dan
+`timestamptz` kembali sebagai `Date`). Bukti ringkas ada di
+[README §Verifikasi](../../README.md#verifikasi).
 
 Dipicu oleh, salah satu saja:
 
@@ -13,7 +24,7 @@ Dipicu oleh, salah satu saja:
 ## 1. Membaca keadaan dalam 30 detik
 
 ```bash
-npm run test:ingestion        # kontrak pipeline di atas skema nyata (27 uji)
+npm run test:ingestion        # kontrak pipeline di atas skema nyata (28 uji)
 node worker/ingest.ts         # kerjakan satu job (friendlier untuk manual)
 ```
 

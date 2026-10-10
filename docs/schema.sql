@@ -1331,6 +1331,15 @@ as $$
         'intelligence', it.rank, 'battle_iq', bi.rank,
         'attack_potency_physical', ap.is_physical, 'speed_physical', sp.is_physical
       ),
+      -- Daftar metrik di rezim non-fisik (mis. FTL): pembandingnya diredam 0,5
+      -- oleh engine. Wajib ada karena `SideData.nonphysical_metrics` adalah field
+      -- bertipe array — menghilangkannya membuat setiap simulasi produksi mati
+      -- dengan "is not iterable". Sumbernya hanya flag is_physical yang tersedia
+      -- di jsonb ini (AP & speed); menambah metrik lain menuntut flag barunya dulu.
+      'nonphysical_metrics', to_jsonb(array_remove(array[
+        case when ap.is_physical is false then 'attack_potency' end,
+        case when sp.is_physical is false then 'speed' end
+      ]::text[], null)),
       'statistics', coalesce((
         select jsonb_agg(jsonb_build_object(
                  'metric', s.metric, 'raw_text', s.raw_text, 'qualifier', s.qualifier,

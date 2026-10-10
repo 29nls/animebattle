@@ -264,6 +264,46 @@ export function databaseSslOptions(
   return {};
 }
 
+/**
+ * Tanggal → string ISO 8601.
+ *
+ * postgres.js mengembalikan `timestamptz` sebagai `Date`, sedangkan klien yang
+ * disuntikkan (PGlite, worker, test) mengembalikannya sebagai string — dan
+ * halaman sudah memperlakukan nilai itu sebagai string (`verse.updated_at`,
+ * `source.fetched_at` dipotong `.slice(0, 10)`). Tanpa normalisasi, kontrak yang
+ * lulus di test berbeda dari produksi: halaman detail karakter dan verse
+ * menjawab HTTP 500 `x.slice is not a function` pada kontak pertama dengan
+ * database terisi (2026-10-10). Normalisasi di pintu masuk berarti setiap
+ * pemanggil menerima bentuk yang sama, apa pun drivernya.
+ *
+ * Objek dari jsonb sengaja ikut ditelusuri: nilainya memang string JSON, tetapi
+ * menyalin hanya saat ada perubahan membuat biaya ini sekali jalan per baris.
+ */
+function normalizeTimestamps(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) {
+    let changed = false;
+    const items = value.map((entry) => {
+      const next = normalizeTimestamps(entry);
+      if (next !== entry) changed = true;
+      return next;
+    });
+    return changed ? items : value;
+  }
+  if (value !== null && typeof value === 'object') {
+    const row = value as Record<string, unknown>;
+    let changed = false;
+    const next: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(row)) {
+      const converted = normalizeTimestamps(entry);
+      if (converted !== entry) changed = true;
+      next[key] = converted;
+    }
+    return changed ? next : value;
+  }
+  return value;
+}
+
 let defaultClient: SqlClient | null = null;
 
 export function getSqlClient(): SqlClient {
@@ -285,7 +325,8 @@ export function getSqlClient(): SqlClient {
     defaultClient = {
       async query<T = Row>(text: string, params?: readonly unknown[]): Promise<T[]> {
         // postgres.js unsafe method mendukung sintaks $1, $2 beserta array parameternya
-        return (await sql.unsafe(text, params as any[] || [])) as T[];
+        const rows = (await sql.unsafe(text, (params as any[]) || [])) as unknown[];
+        return rows.map(normalizeTimestamps) as T[];
       }
     };
   }

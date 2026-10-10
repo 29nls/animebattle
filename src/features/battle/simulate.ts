@@ -63,12 +63,22 @@ export async function simulateFromVersions(
     );
   }
 
-  const rows = await sql.query<BattleDatasetRow>(
-    `select * from public.battle_dataset(array[$1, $2]::uuid[])`,
+  // `battle_dataset` mengembalikan SATU nilai jsonb berisi array dua sisi
+  // (diurutkan `version_id`), bukan setof satu baris per sisi. `select *` di sini
+  // dulu menghasilkan `rows` panjang satu, sehingga setiap pertarungan produksi
+  // dijawab "Salah satu form tidak ditemukan" padahal kedua form ada — ketahuan
+  // `tests/web/database-queries.test.ts` pada kontak pertama dengan database
+  // terisi (2026-10-10).
+  const rows = await sql.query<{ side: BattleDatasetRow }>(
+    `select elem as side
+       from jsonb_array_elements(public.battle_dataset(array[$1, $2]::uuid[])) as t(elem)`,
     [params.side_a_version_id, params.side_b_version_id],
   );
 
-  const [sideA, sideB] = rows;
+  // Urutan array mengikuti `version_id`, bukan urutan argumen: petakan kembali
+  // lewat `version_id` supaya label sisi A/B pada hasil tidak tertukar.
+  const sideA = rows.find((row) => row.side.version_id === params.side_a_version_id)?.side;
+  const sideB = rows.find((row) => row.side.version_id === params.side_b_version_id)?.side;
   if (!sideA || !sideB) {
     throw new BattleInputError(
       'Salah satu form tidak ditemukan atau sudah dihapus. Dataset harus berisi dua sisi.',

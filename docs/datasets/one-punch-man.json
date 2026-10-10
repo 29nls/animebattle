@@ -1,0 +1,149 @@
+{
+  "parser_version": "dataset-json@1.0.0",
+  "source_slug": "admin-dataset-import",
+  "source_url": "https://vsbattles.fandom.com/wiki/One-Punch_Man",
+  "license": "CC BY-SA 3.0 (VS Battles Wiki / Fandom)",
+  "attribution": "Angka statistik dan daftar kemampuan dikutip dari halaman VS Battles Wiki (teks wiki berlisensi CC BY-SA 3.0: https://vsbattles.fandom.com/wiki/VS_Battles_Wiki:Copyrights). Deskripsi, pemetaan kategori, dan tingkat keyakinan ditulis editor.",
+  "curated_at": "2026-10-10",
+  "verse": {
+    "slug": "one-punch-man",
+    "name": "One-Punch Man",
+    "description": "Semesta pahlawan super dengan asosiasi resmi, monster yang muncul terus-menerus, dan ancaman kosmik yang sesekali datang. Kekuatan puncaknya melampaui skala tata surya, sementara sebagian besar konflik justru berjalan sebagai komedi sosial.",
+    "origin_media": "manga"
+  },
+  "characters": [
+    {
+      "slug": "saitama",
+      "name": "Saitama",
+      "native_name": "サイタマ",
+      "description": "Pahlawan yang menjalani latihan ekstrem sampai rambutnya habis, lalu menjadi jauh lebih kuat daripada lawan mana pun. Karena itu ia sering bosan dan meremehkan pertarungan yang sebenarnya mengancam planet.",
+      "classification": "Professional Hero (Class B)",
+      "origin": "One-Punch Man",
+      "media_type": "manga",
+      "source_url": "https://vsbattles.fandom.com/wiki/Saitama",
+      "forms": [
+        {
+          "slug": "post-balding",
+          "name": "Post-Balding",
+          "era": "Post-Balding",
+          "description": "Bentuk setelah latihan selesai. Batas kekuatannya tidak diketahui semesta; penggambarannya bertumpu pada pukulan, kecepatan, dan ketahanan yang jauh melampaui pahlawan lain.",
+          "form_order": 1,
+          "is_default": true,
+          "tier_code": "4-A",
+          "statistics": [
+            { "metric": "tier", "raw_text": "4-A", "qualifier": "exact", "confidence": 0.6, "scale_code": null },
+            { "metric": "attack_potency", "raw_text": "Multi-Solar System level, possibly Galaxy level", "qualifier": "possibly", "confidence": 0.6, "scale_code": "multi_solar_system" },
+            { "metric": "durability", "raw_text": "Multi-Solar System level, possibly Galaxy level", "qualifier": "possibly", "confidence": 0.6, "scale_code": null },
+            { "metric": "striking_strength", "raw_text": "Multi-Solar System level, possibly Galaxy level", "qualifier": "possibly", "confidence": 0.6, "scale_code": null },
+            { "metric": "speed", "raw_text": "At least FTL+, likely far higher", "qualifier": "at_least", "confidence": 0.65, "scale_code": "ftl_plus" },
+            { "metric": "lifting_strength", "raw_text": "At least Class Y", "qualifier": "at_least", "confidence": 0.6, "scale_code": "class_y" },
+            { "metric": "range", "raw_text": "Standard Melee Range physically, Interstellar, possibly Intergalactic with Shockwaves", "qualifier": "possibly", "confidence": 0.5, "scale_code": "interstellar" },
+            { "metric": "stamina", "raw_text": "Superhuman", "qualifier": "exact", "confidence": 0.6, "scale_code": "superhuman" },
+            { "metric": "intelligence", "raw_text": "At least Average", "qualifier": "at_least", "confidence": 0.6, "scale_code": "average" }
+          ],
+          "abilities": [
+            { "category_slug": "adaptation", "slug": null, "name": "Greater Accelerated Development", "proficiency": "advanced", "evidence_text": "VSBW Post-Balding: Greater Accelerated Development", "confidence": 0.6 },
+            { "category_slug": "bfr", "slug": null, "name": "BFR", "proficiency": "intermediate", "evidence_text": "VSBW Post-Balding: BFR", "confidence": 0.55 },
+            { "category_slug": "regeneration", "slug": null, "name": "Regeneration (Low)", "proficiency": "intermediate", "evidence_text": "VSBW Post-Balding: Regeneration (Low)", "confidence": 0.6 },
+            { "category_slug": "non-physical-interaction", "slug": null, "name": "Non-Physical Interaction", "proficiency": "advanced", "evidence_text": "VSBW Post-Balding: Non-Physical Interaction", "confidence": 0.6 },
+            { "category_slug": "aura-pressure", "slug": null, "name": "Aura (Overwhelming)", "proficiency": "advanced", "evidence_text": "VSBW Post-Balding: Aura (Overwhelming)", "confidence": 0.6 },
+            { "category_slug": "fear-manipulation", "slug": null, "name": "Fear Manipulation (possible)", "proficiency": "intermediate", "evidence_text": "VSBW Post-Balding: Possibly Fear Manipulation", "confidence": 0.35 }
+          ],
+          "resistances": [
+            { "category_slug": "mind-manipulation", "level": 1, "evidence_text": "VSBW Post-Balding resistance: Mind Manipulation", "confidence": 0.5 },
+            { "category_slug": "empathic-manipulation", "level": 1, "evidence_text": "VSBW Post-Balding resistance: Empathic Manipulation", "confidence": 0.45 },
+            { "category_slug": "fear-manipulation", "level": 1, "evidence_text": "VSBW Post-Balding resistance: Fear Manipulation", "confidence": 0.45 },
+            { "category_slug": "gravity-manipulation", "level": 1, "evidence_text": "VSBW Post-Balding resistance: Gravity Manipulation", "confidence": 0.5 },
+            { "category_slug": "space-manipulation", "level": 1, "evidence_text": "VSBW Post-Balding resistance: Space-Time Manipulation", "confidence": 0.45 },
+            { "category_slug": "time-manipulation", "level": 1, "evidence_text": "VSBW Post-Balding resistance: Possibly Time Stop", "confidence": 0.35 },
+            { "category_slug": "matter-manipulation", "level": 1, "evidence_text": "VSBW Post-Balding resistance: Matter Manipulation (Sub-Atomic)", "confidence": 0.45 },
+            { "category_slug": "soul-manipulation", "level": 1, "evidence_text": "VSBW Post-Balding resistance: Possibly Soul Manipulation", "confidence": 0.35 },
+            { "category_slug": "sound-manipulation", "level": 1, "evidence_text": "VSBW Post-Balding resistance: Sound Manipulation", "confidence": 0.45 },
+            { "category_slug": "light-manipulation", "level": 1, "evidence_text": "VSBW Post-Balding resistance: Light Manipulation", "confidence": 0.45 },
+            { "category_slug": "elemental-manipulation", "level": 1, "evidence_text": "VSBW Post-Balding resistance: Extreme Temperatures, Ice Manipulation", "confidence": 0.4 }
+          ]
+        }
+      ]
+    },
+    {
+      "slug": "genos",
+      "name": "Genos",
+      "native_name": "ジェノス",
+      "description": "Cyborg buatan Dr. Kuseno yang memburu para cyborg jahat. Bertarung dengan senjata energi, kecepatan tinggi, dan analisis tempur yang terus diperbarui.",
+      "classification": "Cyborg; Professional Hero (Class S)",
+      "origin": "One-Punch Man",
+      "media_type": "manga",
+      "source_url": "https://vsbattles.fandom.com/wiki/Genos_(Demon_Cyborg)",
+      "forms": [
+        {
+          "slug": "post-elder-centipede",
+          "name": "Post-Elder Centipede",
+          "era": "Post-Elder Centipede",
+          "description": "Rangka terbaru setelah pertempuran melawan Elder Centipede: daya tahan lebih besar, ditambah mode sepuluh detik yang membakar seluruh energi inti.",
+          "form_order": 1,
+          "is_default": true,
+          "tier_code": "7-A",
+          "statistics": [
+            { "metric": "tier", "raw_text": "7-A", "qualifier": "exact", "confidence": 0.55, "scale_code": null },
+            { "metric": "attack_potency", "raw_text": "At least Mountain level normally, Varies up to Country level with Boost Attacks or Incineration Cannons, at most Moon level+ with Ten Second Mode, higher with True Spiral Incineration Cannon, far higher with Self-Destruction", "qualifier": "at_least", "confidence": 0.55, "scale_code": "mountain" },
+            { "metric": "durability", "raw_text": "At least Country level", "qualifier": "at_least", "confidence": 0.55, "scale_code": null },
+            { "metric": "striking_strength", "raw_text": "At least Mountain level, Varies up to Country level with Boost Attacks", "qualifier": "at_least", "confidence": 0.5, "scale_code": null },
+            { "metric": "speed", "raw_text": "Massively Hypersonic+, Varies with Boosters, Sub-Relativistic with Ten Second Mode", "qualifier": "varies", "confidence": 0.55, "scale_code": "massively_hypersonic_plus" },
+            { "metric": "lifting_strength", "raw_text": "At least Class P", "qualifier": "at_least", "confidence": 0.55, "scale_code": "class_p" },
+            { "metric": "range", "raw_text": "Standard Melee Range, at least Kilometers, possibly Tens of Kilometers with Incineration Cannons, Hundreds of Kilometers in Ten-Second Mode", "qualifier": "at_least", "confidence": 0.5, "scale_code": "kilometers" },
+            { "metric": "stamina", "raw_text": "Superhuman, Below Average with Ten Second Mode", "qualifier": "varies", "confidence": 0.5, "scale_code": "superhuman" },
+            { "metric": "intelligence", "raw_text": "Gifted", "qualifier": "exact", "confidence": 0.65, "scale_code": "gifted" }
+          ],
+          "abilities": [
+            { "category_slug": "energy-manipulation", "slug": null, "name": "Energy Manipulation", "proficiency": "advanced", "evidence_text": "VSBW: Energy Manipulation", "confidence": 0.6 },
+            { "category_slug": "elemental-manipulation", "slug": null, "name": "Fire Blasts", "proficiency": "advanced", "evidence_text": "VSBW: Fire Blasts", "confidence": 0.55 },
+            { "category_slug": "statistics-amplification", "slug": null, "name": "Statistics Amplification", "proficiency": "advanced", "evidence_text": "VSBW: Statistics Amplification", "confidence": 0.6 },
+            { "category_slug": "immortality", "slug": null, "name": "Immortality (Type 2)", "proficiency": "intermediate", "evidence_text": "VSBW: Immortality (Type 2)", "confidence": 0.5 },
+            { "category_slug": "information-manipulation", "slug": null, "name": "Limited Data Manipulation", "proficiency": "novice", "evidence_text": "VSBW: Limited Data Manipulation", "confidence": 0.35 }
+          ],
+          "resistances": [
+            { "category_slug": "elemental-manipulation", "level": 1, "evidence_text": "VSBW resistance: Heat, Fire Manipulation", "confidence": 0.45 },
+            { "category_slug": "fear-manipulation", "level": 1, "evidence_text": "VSBW resistance: Fear Manipulation", "confidence": 0.45 }
+          ]
+        }
+      ]
+    },
+    {
+      "slug": "speed-o-sound-sonic",
+      "name": "Speed-o'-Sound Sonic",
+      "native_name": "音速のソニック",
+      "description": "Ninja bayaran yang mengejar duel dengan Saitama. Mengandalkan kecepatan, teknik siluman, dan senjata lempar; ambisinya sering melebihi pertimbangannya.",
+      "classification": "Mercenary Ninja",
+      "origin": "One-Punch Man",
+      "media_type": "manga",
+      "source_url": "https://vsbattles.fandom.com/wiki/Speed-o%27-Sound_Sonic",
+      "forms": [
+        {
+          "slug": "ninja-arc",
+          "name": "Ninja Arc",
+          "era": "Ninja Arc",
+          "description": "Bentuk setelah urusan desa ninja: jauh lebih cepat, dengan teknik klon bayangan dan pertarungan jarak dekat yang mematikan.",
+          "form_order": 1,
+          "is_default": true,
+          "tier_code": "6-A",
+          "statistics": [
+            { "metric": "tier", "raw_text": "6-A", "qualifier": "exact", "confidence": 0.55, "scale_code": null },
+            { "metric": "attack_potency", "raw_text": "At least Continent level, Continent level+ at full power", "qualifier": "at_least", "confidence": 0.5, "scale_code": "large_country" },
+            { "metric": "durability", "raw_text": "At least Continent level, Continent level+ when blocking", "qualifier": "at_least", "confidence": 0.5, "scale_code": null },
+            { "metric": "striking_strength", "raw_text": "At least Continent level, Continent level+ at full power", "qualifier": "at_least", "confidence": 0.5, "scale_code": null },
+            { "metric": "speed", "raw_text": "At least FTL+, higher with Four Shadows Burial, far higher with Ten Shadows Burial, even higher with Super Multi-Shadow Clone, far higher reaction speed", "qualifier": "at_least", "confidence": 0.55, "scale_code": "ftl_plus" },
+            { "metric": "lifting_strength", "raw_text": "At least Class P", "qualifier": "at_least", "confidence": 0.55, "scale_code": "class_p" },
+            { "metric": "range", "raw_text": "Standard Melee Range; Several Meters with kunai and shuriken", "qualifier": "up_to", "confidence": 0.5, "scale_code": "several_meters" },
+            { "metric": "stamina", "raw_text": "Superhuman", "qualifier": "exact", "confidence": 0.6, "scale_code": "superhuman" },
+            { "metric": "intelligence", "raw_text": "Gifted", "qualifier": "exact", "confidence": 0.65, "scale_code": "gifted" }
+          ],
+          "abilities": [
+            { "category_slug": "darkness-manipulation", "slug": null, "name": "Darkness Manipulation", "proficiency": "advanced", "evidence_text": "VSBW: Darkness Manipulation", "confidence": 0.5 },
+            { "category_slug": "adaptation", "slug": null, "name": "Accelerated Development", "proficiency": "advanced", "evidence_text": "VSBW: Accelerated Development", "confidence": 0.5 }
+          ],
+          "resistances": []
+        }
+      ]
+    }
+  ]
+}

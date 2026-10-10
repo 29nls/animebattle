@@ -222,6 +222,34 @@ interface CharacterState {
   priority: number | null;
 }
 
+/**
+ * Atribusi per karakter (G3: setiap record punya ≥ 1 baris `character_sources`;
+ * panel *Data Traceability* di halaman karakter membaca tabel ini, bukan kolom
+ * jejak di `characters`).
+ *
+ * Satu baris berperan `identity`: sumber yang mendokumentasikan identitas
+ * karakter. Untuk impor dataset, statistik/ability/resistensi juga berasal dari
+ * sumber yang sama, tetapi baris per peran (`stats`, `abilities`, …) baru
+ * berguna ketika satu karakter boleh datang dari beberapa sumber sekaligus.
+ *
+ * Idempoten lewat `unique (character_id, source_id, role)`: menjalankan dataset
+ * yang sama lagi tidak menambah baris. Tidak dihitung ke `report` karena bukan
+ * record kanonik — AC-08 menghitung baris karakter/form/statistik.
+ */
+async function recordCharacterSource(
+  context: UpsertContext,
+  characterId: string,
+  sourceUrl: string,
+): Promise<void> {
+  if (context.dryRun) return;
+  await context.sql.query(
+    `insert into character_sources (character_id, source_id, source_url, role)
+     values ($1, $2, $3, 'identity')
+     on conflict (character_id, source_id, role) do nothing`,
+    [characterId, context.source.id, sourceUrl],
+  );
+}
+
 async function upsertCharacter(
   context: UpsertContext,
   character: DatasetCharacter,
@@ -240,7 +268,7 @@ async function upsertCharacter(
     [character.slug],
   );
   const existing = rows[0] ?? null;
-  const sourceUrl = character.source_url ?? context.provenanceUrl;
+  const sourceUrl = character.source_url ?? context.provenanceUrl ?? source.base_url;
 
   if (existing === null) {
     if (dryRun) {
@@ -271,7 +299,14 @@ async function upsertCharacter(
       ],
     );
     report.created += 1;
-    return inserted[0]?.id ?? null;
+    const createdId = inserted[0]?.id ?? null;
+    if (createdId !== null) {
+      // G3: atribusi dicatat bersama barisnya, bukan di akhir job — job yang
+      // berhenti di tengah tetap meninggalkan jejak sumber untuk karakter yang
+      // sudah masuk. (Dry-run sudah keluar lebih awal di atas.)
+      await recordCharacterSource(context, createdId, sourceUrl);
+    }
+    return createdId;
   }
 
   if (!canOverwrite(source.priority, existing.priority)) {
@@ -310,6 +345,10 @@ async function upsertCharacter(
     );
     report.updated += 1;
   }
+  // G3: juga untuk baris yang sudah ada — atribusi tidak bergantung pada apakah
+  // nilai berubah, karena re-run dataset yang sama harus tetap meninggalkan
+  // jejak sumbernya (idempoten lewat unique index).
+  await recordCharacterSource(context, existing.id, sourceUrl);
   return existing.id;
 }
 

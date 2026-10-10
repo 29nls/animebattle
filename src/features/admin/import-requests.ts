@@ -168,9 +168,15 @@ export async function stageDatasetImport(
   const contentHash = stableContentHash(dataset);
   const sourceUrl = `dataset://${sourceSlug}/${contentHash.slice(0, 12)}`;
 
+  // `$3::text::jsonb`, bukan `$3::jsonb`: nilai yang dikirim adalah string JSON
+  // kanonik dari `stableSerialize`. Bila parameter diketik jsonb, postgres.js
+  // men-JSON.stringify string itu sekali lagi — yang tersimpan jadi **string JSON
+  // di dalam jsonb** (`jsonb_typeof = 'string'`), lalu worker menolak dataset yang
+  // sebenarnya sah. Cast lewat text mengirim byte apa adanya, sama untuk
+  // postgres.js (produksi) dan PGlite (test).
   const inserted = await sql.query<{ id: string }>(
     `insert into ingestion_raw_pages (job_id, source_id, source_url, parsed_json, parser_version, content_hash)
-     values (null, $1, $2, $3::jsonb, $4, $5)
+     values (null, $1, $2, $3::text::jsonb, $4, $5)
      on conflict (source_url, content_hash, parser_version) do nothing
      returning id`,
     [source.id, sourceUrl, serialized, parserVersion, contentHash],

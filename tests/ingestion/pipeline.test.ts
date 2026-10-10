@@ -309,6 +309,18 @@ describe('pipeline ingestion di atas skema sungguhan', () => {
     assert.equal(attribution[0]!.source_name, 'Admin Dataset Import');
     assert.match(attribution[0]!.source_url ?? '', /^dataset:\/\//);
 
+    // G3: atribusi juga tercatat per karakter di `character_sources` — baris
+    // inilah yang dibaca panel Data Traceability di halaman karakter.
+    const characterSources = await sql.query<{ role: string; source_url: string; source_slug: string }>(
+      `select cs.role, cs.source_url, s.slug as source_slug
+         from character_sources cs join sources s on s.id = cs.source_id
+        where cs.character_id = (select id from characters where slug = 'aster-vale')`,
+    );
+    assert.equal(characterSources.length, 1);
+    assert.equal(characterSources[0]!.role, 'identity');
+    assert.equal(characterSources[0]!.source_slug, 'admin-dataset-import');
+    assert.match(characterSources[0]!.source_url, /^dataset:\/\//);
+
     // Statistik: tier dipetakan trigger ke `tiers`, cache skala form terisi.
     const formCache = await sql.query<{ tier_code: string | null; ap_cached: boolean }>(
       `select t.tier_code, cv.attack_potency_scale_id is not null as ap_cached
@@ -341,6 +353,16 @@ describe('pipeline ingestion di atas skema sungguhan', () => {
       await countRows('ingestion_raw_pages', `source_id = (select id from sources where slug = 'admin-dataset-import')`),
       1,
     );
+    // Bentuk jsonb: objek, bukan string JSON di dalam jsonb. Di produksi
+    // (postgres.js) parameter berketik jsonb akan di-JSON.stringify sekali lagi
+    // sehingga tersimpan sebagai string — karena itu insert memakai cast
+    // `::text::jsonb`. Penjaga ini mengunci bentuk yang dibaca worker.
+    const stagedShape = await sql.query<{ kind: string | null }>(
+      `select jsonb_typeof(parsed_json) as kind
+         from ingestion_raw_pages
+        where source_id = (select id from sources where slug = 'admin-dataset-import')`,
+    );
+    assert.deepEqual(stagedShape.map((row) => row.kind), ['object']);
     const job = await sql.query<{ status: string; records_created: number }>(
       `select status, records_created from ingestion_jobs where id = $1`,
       [staged.job_id],
@@ -359,6 +381,7 @@ describe('pipeline ingestion di atas skema sungguhan', () => {
       versions: await countRows('character_versions'),
       statistics: await countRows('statistics'),
       staging: await countRows('ingestion_raw_pages'),
+      characterSources: await countRows('character_sources'),
     };
 
     const createdCounts: number[] = [];
@@ -382,6 +405,8 @@ describe('pipeline ingestion di atas skema sungguhan', () => {
     assert.equal(await countRows('character_versions'), baseline.versions);
     assert.equal(await countRows('statistics'), baseline.statistics);
     assert.equal(await countRows('ingestion_raw_pages'), baseline.staging);
+    // Atribusi per karakter juga idempoten: re-run tidak menambah baris sumber.
+    assert.equal(await countRows('character_sources'), baseline.characterSources);
   });
 
   it('reparse dari staging menghasilkan 0 baris baru (tanpa fetch)', async () => {
