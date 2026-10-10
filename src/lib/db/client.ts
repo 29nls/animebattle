@@ -240,7 +240,13 @@ export function databaseSslOptions(
   const path = sslRootCertPath(url);
   if (path) {
     try {
-      return { ssl: { ca: readFileSync(path, 'utf8') } };
+      // `turbopackIgnore` disengaja: path datang dari connection string operator
+      // (semantik libpq), jadi tidak mungkin diketahui saat build — dan justru
+      // **tidak boleh** ikut di-trace. Tanpa anotasi ini Turbopack menyalin
+      // seluruh proyek ke output server (peringatan "tracing of the whole
+      // project"), memperbesar deployment. Berkasnya dibaca dari disk saat
+      // runtime bila ada (mesin lokal); di Vercel tidak ada dan dilewati.
+      return { ssl: { ca: readFileSync(/*turbopackIgnore: true*/ path, 'utf8') } };
     } catch {
       // Berkas tidak ada di mesin ini (kasus nyata: path Windows dari `.env`
       // lokal dipakai di Vercel): bukan alasan menggagalkan koneksi — lanjut ke
