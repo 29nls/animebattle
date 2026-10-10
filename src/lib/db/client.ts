@@ -108,7 +108,10 @@ export function setSqlClient(client: SqlClient | null): void {
 }
 
 import { readFileSync } from 'node:fs';
+import { rootCertificates } from 'node:tls';
 import postgres from 'postgres';
+
+import { SUPABASE_ROOT_2021_CA } from './supabase-ca.ts';
 
 /** Path `sslrootcert` dari URL koneksi, atau `null` bila tidak ada/tidak dipakai. */
 function sslRootCertPath(url: string): string | null {
@@ -132,17 +135,23 @@ function sslRootCertPath(url: string): string | null {
  * **tidak dibaca postgres.js** (hanya nilai `system` yang dikenali), jadi
  * mencantumkan path CA di connection string tidak berpengaruh sama sekali.
  *
- * Dua sumber CA, keduanya eksplisit dan dapat diperiksa:
- *  1. `DATABASE_CA_CERT` — isi PEM. Dipakai deployment tanpa berkas (Vercel),
- *     dan menang bila keduanya diisi.
+ * Tiga sumber CA, semuanya eksplisit dan dapat diperiksa:
+ *  1. `DATABASE_CA_CERT` — isi PEM; menang bila diisi. Bentuk berkutip maupun
+ *     satu-baris dengan `\n` literal diterima (lihat `normalizedCaValue`).
  *  2. `sslrootcert` pada URL — path berkas, mengikuti perilaku libpq; dibaca
  *     hanya bila berkasnya benar-benar ada di mesin ini.
+ *  3. Root CA Supabase yang disalin ke repo (`supabase-ca.ts`) — dipakai
+ *     **hanya** untuk host Supabase bila dua sumber di atas tidak menghasilkan
+ *     CA. Inilah yang membuat deployment serverless bekerja tanpa konfigurasi:
+ *     `DATABASE_URL` yang disalin dari mesin lokal sering membawa
+ *     `sslrootcert=C:/Users/...` — path yang tidak ada di runner. Sebelum ini,
+ *     deployment itu mati meski kredensialnya benar.
  *
  * `ssl` sengaja dibiarkan berupa objek **tanpa** `rejectUnauthorized`: dengan
  * objek, postgres.js memakai default Node, yaitu verifikasi tetap AKTIF.
  * Fungsi ini tidak pernah melonggarkan verifikasi — jalur yang melonggarkan
  * (mis. `sslmode=require`) hanya muncul bila operator menuliskannya sendiri di
- * `DATABASE_URL`.
+ * `DATABASE_URL`, dan itu dihormati (`LOOSE_SSL_MODES`).
  */
 /**
  * Apakah nilai ini benar-benar PEM sertifikat (punya kepala **dan** ekor)?
@@ -154,11 +163,66 @@ function isPemCertificate(value: string): boolean {
   return value.includes('-----BEGIN CERTIFICATE-----') && value.includes('-----END CERTIFICATE-----');
 }
 
+/** Nilai `sslmode` yang sengaja TIDAK memverifikasi sertifikat (pilihan operator). */
+const LOOSE_SSL_MODES = new Set(['require', 'allow', 'prefer', 'disable']);
+
+/**
+ * Nilai `DATABASE_CA_CERT` yang siap dipakai TLS, atau `null` bila kosong.
+ *
+ * Dua bentuk yang sengaja diterima, keduanya nyata di lapangan:
+ *  - dibungkus tanda kutip — kebiasaan menulis nilai `.env`;
+ *  - satu baris dengan `\n` literal — dashboard/CI yang tidak menerima newline
+ *    memaksa operator menempelkannya begitu. `\` tidak pernah muncul di base64,
+ *    jadi membuka escape-nya tidak dapat merusak isi sertifikat.
+ */
+function normalizedCaValue(raw: string | undefined): string | null {
+  if (typeof raw !== 'string') return null;
+  let value = raw.trim();
+  if (value === '') return null;
+
+  const quoted =
+    (value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"));
+  if (quoted) value = value.slice(1, -1);
+
+  if (!value.includes('\n') && value.includes('\\n')) {
+    value = value.replace(/\\r\\n|\\n/g, '\n').replace(/\\r/g, '');
+  }
+
+  return value.trim();
+}
+
+/** Nilai `sslmode` pada URL (huruf kecil), atau `null` bila tidak ada/tak terurai. */
+function sslModeOf(url: string): string | null {
+  try {
+    return new URL(url).searchParams.get('sslmode')?.toLowerCase() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Host Supabase: `*.supabase.co`, `*.supabase.com`, `*.supabase.in` — termasuk
+ * pooler `*.pooler.supabase.com`. Pembatas ini penting: CA bawaan hanya berisi
+ * root Supabase, jadi memberikannya ke host lain justru menyempitkan kepercayaan.
+ */
+function isSupabaseHost(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (host === '') return false;
+  return ['supabase.co', 'supabase.com', 'supabase.in'].some(
+    (suffix) => host === suffix || host.endsWith(`.${suffix}`),
+  );
+}
+
 export function databaseSslOptions(
   url: string = process.env.DATABASE_URL ?? '',
   env: NodeJS.ProcessEnv = process.env,
-): { ssl?: { ca: string } } {
-  const pem = env.DATABASE_CA_CERT?.trim();
+): { ssl?: { ca: string | string[] } } {
+  const pem = normalizedCaValue(env.DATABASE_CA_CERT);
   if (pem) {
     if (isPemCertificate(pem)) return { ssl: { ca: pem } };
 
@@ -166,7 +230,7 @@ export function databaseSslOptions(
     // membingungkan dan sulit dilacak. Penyebab paling umum: PEM multi-baris di
     // `.env` ditulis **tanpa tanda kutip**, sehingga dotenv hanya membaca baris
     // pertama (tanpa kepala/ekor PEM). Dicatat ke log server, lalu dilanjutkan ke
-    // sumber CA berikutnya (`sslrootcert` pada URL).
+    // sumber CA berikutnya.
     console.warn(
       '[database] DATABASE_CA_CERT bukan PEM sertifikat yang utuh (kepala/ekor hilang) dan diabaikan. ' +
         'Bila memakai .env, bungkus nilai multi-baris dengan tanda kutip (lihat .env.example).',
@@ -174,16 +238,24 @@ export function databaseSslOptions(
   }
 
   const path = sslRootCertPath(url);
-  if (!path) return {};
-
-  try {
-    return { ssl: { ca: readFileSync(path, 'utf8') } };
-  } catch {
-    // Berkas tidak ada (mis. path Windows yang ikut tersalin ke runner/Vercel):
-    // jangan gagal di sini — biarkan `sslmode` pada URL yang menentukan, sehingga
-    // galatnya tetap yang asli, bukan galat "file tidak ditemukan" yang menyesatkan.
-    return {};
+  if (path) {
+    try {
+      return { ssl: { ca: readFileSync(path, 'utf8') } };
+    } catch {
+      // Berkas tidak ada di mesin ini (kasus nyata: path Windows dari `.env`
+      // lokal dipakai di Vercel): bukan alasan menggagalkan koneksi — lanjut ke
+      // CA bawaan Supabase di bawah, bukan berhenti dengan galat "file hilang".
+    }
   }
+
+  const mode = sslModeOf(url);
+  if (isSupabaseHost(url) && (mode === null || !LOOSE_SSL_MODES.has(mode))) {
+    // Verifikasi tetap penuh: root bawaan Node **plus** root Supabase, sehingga
+    // host publik lain tetap dapat diverifikasi bila hostnya berubah.
+    return { ssl: { ca: [SUPABASE_ROOT_2021_CA, ...rootCertificates] } };
+  }
+
+  return {};
 }
 
 let defaultClient: SqlClient | null = null;

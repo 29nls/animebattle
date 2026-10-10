@@ -68,7 +68,8 @@ test('dua kegagalan yang tindakannya jelas mendapat saran, sisanya tidak ditebak
   );
   assert.match(tls, /^Gagal memuat data: self-signed certificate/);
   assert.match(tls, /DATABASE_CA_CERT/);
-  assert.match(tls, /sslmode=require/);
+  assert.match(tls, /host Supabase/, 'saran menyebut CA Supabase yang sudah menjadi bawaan');
+  assert.doesNotMatch(tls, /sslmode=require/, 'sslmode=require bukan saran: itu mematikan verifikasi');
 
   // Database terjangkau, tetapi skema belum diterapkan di sana (kode SQLSTATE 42P01).
   const noSchema = describeLoadFailure(

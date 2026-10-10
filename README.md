@@ -60,13 +60,13 @@ Pembagian tugas antara keduanya disengaja. Case library menjawab *"apakah engine
 
 ## Konfigurasi lingkungan
 
-Aplikasi membaca enam variabel (`src/lib/db/client.ts`, guard rute, dan metadata
+Aplikasi membaca tujuh variabel (`src/lib/db/client.ts`, guard rute, dan metadata
 SEO). Nilai nyata **tidak pernah** di-commit: `.env*` ada di `.gitignore`, dan
 [`.env.example`](.env.example) hanya memuat placeholder.
 
 | Variabel | Fungsi | Perilaku bila kosong |
 |---|---|---|
-| `DATABASE_CA_CERT` | Isi PEM CA untuk verifikasi TLS Postgres. Supabase memakai CA **privat** ("Supabase Root 2021 CA"), sedangkan `sslmode=verify-full` memverifikasi terhadap CA bawaan Node — dan `sslrootcert` di URL **diabaikan postgres.js**. Isi variabel ini di deployment tanpa berkas (Vercel) | Verifikasi mengikuti `sslmode` pada URL: `verify-full` gagal dengan `self-signed certificate in certificate chain`; pengunjung anonim melihat pesan generik, detail + saran perbaikan masuk log server (dan panel admin). Alternatif tanpa variabel ini: path `sslrootcert` pada URL dibaca **bila berkasnya ada** di mesin yang menjalankan, atau tulis `?sslmode=require` (terenkripsi tanpa verifikasi sertifikat) |
+| `DATABASE_CA_CERT` | Isi PEM CA tambahan untuk verifikasi TLS Postgres — **opsional**. Root CA Supabase (`prod-ca-2021.crt`, "Supabase Root 2021 CA") sudah disalin ke [`src/lib/db/supabase-ca.ts`](src/lib/db/supabase-ca.ts) dan dipakai otomatis untuk host `*.supabase.co/.com/.in`; verifikasi selalu penuh, `rejectUnauthorized` tidak pernah dimatikan | Untuk host Supabase tidak ada yang perlu diisi. Urutan jalur CA: `DATABASE_CA_CERT` → berkas `sslrootcert` pada URL bila benar-benar ada → CA bawaan (khusus host Supabase). Tanpa satu pun, verifikasi mengikuti `sslmode`: `verify-full` gagal `self-signed certificate in certificate chain` (pengunjung anonim melihat pesan generik; detail + saran perbaikan masuk log server). Nilai cacat diabaikan dengan peringatan, bukan dikirim ke TLS |
 | `DATABASE_URL` | Satu-satunya koneksi Postgres | `/api/health/ready` → 503 `not_configured`; route berbasis DB → 503 `UNAVAILABLE` dengan pesan generik (detail driver hanya di log server, termasuk pada `/api/health/ready`) |
 | `ADMIN_INGESTION_SECRET` | Bearer token rute `/api/admin/*` **dan** token login panel `/admin` (cookie sesi HMAC 12 jam) — jembatan §28 sebelum Supabase Auth | Rute API dan seluruh halaman `/admin/*` **fail-closed**: 503 untuk rute, panel terkunci untuk halaman |
 | `CRON_SECRET` | Bearer token `GET /api/cron/sync` | Endpoint cron **fail-closed**: 503 |
@@ -92,14 +92,14 @@ npm run test:web               # dataset demo + pemilih sumber data + penjaga ga
 npm run test:ingestion         # pipeline + route admin + cron di atas skema nyata (PGlite)
 npm run test:lint-rules        # uji unit aturan lint (RuleTester)
 npm run test:lighthouse-config # guard anggaran Lighthouse CI (AC-21–23 tetap `error`)
-npm test                        # keenamnya sekaligus (225 + 41 + 24 + 28 + 3 + 4)
+npm test                        # keenamnya sekaligus (225 + 48 + 24 + 28 + 3 + 4)
 npm run validate:schema        # skema + seed, keluar 1 bila ada uji gagal
 npm run validate:battle-cases  # engine + case library
 npm run check:battle-guards    # uji mutasi: guard runner benar-benar menolak library rusak
 npm run build                  # Next.js production build
 ```
 
-Keluaran yang diharapkan: `Total: 56 · lulus 56 · gagal 0` (skema) dan `Total: 425 · gagal 0` (case library), serta `ℹ tests 225 · ℹ pass 225` (unit test engine), `ℹ tests 41 · ℹ pass 41` (keamanan, termasuk konfigurasi TLS database), `ℹ tests 24 · ℹ pass 24` (dataset demo, pemilihan sumber data, penjaga galat pemuatan halaman + visibilitas panel + base URL situs, token sesi admin), `ℹ tests 28 · ℹ pass 28` (pipeline ingestion + route admin + cron di atas skema nyata), `ℹ tests 3 · ℹ pass 3` (aturan lint), `ℹ tests 4 · ℹ pass 4` (guard konfigurasi Lighthouse) — total 325 uji pada `npm test`.
+Keluaran yang diharapkan: `Total: 56 · lulus 56 · gagal 0` (skema) dan `Total: 425 · gagal 0` (case library), serta `ℹ tests 225 · ℹ pass 225` (unit test engine), `ℹ tests 48 · ℹ pass 48` (keamanan, termasuk konfigurasi TLS database + CA Supabase bawaan), `ℹ tests 24 · ℹ pass 24` (dataset demo, pemilihan sumber data, penjaga galat pemuatan halaman + visibilitas panel + base URL situs, token sesi admin), `ℹ tests 28 · ℹ pass 28` (pipeline ingestion + route admin + cron di atas skema nyata), `ℹ tests 3 · ℹ pass 3` (aturan lint), `ℹ tests 4 · ℹ pass 4` (guard konfigurasi Lighthouse) — total 332 uji pada `npm test`.
 
 Pipeline ingestion diuji dengan cara yang sama seperti skema: **dieksekusi di atas DDL sungguhan**. `tests/ingestion/` memuat `docs/schema.sql` + `docs/seed.sql` ke PGlite, menyuntikkan klien itu lewat `setSqlClient()`, lalu menjalankan jalur produksi apa adanya — `POST /api/admin/ingestion/import` (hanya staging + antrian) → `GET /api/cron/sync` (worker) → `runIngestionJob` (fetch/parse/normalize/validate/dedupe/upsert) → `GET /api/admin/ingestion/jobs` + `.../errors` (panel). Yang dibuktikan di sana: menjalankan dataset yang sama **3×** menghasilkan `records_created = 0` pada eksekusi kedua dan ketiga (AC-08), kegagalan per record muncul di `ingestion_errors` dengan tipe dan pesan penyebabnya (AC-10), atribusi (`source_id`/`source_url`/`source_name`) terisi di setiap baris kanonik, dan kebijakan sumber benar-benar menggigit: allow-list, `robots.txt` (termasuk gagal tertutup), penolakan alamat privat (SSRF), `Retry-After`, serta token bucket per host. Fetch dan DNS disuntik, jadi hasilnya deterministik dan tidak menyentuh jaringan.
 

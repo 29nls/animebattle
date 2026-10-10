@@ -46,7 +46,7 @@ npm run lint               # batas arsitektur + next/core-web-vitals
 npm test                   # unit test engine + security + aturan lint + guard anggaran
 ```
 
-Angka yang diharapkan (lihat README untuk detail): engine 225/225, security 41/41,
+Angka yang diharapkan (lihat README untuk detail): engine 225/225, security 48/48,
 web 24/24, ingestion 28/28, lintrules 3/3, lighthouse-config 4/4,
 `check:architecture` 38/38, `validate:battle-cases` 425/425.
 

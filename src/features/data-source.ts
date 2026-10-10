@@ -42,10 +42,10 @@ function remedyHint(error: unknown): string | null {
     /self-signed certificate|certificate chain|unable to verify/i.test(message)
   ) {
     return (
-      'Sertifikat TLS server tidak dapat diverifikasi: Supabase memakai CA privat, sedangkan ' +
-      'sslmode=verify-full memverifikasi terhadap CA bawaan Node — dan sslrootcert di URL ' +
-      'diabaikan postgres.js. Setel DATABASE_CA_CERT (isi PEM CA Supabase) atau tulis ' +
-      '?sslmode=require pada DATABASE_URL (lihat README §Konfigurasi lingkungan).'
+      'Sertifikat TLS server tidak dapat diverifikasi. Untuk host Supabase, root CA-nya sudah ' +
+      'menjadi bawaan aplikasi (src/lib/db/supabase-ca.ts), jadi kegagalan ini biasanya berarti ' +
+      'host pada DATABASE_URL bukan host Supabase atau rantai sertifikatnya berbeda — setel ' +
+      'DATABASE_CA_CERT berisi PEM CA-nya bila begitu (lihat README §Konfigurasi lingkungan).'
     );
   }
 
