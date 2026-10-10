@@ -107,7 +107,84 @@ export function setSqlClient(client: SqlClient | null): void {
   injected = client;
 }
 
+import { readFileSync } from 'node:fs';
 import postgres from 'postgres';
+
+/** Path `sslrootcert` dari URL koneksi, atau `null` bila tidak ada/tidak dipakai. */
+function sslRootCertPath(url: string): string | null {
+  try {
+    const value = new URL(url).searchParams.get('sslrootcert');
+    // Nilai `system` bukan berkas — postgres.js memakainya sebagai penanda
+    // "verifikasi dengan CA sistem", jadi jangan diperlakukan sebagai path.
+    return !value || value === 'system' ? null : value;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Opsi TLS untuk driver Postgres.
+ *
+ * Kenapa perlu ada: Supabase memakai CA **privat** ("Supabase Root 2021 CA"),
+ * sehingga `sslmode=verify-full` — yang memverifikasi terhadap CA bawaan Node —
+ * gagal dengan `self-signed certificate in certificate chain` pada setiap
+ * halaman ber-DB, meski kredensialnya benar. Lebih buruk: `sslrootcert` di URL
+ * **tidak dibaca postgres.js** (hanya nilai `system` yang dikenali), jadi
+ * mencantumkan path CA di connection string tidak berpengaruh sama sekali.
+ *
+ * Dua sumber CA, keduanya eksplisit dan dapat diperiksa:
+ *  1. `DATABASE_CA_CERT` — isi PEM. Dipakai deployment tanpa berkas (Vercel),
+ *     dan menang bila keduanya diisi.
+ *  2. `sslrootcert` pada URL — path berkas, mengikuti perilaku libpq; dibaca
+ *     hanya bila berkasnya benar-benar ada di mesin ini.
+ *
+ * `ssl` sengaja dibiarkan berupa objek **tanpa** `rejectUnauthorized`: dengan
+ * objek, postgres.js memakai default Node, yaitu verifikasi tetap AKTIF.
+ * Fungsi ini tidak pernah melonggarkan verifikasi — jalur yang melonggarkan
+ * (mis. `sslmode=require`) hanya muncul bila operator menuliskannya sendiri di
+ * `DATABASE_URL`.
+ */
+/**
+ * Apakah nilai ini benar-benar PEM sertifikat (punya kepala **dan** ekor)?
+ *
+ * Cek bentuk, bukan parsing penuh: berkas CA sah sering berisi beberapa
+ * sertifikat (bundle), dan itu tetap harus diterima.
+ */
+function isPemCertificate(value: string): boolean {
+  return value.includes('-----BEGIN CERTIFICATE-----') && value.includes('-----END CERTIFICATE-----');
+}
+
+export function databaseSslOptions(
+  url: string = process.env.DATABASE_URL ?? '',
+  env: NodeJS.ProcessEnv = process.env,
+): { ssl?: { ca: string } } {
+  const pem = env.DATABASE_CA_CERT?.trim();
+  if (pem) {
+    if (isPemCertificate(pem)) return { ssl: { ca: pem } };
+
+    // Nilai cacat jangan diteruskan ke TLS — hasilnya galat sertifikat yang
+    // membingungkan dan sulit dilacak. Penyebab paling umum: PEM multi-baris di
+    // `.env` ditulis **tanpa tanda kutip**, sehingga dotenv hanya membaca baris
+    // pertama (tanpa kepala/ekor PEM). Dicatat ke log server, lalu dilanjutkan ke
+    // sumber CA berikutnya (`sslrootcert` pada URL).
+    console.warn(
+      '[database] DATABASE_CA_CERT bukan PEM sertifikat yang utuh (kepala/ekor hilang) dan diabaikan. ' +
+        'Bila memakai .env, bungkus nilai multi-baris dengan tanda kutip (lihat .env.example).',
+    );
+  }
+
+  const path = sslRootCertPath(url);
+  if (!path) return {};
+
+  try {
+    return { ssl: { ca: readFileSync(path, 'utf8') } };
+  } catch {
+    // Berkas tidak ada (mis. path Windows yang ikut tersalin ke runner/Vercel):
+    // jangan gagal di sini — biarkan `sslmode` pada URL yang menentukan, sehingga
+    // galatnya tetap yang asli, bukan galat "file tidak ditemukan" yang menyesatkan.
+    return {};
+  }
+}
 
 let defaultClient: SqlClient | null = null;
 
@@ -124,6 +201,7 @@ export function getSqlClient(): SqlClient {
   if (!defaultClient) {
     const sql = postgres(process.env.DATABASE_URL, {
       max: 10, // batas koneksi agar tidak membanjiri pool
+      ...databaseSslOptions(),
     });
     
     defaultClient = {

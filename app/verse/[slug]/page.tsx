@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 
 import { loadVerseDetail } from '@/features/verses/queries.ts';
 import { attemptLoad } from '@/features/data-source.ts';
+import { isAdminAuthenticated } from '@/features/admin/session.ts';
 import { DatabaseUnavailable } from '@/components/database-unavailable.tsx';
 import { DEMO_LABEL, DEMO_NOTICE } from '@/features/demo/provider.ts';
 
@@ -46,7 +47,15 @@ export default async function VersePage({ params }: { params: Promise<{ slug: st
   const { slug } = await params;
   const outcome = await attemptLoad(() => loadVerseDetail(slug));
 
-  if (outcome.status === 'failed') return <DatabaseUnavailable message={outcome.message} />;
+  if (outcome.status === 'failed') {
+    // Detail teknis hanya untuk operator; pengunjung anonim menerima pesan generik.
+    return (
+      <DatabaseUnavailable
+        detail={outcome.message}
+        viewerIsOperator={await isAdminAuthenticated()}
+      />
+    );
+  }
 
   const bundle = outcome.data;
   if (!bundle) notFound();

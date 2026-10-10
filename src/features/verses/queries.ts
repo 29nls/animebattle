@@ -12,11 +12,25 @@ export interface VerseListItem {
   slug: string;
   name: string;
   description: string | null;
-  image_url: string | null;
   character_count: number;
   media_type: string;
   updated_at: string;
 }
+
+/**
+ * Nama kolom di `verses` berbeda dari nama view-model halaman; pemetaannya
+ * dilakukan di sini, bukan dengan mengubah DDL:
+ *
+ *   * `origin_media` → `media_type` (nama yang sudah dipakai halaman dan dataset demo).
+ *   * Jumlah karakter tidak didenormalisasi di `verses`, jadi dihitung dari
+ *     `characters.verse_id` (index `idx_characters_verse` sudah ada). Kolom ini
+ *     juga dipakai untuk pengurutan, sehingga angka di UI tidak dapat menyimpang
+ *     dari baris yang benar-benar ada.
+ *   * `verses` **tidak punya kolom gambar**; gantinya tiap kartu memakai ikon.
+ *     Sebelumnya query meminta `v.image_url`/`v.media_type`/`v.character_count`
+ *     yang tidak ada di `docs/schema.sql` — tidak terlihat selama database belum
+ *     dapat dihubungi, dan langsung menjadi galat pertama begitu terhubung.
+ */
 
 export async function listVerses(
   sql: SqlClient,
@@ -26,11 +40,11 @@ export async function listVerses(
   const offset = Math.max(0, params.offset ?? 0);
 
   return sql.query<VerseListItem>(
-    `select v.id, v.slug, v.name, v.description, v.image_url,
-            coalesce(v.character_count, 0)::int as character_count,
-            v.media_type, v.updated_at
+    `select v.id, v.slug, v.name, v.description,
+            (select count(*) from characters c where c.verse_id = v.id)::int as character_count,
+            v.origin_media as media_type, v.updated_at
        from verses v
-      order by v.character_count desc nulls last, v.name asc
+      order by character_count desc, v.name asc
       limit $1 offset $2`,
     [limit, offset],
   );
@@ -46,7 +60,6 @@ export interface VerseDetail {
   slug: string;
   name: string;
   description: string | null;
-  image_url: string | null;
   media_type: string;
   character_count: number;
   updated_at: string;
@@ -54,9 +67,9 @@ export interface VerseDetail {
 
 export async function getVerseBySlug(sql: SqlClient, slug: string): Promise<VerseDetail | null> {
   const rows = await sql.query<VerseDetail>(
-    `select v.id, v.slug, v.name, v.description, v.image_url,
-            v.media_type,
-            coalesce(v.character_count, 0)::int as character_count,
+    `select v.id, v.slug, v.name, v.description,
+            v.origin_media as media_type,
+            (select count(*) from characters c where c.verse_id = v.id)::int as character_count,
             v.updated_at
        from verses v
       where v.slug = $1

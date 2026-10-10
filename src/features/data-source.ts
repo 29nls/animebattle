@@ -26,12 +26,79 @@ export type LoadOutcome<T> =
   | { status: 'failed'; message: string };
 
 /**
- * Pesan yang ditampilkan ke operator: menyebut apa yang hilang dan apa yang
- * harus diisi, bukan hanya "internal server error".
+ * Saran langkah-perbaikan untuk kegagalan yang tindakannya sudah jelas.
+ *
+ * Hanya dua kasus, keduanya pernah benar-benar terjadi pada deployment ini:
+ * sertifikat TLS Supabase yang tidak terverifikasi, dan skema yang belum
+ * diterapkan ke database tujuan. Selain itu `null` — pesan mentah driver
+ * dibiarkan apa adanya, bukan ditutup tebakan.
+ */
+function remedyHint(error: unknown): string | null {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  const message = error instanceof Error ? error.message : '';
+
+  if (
+    code === 'SELF_SIGNED_CERT_IN_CHAIN' ||
+    /self-signed certificate|certificate chain|unable to verify/i.test(message)
+  ) {
+    return (
+      'Sertifikat TLS server tidak dapat diverifikasi: Supabase memakai CA privat, sedangkan ' +
+      'sslmode=verify-full memverifikasi terhadap CA bawaan Node — dan sslrootcert di URL ' +
+      'diabaikan postgres.js. Setel DATABASE_CA_CERT (isi PEM CA Supabase) atau tulis ' +
+      '?sslmode=require pada DATABASE_URL (lihat README §Konfigurasi lingkungan).'
+    );
+  }
+
+  if (code === '42P01') {
+    return (
+      'Skema aplikasi tidak ada di database tujuan: jalankan docs/schema.sql (lalu docs/seed.sql ' +
+      'bila perlu) pada DATABASE_URL yang dipakai, atau arahkan DATABASE_URL ke project Supabase ' +
+      'yang benar.'
+    );
+  }
+
+  return null;
+}
+
+/**
+ * Pesan yang ditampilkan ke operator: menyebut apa yang hilang, apa yang harus
+ * diisi, dan — bila diketahui — langkah perbaikannya, bukan hanya
+ * "internal server error".
  */
 export function describeLoadFailure(error: unknown): string {
-  if (error instanceof DatabaseNotConfiguredError) return error.message;
-  return `Gagal memuat data: ${error instanceof Error ? error.message : String(error)}`;
+  const base =
+    error instanceof DatabaseNotConfiguredError
+      ? error.message
+      : `Gagal memuat data: ${error instanceof Error ? error.message : String(error)}`;
+  const hint = remedyHint(error);
+  return hint ? `${base} ${hint}` : base;
+}
+
+/**
+ * Pesan yang boleh dilihat **pengunjung anonim**.
+ *
+ * Detail driver (`DATABASE_URL`, `sslmode`, nama skema/tabel) adalah informasi
+ * infrastruktur: berguna bagi operator, tetapi tidak perlu dipublikasikan ke
+ * siapa pun yang membuka halaman. Kontrak yang sama sudah berlaku untuk API
+ * (`tests/security/api-error-contract.test.ts`); panel halaman kini mengikutinya.
+ */
+export const GENERIC_UNAVAILABLE_MESSAGE =
+  'Database sedang tidak dapat dihubungi, jadi data belum bisa ditampilkan. ' +
+  'Coba muat ulang halaman ini beberapa saat lagi.';
+
+/**
+ * Pilih pesan panel sesuai siapa yang melihat: detail untuk operator yang sudah
+ * masuk panel admin, pesan generik untuk pengunjung lain.
+ *
+ * Catatan cakupan: cookie sesi admin di-scope ke `path=/admin`
+ * (`features/admin/session.ts`), sehingga pada halaman publik `viewerIsOperator`
+ * bernilai false untuk semua orang — termasuk admin. Artinya hari ini pengunjung
+ * anonim selalu mendapat pesan generik, dan detail lengkap dapat dibaca operator
+ * dari log server serta `/api/health/ready`. Agar detail ikut tampil di halaman
+ * publik untuk admin, path cookie harus diperluas lebih dulu.
+ */
+export function visibleFailureMessage(detail: string, viewerIsOperator: boolean): string {
+  return viewerIsOperator ? detail : GENERIC_UNAVAILABLE_MESSAGE;
 }
 
 /**
@@ -41,11 +108,16 @@ export function describeLoadFailure(error: unknown): string {
  * dengan panel galat yang jujur, terlewatnya `DATABASE_URL` tidak lagi menjadi
  * halaman 500, dan kegagalan yang benar-benar tak terduga pun tetap terlihat
  * pesannya — bukan ditelan diam-diam.
+ *
+ * Detailnya dicatat ke log server, bukan ke halaman: pengunjung anonim hanya
+ * menerima `GENERIC_UNAVAILABLE_MESSAGE`, sedangkan operator mendapatkannya dari
+ * log platform (Vercel) atau `/api/health/ready`.
  */
 export async function attemptLoad<T>(load: () => Promise<T>): Promise<LoadOutcome<T>> {
   try {
     return { status: 'ok', data: await load() };
   } catch (error) {
+    console.error('[database] pemuatan data halaman gagal:', error);
     return { status: 'failed', message: describeLoadFailure(error) };
   }
 }

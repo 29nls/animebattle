@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 
 import { loadVerseList } from '@/features/verses/queries.ts';
 import { attemptLoad } from '@/features/data-source.ts';
+import { isAdminAuthenticated } from '@/features/admin/session.ts';
 import { DatabaseUnavailable } from '@/components/database-unavailable.tsx';
 import { DEMO_LABEL, DEMO_NOTICE } from '@/features/demo/provider.ts';
 import type { VerseListItem } from '@/features/verses/queries.ts';
@@ -51,7 +52,12 @@ export default async function VersesPage() {
       </div>
 
       {outcome.status === 'failed' ? (
-        <DatabaseUnavailable message={outcome.message} />
+        // Detail teknis hanya untuk operator (lihat visibleFailureMessage);
+        // pengunjung anonim menerima pesan generik.
+        <DatabaseUnavailable
+          detail={outcome.message}
+          viewerIsOperator={await isAdminAuthenticated()}
+        />
       ) : rows.length === 0 ? (
         <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-dashed border-line-strong bg-surface-1/50 p-8 text-center">
           <div className="h-12 w-12 text-4xl mb-4 opacity-50">🌌</div>
