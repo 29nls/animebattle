@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
 import { loadCharacterDetail } from '@/features/characters/detail-queries.ts';
+import { attemptLoad } from '@/features/data-source.ts';
+import { DatabaseUnavailable } from '@/components/database-unavailable.tsx';
 import { DEMO_LABEL, DEMO_NOTICE } from '@/features/demo/provider.ts';
 
 export const dynamic = 'force-dynamic';
@@ -16,7 +18,10 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const bundle = await loadCharacterDetail(slug);
+  // Metadata tidak boleh gagal sendiri: bila database belum terhubung, judul
+  // jatuh ke slug dan isi halaman menampilkan panel galat yang jujur.
+  const outcome = await attemptLoad(() => loadCharacterDetail(slug));
+  const bundle = outcome.status === 'ok' ? outcome.data : null;
   const name = bundle?.character.name ?? titleFromSlug(slug);
 
   return {
@@ -56,8 +61,11 @@ export default async function CharacterPage({
 }) {
   const { slug } = await params;
   const query = await searchParams;
-  const bundle = await loadCharacterDetail(slug, query.form);
+  const outcome = await attemptLoad(() => loadCharacterDetail(slug, query.form));
 
+  if (outcome.status === 'failed') return <DatabaseUnavailable message={outcome.message} />;
+
+  const bundle = outcome.data;
   if (!bundle) notFound();
 
   const { character, forms, activeForm, statistics, abilities, resistances, sources, source } = bundle;

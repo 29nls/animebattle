@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
 
 import { loadCharacterList, normalizePageSize } from '@/features/characters/queries.ts';
-import { DatabaseNotConfiguredError } from '@/lib/db/client.ts';
+import { attemptLoad } from '@/features/data-source.ts';
+import { DatabaseUnavailable } from '@/components/database-unavailable.tsx';
 import { DEMO_LABEL, DEMO_NOTICE } from '@/features/demo/provider.ts';
 import type { CharacterListItem } from '@/features/characters/queries.ts';
 
@@ -25,24 +26,14 @@ export default async function CharactersPage({
   const offset = (page - 1) * perPage;
   const query = params.q || '';
 
-  let rows: CharacterListItem[] = [];
-  let total: number | null = null;
-  let failure: string | null = null;
-  let demoSource = false;
-
-  try {
-    // Pemilih sumber data: database dulu; dataset demo hanya bila database belum
-    // dikonfigurasi dan ALLOW_DEMO_DATA=1 (lihat features/characters/queries.ts).
-    const loaded = await loadCharacterList({ limit: perPage, offset, query });
-    rows = loaded.rows;
-    total = loaded.total;
-    demoSource = loaded.source === 'demo';
-  } catch (error) {
-    failure =
-      error instanceof DatabaseNotConfiguredError
-        ? error.message
-        : `Gagal memuat data: ${error instanceof Error ? error.message : String(error)}`;
-  }
+  // Pemilih sumber data: database dulu; dataset demo hanya bila database belum
+  // dikonfigurasi dan ALLOW_DEMO_DATA=1 (lihat features/characters/queries.ts).
+  // Galatnya lewat `attemptLoad`: halaman tetap 200 dengan panel jujur, bukan 500.
+  const outcome = await attemptLoad(() => loadCharacterList({ limit: perPage, offset, query }));
+  const rows: CharacterListItem[] = outcome.status === 'ok' ? outcome.data.rows : [];
+  const total: number | null = outcome.status === 'ok' ? outcome.data.total : null;
+  const failure: string | null = outcome.status === 'failed' ? outcome.message : null;
+  const demoSource = outcome.status === 'ok' && outcome.data.source === 'demo';
 
   const totalPages = total ? Math.ceil(total / perPage) : 1;
 
@@ -98,23 +89,7 @@ export default async function CharactersPage({
 
       {/* ─── State Handling ─── */}
       {failure ? (
-        <div className="rounded-xl border border-accent-lose/30 bg-accent-lose/5 p-6 text-sm">
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-lose/20 text-accent-lose">
-              !
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-accent-lose">Database belum terhubung</h2>
-              <p className="mt-2 text-ink-1 leading-relaxed">{failure}</p>
-              <div className="mt-4 rounded bg-surface-0/50 p-3 font-mono text-xs text-ink-2 border border-line">
-                <p>Pilih salah satu di .env.local:</p>
-                <code className="text-accent-a">DATABASE_URL="postgres://..."</code>
-                <p className="mt-2">atau jalankan mode demo tanpa database:</p>
-                <code className="text-accent-a">ALLOW_DEMO_DATA=1</code>
-              </div>
-            </div>
-          </div>
-        </div>
+        <DatabaseUnavailable message={failure} />
       ) : rows.length === 0 ? (
         <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-dashed border-line-strong bg-surface-1/50 p-8 text-center">
           <div className="h-12 w-12 text-4xl mb-4 opacity-50">🔍</div>

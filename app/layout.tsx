@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 
+import { siteUrl } from '@/lib/site-url.ts';
 import './globals.css';
 
 /**
@@ -14,7 +15,10 @@ export const metadata: Metadata = {
   },
   description:
     'Compare thousands of fictional characters and simulate the battle. Statistik, abilities, resistances, dan kondisi pertarungan dengan sumber yang dapat ditelusuri.',
-  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'),
+  // `siteUrl()` (bukan `??` langsung): NEXT_PUBLIC_SITE_URL="" adalah nilai
+  // bawaan .env.example dan bukan nullish, sehingga `??` melewatinya dan
+  // `new URL('')` melempar → setiap halaman dinamis menjawab 500.
+  metadataBase: new URL(siteUrl()),
   alternates: { canonical: '/' },
   openGraph: {
     type: 'website',

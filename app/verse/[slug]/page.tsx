@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
 import { loadVerseDetail } from '@/features/verses/queries.ts';
+import { attemptLoad } from '@/features/data-source.ts';
+import { DatabaseUnavailable } from '@/components/database-unavailable.tsx';
 import { DEMO_LABEL, DEMO_NOTICE } from '@/features/demo/provider.ts';
 
 export const dynamic = 'force-dynamic';
@@ -16,7 +18,10 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const bundle = await loadVerseDetail(slug);
+  // Metadata tidak boleh gagal sendiri: bila database belum terhubung, judul
+  // jatuh ke slug dan isi halaman menampilkan panel galat yang jujur.
+  const outcome = await attemptLoad(() => loadVerseDetail(slug));
+  const bundle = outcome.status === 'ok' ? outcome.data : null;
   const name = bundle?.verse.name ?? titleFromSlug(slug);
 
   return {
@@ -39,8 +44,11 @@ const MEDIA_LABELS: Record<string, string> = {
 
 export default async function VersePage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const bundle = await loadVerseDetail(slug);
+  const outcome = await attemptLoad(() => loadVerseDetail(slug));
 
+  if (outcome.status === 'failed') return <DatabaseUnavailable message={outcome.message} />;
+
+  const bundle = outcome.data;
   if (!bundle) notFound();
 
   const { verse, characters, source } = bundle;

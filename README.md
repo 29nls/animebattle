@@ -71,7 +71,7 @@ SEO). Nilai nyata **tidak pernah** di-commit: `.env*` ada di `.gitignore`, dan
 | `CRON_SECRET` | Bearer token `GET /api/cron/sync` | Endpoint cron **fail-closed**: 503 |
 | `ALLOW_BATTLE_PREVIEW` | `1` membuka jalur pratinjau simulasi (body berisi `sides`) — hanya bila `NODE_ENV !== 'production'` | Jalur pratinjau menolak 403 |
 | `ALLOW_DEMO_DATA` | `1` memakai **dataset demo sintetis** (`src/features/demo`) bila `DATABASE_URL` kosong, supaya halaman karakter/verse dan alur battle dapat dijalankan tanpa PostgreSQL | Dataset demo tidak dipakai — halaman menampilkan status database |
-| `NEXT_PUBLIC_SITE_URL` | Base URL metadata/OG/robots/sitemap | Default `http://localhost:3000` |
+| `NEXT_PUBLIC_SITE_URL` | Base URL metadata/OG/robots/sitemap | Default `http://localhost:3000`. String kosong atau berisi spasi saja diperlakukan sebagai **belum diatur** ([`src/lib/site-url.ts`](src/lib/site-url.ts)): tanpa itu `new URL('')` melempar saat modul layout dievaluasi dan setiap halaman dinamis menjawab 500 |
 
 Rahasia Bearer cukup string acak panjang (`openssl rand -hex 32`); rotasi =
 ganti env lalu deploy ulang.
@@ -87,18 +87,18 @@ npm run lint                   # ESLint: lint batas arsitektur
 npm run check:architecture     # fixture + false-positive + 4 invarian batas
 npm run test:engine            # 225 unit test engine per modul (tanpa database)
 npm run test:security          # guard admin + rute cron + rate limiter (unit & integration handler)
-npm run test:web               # dataset demo + pemilih sumber data + token sesi admin (tanpa database)
+npm run test:web               # dataset demo + pemilih sumber data + penjaga galat halaman & base URL + token sesi admin (tanpa database)
 npm run test:ingestion         # pipeline + route admin + cron di atas skema nyata (PGlite)
 npm run test:lint-rules        # uji unit aturan lint (RuleTester)
 npm run test:lighthouse-config # guard anggaran Lighthouse CI (AC-21–23 tetap `error`)
-npm test                        # keenamnya sekaligus (225 + 32 + 13 + 28 + 3 + 4)
+npm test                        # keenamnya sekaligus (225 + 32 + 21 + 28 + 3 + 4)
 npm run validate:schema        # skema + seed, keluar 1 bila ada uji gagal
 npm run validate:battle-cases  # engine + case library
 npm run check:battle-guards    # uji mutasi: guard runner benar-benar menolak library rusak
 npm run build                  # Next.js production build
 ```
 
-Keluaran yang diharapkan: `Total: 56 · lulus 56 · gagal 0` (skema) dan `Total: 425 · gagal 0` (case library), serta `ℹ tests 225 · ℹ pass 225` (unit test engine), `ℹ tests 32 · ℹ pass 32` (keamanan), `ℹ tests 13 · ℹ pass 13` (dataset demo, pemilihan sumber data, token sesi admin), `ℹ tests 28 · ℹ pass 28` (pipeline ingestion + route admin + cron di atas skema nyata), `ℹ tests 3 · ℹ pass 3` (aturan lint), `ℹ tests 4 · ℹ pass 4` (guard konfigurasi Lighthouse) — total 305 uji pada `npm test`.
+Keluaran yang diharapkan: `Total: 56 · lulus 56 · gagal 0` (skema) dan `Total: 425 · gagal 0` (case library), serta `ℹ tests 225 · ℹ pass 225` (unit test engine), `ℹ tests 32 · ℹ pass 32` (keamanan), `ℹ tests 21 · ℹ pass 21` (dataset demo, pemilihan sumber data, penjaga galat pemuatan halaman + base URL situs, token sesi admin), `ℹ tests 28 · ℹ pass 28` (pipeline ingestion + route admin + cron di atas skema nyata), `ℹ tests 3 · ℹ pass 3` (aturan lint), `ℹ tests 4 · ℹ pass 4` (guard konfigurasi Lighthouse) — total 313 uji pada `npm test`.
 
 Pipeline ingestion diuji dengan cara yang sama seperti skema: **dieksekusi di atas DDL sungguhan**. `tests/ingestion/` memuat `docs/schema.sql` + `docs/seed.sql` ke PGlite, menyuntikkan klien itu lewat `setSqlClient()`, lalu menjalankan jalur produksi apa adanya — `POST /api/admin/ingestion/import` (hanya staging + antrian) → `GET /api/cron/sync` (worker) → `runIngestionJob` (fetch/parse/normalize/validate/dedupe/upsert) → `GET /api/admin/ingestion/jobs` + `.../errors` (panel). Yang dibuktikan di sana: menjalankan dataset yang sama **3×** menghasilkan `records_created = 0` pada eksekusi kedua dan ketiga (AC-08), kegagalan per record muncul di `ingestion_errors` dengan tipe dan pesan penyebabnya (AC-10), atribusi (`source_id`/`source_url`/`source_name`) terisi di setiap baris kanonik, dan kebijakan sumber benar-benar menggigit: allow-list, `robots.txt` (termasuk gagal tertutup), penolakan alamat privat (SSRF), `Retry-After`, serta token bucket per host. Fetch dan DNS disuntik, jadi hasilnya deterministik dan tidak menyentuh jaringan.
 

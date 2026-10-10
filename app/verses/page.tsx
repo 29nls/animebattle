@@ -1,7 +1,10 @@
 import type { Metadata } from 'next';
 
 import { loadVerseList } from '@/features/verses/queries.ts';
+import { attemptLoad } from '@/features/data-source.ts';
+import { DatabaseUnavailable } from '@/components/database-unavailable.tsx';
 import { DEMO_LABEL, DEMO_NOTICE } from '@/features/demo/provider.ts';
+import type { VerseListItem } from '@/features/verses/queries.ts';
 
 export const metadata: Metadata = {
   title: 'Verses / Universes',
@@ -23,11 +26,15 @@ const MEDIA_LABELS: Record<string, string> = {
 };
 
 export default async function VersesPage() {
-  const { rows, source } = await loadVerseList();
+  // Galat database tidak boleh menjatuhkan halaman: `attemptLoad` mengubahnya
+  // menjadi hasil `failed` yang dirender sebagai panel, bukan HTTP 500
+  // (audit Lighthouse pernah gagal di sini dengan ERRORED_DOCUMENT_REQUEST).
+  const outcome = await attemptLoad(() => loadVerseList());
+  const rows: VerseListItem[] = outcome.status === 'ok' ? outcome.data.rows : [];
 
   return (
     <div className="animate-fade-in">
-      {source === 'demo' && (
+      {outcome.status === 'ok' && outcome.data.source === 'demo' && (
         <div className="mb-6 rounded-lg border border-accent-flag/30 bg-accent-flag/10 p-3 text-sm text-accent-flag">
           <strong>{DEMO_LABEL}.</strong> {DEMO_NOTICE}
         </div>
@@ -43,7 +50,9 @@ export default async function VersesPage() {
         </p>
       </div>
 
-      {rows.length === 0 ? (
+      {outcome.status === 'failed' ? (
+        <DatabaseUnavailable message={outcome.message} />
+      ) : rows.length === 0 ? (
         <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-dashed border-line-strong bg-surface-1/50 p-8 text-center">
           <div className="h-12 w-12 text-4xl mb-4 opacity-50">🌌</div>
           <h2 className="text-lg font-medium text-ink-0">Belum ada verse</h2>

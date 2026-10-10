@@ -1,11 +1,15 @@
 import type { MetadataRoute } from 'next';
 
+import { siteUrl } from '@/lib/site-url.ts';
+
 /**
  * Sitemap dinamis (PRD §22 SEO). Di MVP, menghasilkan URL statis.
  * Sprint 5 akan menambahkan query database untuk semua karakter/verse.
  */
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
+  // `siteUrl()` memperlakukan NEXT_PUBLIC_SITE_URL="" (bawaan .env.example)
+  // sebagai belum diatur; tanpa itu setiap entri sitemap kehilangan originnya.
+  const baseUrl = siteUrl();
 
   const staticPages: MetadataRoute.Sitemap = [
     {

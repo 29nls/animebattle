@@ -47,7 +47,7 @@ npm test                   # unit test engine + security + aturan lint + guard a
 ```
 
 Angka yang diharapkan (lihat README untuk detail): engine 225/225, security 32/32,
-web 13/13, ingestion 28/28, lintrules 3/3, lighthouse-config 4/4,
+web 21/21, ingestion 28/28, lintrules 3/3, lighthouse-config 4/4,
 `check:architecture` 38/38, `validate:battle-cases` 425/425.
 
 ## Testing philosophy
