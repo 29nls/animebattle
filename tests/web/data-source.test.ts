@@ -31,6 +31,8 @@ const DATA_PAGES = [
   'app/character/[slug]/page.tsx',
   'app/verses/page.tsx',
   'app/verse/[slug]/page.tsx',
+  'app/versus/page.tsx',
+  'app/versus/result/page.tsx',
 ];
 
 test('attemptLoad meneruskan keberhasilan apa adanya', async () => {

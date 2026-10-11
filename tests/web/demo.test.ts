@@ -23,11 +23,13 @@ import {
   DEMO_NOTICE,
   DemoDataError,
   demoBattleInput,
+  demoBattleOptionGroups,
   demoCharacterDetail,
   demoCharacterListItems,
   demoEnabled,
   demoVerseDetail,
 } from '../../src/features/demo/provider.ts';
+import { loadBattleResult, parseBattleSelection } from '../../src/features/battle/queries.ts';
 import { loadCharacterList } from '../../src/features/characters/queries.ts';
 import { DatabaseNotConfiguredError } from '../../src/lib/db/client.ts';
 import { simulateFromSides } from '../../src/features/battle/simulate.ts';
@@ -167,6 +169,52 @@ test('view model demo memenuhi bentuk yang dipakai halaman', () => {
   assert.ok(verse);
   assert.equal(verse.characters.length, 2);
   assert.ok(demoVerseDetail('tidak-ada') === null);
+});
+
+test('parseBattleSelection: tepat `karakter/form`, spasi dipangkas, bentuk lain ditolak', () => {
+  assert.deepEqual(parseBattleSelection('saitama/base'), { characterSlug: 'saitama', formSlug: 'base' });
+  assert.deepEqual(parseBattleSelection(' saitama / base '), {
+    characterSlug: 'saitama',
+    formSlug: 'base',
+  });
+  for (const invalid of ['', '/', 'saitama', '/base', 'saitama/', 'a/b/c']) {
+    assert.equal(parseBattleSelection(invalid), null, `harus ditolak: "${invalid}"`);
+  }
+});
+
+test('loadBattleResult: demo hanya tanpa DATABASE_URL, pilihan tidak sah tidak melempar', async () => {
+  const groups = demoBattleOptionGroups();
+  const valueA = groups[0]!.options[0]!.value;
+  const valueB = groups[1]!.options[0]!.value;
+
+  const previousDemo = process.env.ALLOW_DEMO_DATA;
+  const previousDatabase = process.env.DATABASE_URL;
+  process.env.ALLOW_DEMO_DATA = '1';
+  delete process.env.DATABASE_URL;
+  try {
+    const ok = await loadBattleResult({ valueA, valueB, conditions: CONDITIONS, rule_set: ruleSet });
+    assert.equal(ok.status, 'ok');
+    if (ok.status !== 'ok') throw new Error('tidak mungkin');
+    assert.equal(ok.bundle.source, 'demo');
+    assert.equal(ok.bundle.sideA.character.slug, valueA.split('/')[0]);
+    assert.equal(ok.bundle.sideB.character.slug, valueB.split('/')[0]);
+
+    const same = await loadBattleResult({ valueA, valueB: valueA, conditions: CONDITIONS, rule_set: ruleSet });
+    assert.equal(same.status, 'invalid');
+
+    const unknown = await loadBattleResult({ valueA: 'tidak-ada/base', valueB, conditions: CONDITIONS, rule_set: ruleSet });
+    assert.equal(unknown.status, 'invalid');
+    if (unknown.status !== 'invalid') throw new Error('tidak mungkin');
+    assert.match(unknown.message, /tidak ada di dataset demo/);
+
+    const empty = await loadBattleResult({ valueA: '', valueB, conditions: CONDITIONS, rule_set: ruleSet });
+    assert.equal(empty.status, 'invalid');
+  } finally {
+    if (previousDemo === undefined) delete process.env.ALLOW_DEMO_DATA;
+    else process.env.ALLOW_DEMO_DATA = previousDemo;
+    if (previousDatabase === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabase;
+  }
 });
 
 test('data demo tidak pernah menggantikan database sungguhan', async () => {

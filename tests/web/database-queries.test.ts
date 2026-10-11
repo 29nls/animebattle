@@ -30,11 +30,19 @@ import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { unaccent } from '@electric-sql/pglite/contrib/unaccent';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 
-import type { SqlClient } from '../../src/lib/db/client.ts';
+import { DatabaseNotConfiguredError, setSqlClient, type SqlClient } from '../../src/lib/db/client.ts';
 import { loadSourceBySlug } from '../../src/services/ingestion/sources.ts';
 import { applyDataset } from '../../src/services/ingestion/upsert.ts';
 import type { DatasetEnvelope } from '../../src/services/ingestion/dataset.ts';
 import { simulateFromVersions } from '../../src/features/battle/simulate.ts';
+import {
+  listBattleOptionGroups,
+  loadBattleOptions,
+  loadBattleResult,
+  parseBattleSelection,
+  resolveBattleVersionIds,
+} from '../../src/features/battle/queries.ts';
+import { demoBattleOptionGroups } from '../../src/features/demo/provider.ts';
 import {
   countCharacters,
   listCharacters,
@@ -411,5 +419,220 @@ describe('jalur pertarungan di atas skema sungguhan', () => {
     );
     assert.equal(keyed.length, 1);
     assert.equal(keyed[0]!.has_experience, true, 'metrics harus memuat kunci experience');
+  });
+});
+
+/**
+ * Jalankan `run` dengan variabel lingkungan tertentu, lalu pulihkan.
+ *
+ * Pemilih sumber data (`loadBattleOptions`/`loadBattleResult`) membaca
+ * `DATABASE_URL` dan `ALLOW_DEMO_DATA` langsung dari `process.env`, sehingga
+ * kontrak "database dulu, demo hanya bila belum dikonfigurasi" hanya dapat
+ * dibuktikan dengan mengubahnya — sama seperti `tests/web/demo.test.ts`.
+ */
+async function withEnvironment<T>(
+  env: { DATABASE_URL?: string; ALLOW_DEMO_DATA?: string },
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = {
+    DATABASE_URL: process.env.DATABASE_URL,
+    ALLOW_DEMO_DATA: process.env.ALLOW_DEMO_DATA,
+  };
+
+  for (const key of ['DATABASE_URL', 'ALLOW_DEMO_DATA'] as const) {
+    if (key in env) process.env[key] = env[key] as string;
+    else delete process.env[key];
+  }
+
+  try {
+    return await run();
+  } finally {
+    for (const key of ['DATABASE_URL', 'ALLOW_DEMO_DATA'] as const) {
+      const value = previous[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+/** Klien PGlite disuntikkan hanya selama satu pemeriksaan berjalan. */
+async function withInjectedClient<T>(run: () => Promise<T>): Promise<T> {
+  setSqlClient(sql);
+  try {
+    return await run();
+  } finally {
+    setSqlClient(null);
+  }
+}
+
+describe('pemilih & halaman hasil /versus di atas skema sungguhan', () => {
+  it('listBattleOptionGroups mengelompokkan form per karakter dengan nilai slug/form', async () => {
+    const groups = await listBattleOptionGroups(sql);
+
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0]!.label, 'Fixture Hero');
+    assert.deepEqual(
+      groups[0]!.options.map((option) => option.value),
+      ['fixture-hero/first-form', 'fixture-hero/second-form'],
+    );
+    assert.equal(groups[0]!.options[0]!.characterName, 'Fixture Hero');
+    assert.equal(groups[0]!.options[0]!.tierCode, '5-B');
+    assert.equal(groups[0]!.options[0]!.label, 'Fixture Hero (First Form) — First arc (5-B)');
+    // Form tanpa tier tetap punya label yang terbaca, bukan kata "null".
+    assert.equal(
+      groups[0]!.options[1]!.label,
+      'Fixture Hero (Second Form) — Final arc (tanpa tier)',
+    );
+  });
+
+  it('label opsi tidak mengulang era yang sama dengan nama form', async () => {
+    // Sebagian dataset memakai nama arc sebagai `era` sekaligus `name`, sehingga
+    // tanpa penjagaan labelnya terbaca "Post-Balding — Post-Balding (4-A)".
+    await sql.query(`update character_versions set era = name where id = $1`, [versionIds.second]);
+    try {
+      const groups = await listBattleOptionGroups(sql);
+      const option = groups[0]!.options.find(
+        (entry) => entry.value === 'fixture-hero/second-form',
+      );
+      assert.equal(option?.label, 'Fixture Hero (Second Form) (tanpa tier)');
+    } finally {
+      await sql.query(`update character_versions set era = 'Final arc' where id = $1`, [
+        versionIds.second,
+      ]);
+    }
+  });
+
+  it('resolveBattleVersionIds memetakan beberapa pasangan slug dalam satu query', async () => {
+    // Dua sisi sekaligus: nilai sah terpetakan, bentuk tidak sah/absen cukup
+    // tidak muncul di peta — pemanggil yang memutuskan pesannya.
+    const resolved = await resolveBattleVersionIds(sql, [
+      'fixture-hero/first-form',
+      '  fixture-hero/second-form  ',
+      'fixture-hero',
+      'fixture-hero/a/b',
+      'fixture-hero/tidak-ada',
+      'tidak-ada/first-form',
+    ]);
+
+    assert.equal(resolved.size, 2);
+    assert.equal(resolved.get('fixture-hero/first-form'), versionIds.first);
+    assert.equal(resolved.get('  fixture-hero/second-form  '), versionIds.second);
+    assert.equal(resolved.get('fixture-hero'), undefined);
+    assert.equal(resolved.get('fixture-hero/tidak-ada'), undefined);
+
+    // Daftar tanpa nilai yang dapat diurai tidak menyentuh database sama sekali.
+    assert.equal((await resolveBattleVersionIds(sql, ['', 'x', '/', 'a/b/c'])).size, 0);
+  });
+
+  it('parseBattleSelection hanya menerima tepat dua bagian yang tidak kosong', () => {
+    assert.deepEqual(parseBattleSelection('saitama/base'), {
+      characterSlug: 'saitama',
+      formSlug: 'base',
+    });
+    assert.deepEqual(parseBattleSelection('  saitama / base  '), {
+      characterSlug: 'saitama',
+      formSlug: 'base',
+    });
+    for (const invalid of ['', '/', 'saitama', '/base', 'saitama/', 'a/b/c']) {
+      assert.equal(parseBattleSelection(invalid), null, `harus ditolak: "${invalid}"`);
+    }
+  });
+
+  it('loadBattleOptions membaca database begitu DATABASE_URL diisi, walaupun demo diaktifkan', async () => {
+    await withEnvironment({ DATABASE_URL: 'postgres://fixture', ALLOW_DEMO_DATA: '1' }, () =>
+      withInjectedClient(async () => {
+        const options = await loadBattleOptions();
+        assert.equal(options.source, 'database');
+        assert.equal(options.groups.length, 1);
+        assert.equal(options.groups[0]!.options.length, 2);
+      }),
+    );
+  });
+
+  it('loadBattleResult menyimulasikan dari battle_dataset, bukan dataset demo', async () => {
+    await withEnvironment({ DATABASE_URL: 'postgres://fixture', ALLOW_DEMO_DATA: '1' }, () =>
+      withInjectedClient(async () => {
+        const outcome = await loadBattleResult({
+          valueA: 'fixture-hero/first-form',
+          valueB: 'fixture-hero/second-form',
+          conditions: CONDITIONS,
+          rule_set: ruleSet,
+        });
+
+        assert.equal(outcome.status, 'ok');
+        if (outcome.status !== 'ok') throw new Error('tidak mungkin');
+
+        assert.equal(outcome.bundle.source, 'database');
+        // Kedua sisi nyata dari database — inilah nama & label form yang dipakai
+        // banner pemenang; tanpa ini halaman hanya punya angka.
+        assert.equal(outcome.bundle.sideA.character.name, 'Fixture Hero');
+        assert.equal(outcome.bundle.sideA.form.slug, 'first-form');
+        assert.equal(outcome.bundle.sideB.form.slug, 'second-form');
+        assert.ok(Number.isFinite(outcome.bundle.result.win_probability.a));
+        assert.ok(Number.isFinite(outcome.bundle.result.win_probability.b));
+      }),
+    );
+  });
+
+  it('loadBattleResult menandai pilihan tidak sah tanpa menyentuh database', async () => {
+    // Tanpa DATABASE_URL dan tanpa ALLOW_DEMO_DATA: `getSqlClient()` akan
+    // melempar bila urutan pemeriksaannya salah, jadi tidak melempar di sini
+    // justru membuktikan pilihan divalidasi lebih dulu.
+    await withEnvironment({}, async () => {
+      const empty = await loadBattleResult({
+        valueA: '',
+        valueB: 'fixture-hero/first-form',
+        conditions: CONDITIONS,
+        rule_set: ruleSet,
+      });
+      assert.equal(empty.status, 'invalid');
+
+      const malformed = await loadBattleResult({
+        valueA: 'tanpa-slash',
+        valueB: 'fixture-hero/first-form',
+        conditions: CONDITIONS,
+        rule_set: ruleSet,
+      });
+      assert.equal(malformed.status, 'invalid');
+
+      const same = await loadBattleResult({
+        valueA: 'fixture-hero/first-form',
+        valueB: 'fixture-hero/first-form',
+        conditions: CONDITIONS,
+        rule_set: ruleSet,
+      });
+      assert.equal(same.status, 'invalid');
+      if (same.status !== 'invalid') throw new Error('tidak mungkin');
+      assert.match(same.message, /form yang sama/);
+    });
+  });
+
+  it('loadBattleResult memakai dataset demo hanya bila database belum dikonfigurasi', async () => {
+    const groups = demoBattleOptionGroups();
+    const valueA = groups[0]!.options[0]!.value;
+    const valueB = groups[1]!.options[0]!.value;
+
+    await withEnvironment({ ALLOW_DEMO_DATA: '1' }, async () => {
+      const outcome = await loadBattleResult({
+        valueA,
+        valueB,
+        conditions: CONDITIONS,
+        rule_set: ruleSet,
+      });
+      assert.equal(outcome.status, 'ok');
+      if (outcome.status !== 'ok') throw new Error('tidak mungkin');
+      assert.equal(outcome.bundle.source, 'demo');
+      assert.equal(outcome.bundle.sideA.character.slug, valueA.split('/')[0]);
+      assert.ok(Number.isFinite(outcome.bundle.result.win_probability.a));
+    });
+
+    // Tanpa flag demo, pemilih menolak terang-terangan alih-alih diam-diam
+    // menyajikan data sintetis.
+    await withEnvironment({}, async () => {
+      await assert.rejects(
+        () => loadBattleOptions(),
+        (error) => error instanceof DatabaseNotConfiguredError,
+      );
+    });
   });
 });

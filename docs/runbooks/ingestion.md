@@ -98,7 +98,11 @@ tidak menulis `ingestion_errors`.
    bukan gangguan.
 3. **Jangan mengedit baris `statistics` secara manual** untuk "memperbaiki" hasil
    impor. Impor ulang menulis baris `current` baru dan menandai yang lama
-   `superseded`; mengeditnya menghapus jejak (D6).
+   `superseded`; mengeditnya menghapus jejak (D6). Itu berlaku juga untuk
+   `source_url`: bila tautan barisnya salah, perbaiki URL halaman karakter di
+   dataset lalu impor ulang — pipeline mengoreksinya di tempat dan mencatatnya
+   di `notes` job. Mengeditnya langsung di database menghilangkan jejak
+   siapa/kapan yang mengubahnya.
 4. **Jangan menghapus baris `ingestion_errors`** sebelum masalahnya selesai —
    `payload` di sana satu-satunya cara mereproduksi bug parser offline (VA-3).
 5. **Jangan menjalankan ingestion dari jalur request.** Semua penjadwalan lewat
@@ -143,14 +147,33 @@ Halaman karakter juga menampilkan atribusi **per baris**: tiap statistik,
 ability, dan resistance bertaut ke URL yang tersimpan di barisnya
 (`statistics.source_url`, `character_abilities.source_url`,
 `character_resistances.source_url`), dengan `sources.base_url` registry sebagai
-fallback. URL baris form berasal dari `envelope.source_url` (halaman verse di
-dataset), sedangkan `characters.source_url` memakai halaman karakter — jadi
-untuk satu dataset semua tautan baris biasanya menunjuk halaman yang sama.
-Efek sampingnya perlu diketahui operator: memperbaiki URL baris pada dataset
-**tidak** mengubah baris yang sudah ada, karena perbandingan idempoten di
-`upsertStatistic`/`upsertAbility`/`upsertResistance` tidak membandingkan
-`source_url` — baris lama tetap membawa URL lamanya sampai nilainya berubah
-karena sebab lain.
+fallback. URL baris itu adalah **halaman karakter** di dataset
+(`characters.source_url`, mis. `/wiki/Saitama`) — bukan `envelope.source_url`
+yang menunjuk halaman verse (mis. `/wiki/One-Punch_Man`) dan dipakai bersama
+semua karakter. Tautan per baris harus menyebut tempat nilainya dibaca; satu URL
+dataset untuk seluruh baris membuat atribusi per baris tidak berguna
+(2026-10-11, impor ulang produksi mengoreksi 53 baris: 27 statistik `current`,
+13 ability, 13 resistensi).
+
+`source_url` ikut dibandingkan pada idempotensi, jadi **memperbaiki URL pada
+dataset cukup dengan impor ulang**: baris yang nilainya sama tetapi tautannya
+bukan:
+
+- **statistik** — kolom `source_url` dikoreksi **di tempat** (`update ... set
+  source_url, updated_at`), bukan disuperseded. Baris `current` baru +
+  `superseded` pada yang lama berarti "nilainya diganti", dan nilai itu memang
+  tidak pernah berubah; mencatatnya akan mengotori riwayat (D6/AC-17) dengan
+  revisi yang tidak terjadi. Baris yang **sudah** `superseded` tidak disentuh —
+  ia riwayat, dan atribusi lamanya adalah bagian dari riwayat itu.
+- **ability/resistensi** — baris tautannya diperbarui lewat `on conflict do
+  update` yang sudah ada.
+
+Keduanya dihitung `records_updated` (bukan `created`: tidak ada baris kanonik
+baru), dan koreksinya disebut di `notes` job — mis. `statistik: source_url baris
+diperbarui ke halaman sumber karakter; nilai tidak berubah, tidak ada baris
+baru.` Setelah koreksi pertama, impor ulang dataset yang sama kembali
+`records_created = 0` / `records_updated = 0`. Jalur dry-run memakai
+perbandingan yang sama, jadi koreksi tautan terlihat di diff sebelum Commit.
 
 ## 7. Prasyarat `stat_scales` sebelum impor statistik
 

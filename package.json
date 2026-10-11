@@ -6,6 +6,7 @@
   "description": "PRD, arsitektur, skema database, battle engine + case library, pipeline ingestion (antrian → worker → staging → upsert ber-atribusi) dengan panel admin, dan scaffolding Next.js dengan lint batas arsitektur untuk Anime VS Battle. Adapter crawling per sumber, auth Supabase, dan UI penuh belum dimulai.",
   "scripts": {
     "validate:schema": "node scripts/validate-schema.mjs",
+    "check:schema-drift": "node --env-file=.env scripts/compare-live-schema.mjs",
     "typecheck": "tsc --noEmit",
     "validate:battle-cases": "node scripts/run-battle-cases.mjs",
     "check:battle-guards": "node scripts/mutate-battle-guards.mjs",

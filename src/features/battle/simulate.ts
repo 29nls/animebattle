@@ -41,27 +41,41 @@ export class BattleInputError extends Error {
   override readonly name = 'BattleInputError';
 }
 
-/**
- * Simulasi dari dua `character_version_id` — jalur produksi.
- *
- * Form (bukan karakter) yang dipilih: PRD §11 menuntut engine hanya menerima
- * `character_version_id`, karena "Goku" tanpa era adalah pertanyaan yang tidak
- * punya jawaban tunggal.
- */
-export async function simulateFromVersions(
-  sql: SqlClient,
-  params: {
-    side_a_version_id: string;
-    side_b_version_id: string;
-    conditions: BattleConditions;
-    rule_set: RuleSet;
-  },
-): Promise<BattleResult> {
-  if (params.side_a_version_id === params.side_b_version_id) {
+export interface VersionBattleParams {
+  side_a_version_id: string;
+  side_b_version_id: string;
+  conditions: BattleConditions;
+  rule_set: RuleSet;
+}
+
+/** Dua sisi yang dimuat dari satu panggilan `battle_dataset`. */
+export interface BattleSides {
+  sideA: SideData;
+  sideB: SideData;
+}
+
+function assertDistinctVersions(versionA: string, versionB: string): void {
+  if (versionA === versionB) {
     throw new BattleInputError(
       'Kedua sisi memakai form yang sama. Pertarungan karakter dengan dirinya sendiri tidak menghasilkan analisis apa pun.',
     );
   }
+}
+
+/**
+ * Muat dua sisi dari `battle_dataset` — satu round-trip untuk keduanya.
+ *
+ * Dipisah dari `simulateFromVersions` karena halaman `/versus/result` butuh
+ * keduanya **dan** hasilnya: nama karakter + label form untuk banner pemenang
+ * tidak tersedia di `BattleResult`. Memuatnya lewat panggilan kedua akan
+ * mengulang seluruh dataset hanya untuk dua label.
+ */
+export async function loadBattleSides(
+  sql: SqlClient,
+  versionA: string,
+  versionB: string,
+): Promise<BattleSides> {
+  assertDistinctVersions(versionA, versionB);
 
   // `battle_dataset` mengembalikan SATU nilai jsonb berisi array dua sisi
   // (diurutkan `version_id`), bukan setof satu baris per sisi. `select *` di sini
@@ -72,20 +86,64 @@ export async function simulateFromVersions(
   const rows = await sql.query<{ side: BattleDatasetRow }>(
     `select elem as side
        from jsonb_array_elements(public.battle_dataset(array[$1, $2]::uuid[])) as t(elem)`,
-    [params.side_a_version_id, params.side_b_version_id],
+    [versionA, versionB],
   );
 
   // Urutan array mengikuti `version_id`, bukan urutan argumen: petakan kembali
   // lewat `version_id` supaya label sisi A/B pada hasil tidak tertukar.
-  const sideA = rows.find((row) => row.side.version_id === params.side_a_version_id)?.side;
-  const sideB = rows.find((row) => row.side.version_id === params.side_b_version_id)?.side;
+  const sideA = rows.find((row) => row.side.version_id === versionA)?.side;
+  const sideB = rows.find((row) => row.side.version_id === versionB)?.side;
   if (!sideA || !sideB) {
     throw new BattleInputError(
       'Salah satu form tidak ditemukan atau sudah dihapus. Dataset harus berisi dua sisi.',
     );
   }
 
+  return { sideA, sideB };
+}
+
+/**
+ * Simulasi dari dua `character_version_id` — jalur produksi.
+ *
+ * Form (bukan karakter) yang dipilih: PRD §11 menuntut engine hanya menerima
+ * `character_version_id`, karena "Goku" tanpa era adalah pertanyaan yang tidak
+ * punya jawaban tunggal.
+ */
+export async function simulateFromVersions(
+  sql: SqlClient,
+  params: VersionBattleParams,
+): Promise<BattleResult> {
+  const { sideA, sideB } = await loadBattleSides(
+    sql,
+    params.side_a_version_id,
+    params.side_b_version_id,
+  );
+
   return runBattle({ side_a: sideA, side_b: sideB, conditions: params.conditions }, params.rule_set);
+}
+
+/** Sama seperti `simulateFromVersions`, tetapi mengembalikan juga kedua sisinya. */
+export interface VersionsBattleResult {
+  result: BattleResult;
+  side_a: SideData;
+  side_b: SideData;
+}
+
+export async function simulateFromVersionsWithSides(
+  sql: SqlClient,
+  params: VersionBattleParams,
+): Promise<VersionsBattleResult> {
+  const { sideA, sideB } = await loadBattleSides(
+    sql,
+    params.side_a_version_id,
+    params.side_b_version_id,
+  );
+
+  return {
+    result: runBattle({ side_a: sideA, side_b: sideB, conditions: params.conditions }, params.rule_set),
+    side_a: sideA,
+    side_b: sideB,
+  };
 }
 
 /**

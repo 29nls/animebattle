@@ -1,10 +1,13 @@
 import type { Metadata } from 'next';
 
+import { loadBattleResult } from '@/features/battle/queries.ts';
 import { parseBattleConditionsFromQuery } from '@/features/battle/conditions.ts';
 import { defaultRuleSet } from '@/features/battle/rule-set.ts';
-import { simulateFromSides } from '@/features/battle/simulate.ts';
-import { DEMO_LABEL, DEMO_NOTICE, DemoDataError, demoBattleInput, demoEnabled } from '@/features/demo/provider.ts';
-import type { BattleResult, SideData } from '@/services/battle/types.ts';
+import { attemptLoad } from '@/features/data-source.ts';
+import { isAdminAuthenticated } from '@/features/admin/session.ts';
+import { DatabaseUnavailable } from '@/components/database-unavailable.tsx';
+import { DEMO_LABEL, DEMO_NOTICE } from '@/features/demo/provider.ts';
+import type { SideData } from '@/services/battle/types.ts';
 
 export const metadata: Metadata = {
   title: 'Battle Result',
@@ -22,8 +25,15 @@ function sideName(side: SideData): string {
   return side.character.name;
 }
 
+/**
+ * Label form untuk banner. Era yang sama dengan nama form tidak diulang —
+ * sebagian dataset memakai nama arc sebagai `era` sekaligus `name`
+ * ("Post-Balding — Post-Balding"), dan pengulangan itu tidak memberi informasi.
+ */
 function sideFormLabel(side: SideData): string {
-  return `${side.form.name}${side.form.era ? ` — ${side.form.era}` : ''}`;
+  const era = side.form.era?.trim();
+  const distinctEra = era && era.toLowerCase() !== side.form.name.trim().toLowerCase() ? era : null;
+  return `${side.form.name}${distinctEra ? ` — ${distinctEra}` : ''}`;
 }
 
 /** `metric_slug` → `Metric Slug` untuk tampilan breakdown. */
@@ -73,38 +83,38 @@ export default async function VersusResultPage({ searchParams }: PageProps) {
 
   const valueA = (single(params.form_a) ?? single(params.char_a) ?? '').trim();
   const valueB = (single(params.form_b) ?? single(params.char_b) ?? '').trim();
-  const demoSource = demoEnabled();
 
-  let result: BattleResult | null = null;
-  let sideA: SideData | null = null;
-  let sideB: SideData | null = null;
-  let failure: string | null = null;
+  // Sumber data dipilih di `features/battle/queries.ts`: database dulu
+  // (`battle_dataset` lewat `simulateFromVersions`), dataset demo hanya bila
+  // database belum dikonfigurasi. Pilihan yang tidak sah datang sebagai
+  // `invalid` yang pesannya sudah jadi; galat infrastruktur lewat `attemptLoad`
+  // sehingga halaman menjawab panel jujur, bukan 500.
+  const outcome = await attemptLoad(() =>
+    loadBattleResult({
+      valueA,
+      valueB,
+      conditions: parseBattleConditionsFromQuery(params),
+      rule_set: defaultRuleSet(),
+    }),
+  );
 
-  if (valueA === '' || valueB === '') {
-    failure = 'Pilih Character A dan Character B terlebih dahulu di halaman Battle Builder.';
-  } else if (!demoSource) {
-    failure =
-      'Simulasi halaman ini membutuhkan data: aktifkan dataset demo (ALLOW_DEMO_DATA=1) atau hubungkan PostgreSQL (DATABASE_URL).';
-  } else {
-    try {
-      const input = demoBattleInput(valueA, valueB, parseBattleConditionsFromQuery(params));
-      sideA = input.side_a;
-      sideB = input.side_b;
-      result = simulateFromSides(input, defaultRuleSet());
-    } catch (error) {
-      failure =
-        error instanceof DemoDataError
-          ? error.message
-          : `Simulasi gagal dijalankan: ${error instanceof Error ? error.message : String(error)}`;
-    }
+  if (outcome.status === 'failed') {
+    return (
+      <div className="animate-fade-in mx-auto max-w-2xl">
+        <DatabaseUnavailable
+          detail={outcome.message}
+          viewerIsOperator={await isAdminAuthenticated()}
+        />
+      </div>
+    );
   }
 
-  if (failure || !result || !sideA || !sideB) {
+  if (outcome.data.status === 'invalid') {
     return (
       <div className="animate-fade-in mx-auto max-w-2xl">
         <div className="rounded-2xl border border-accent-flag/30 bg-accent-flag/10 p-6 text-sm">
           <h1 className="text-lg font-bold text-ink-0">Simulasi belum dapat dijalankan</h1>
-          <p className="mt-2 leading-relaxed text-ink-1">{failure}</p>
+          <p className="mt-2 leading-relaxed text-ink-1">{outcome.data.message}</p>
           <a href="/versus" className="btn-primary mt-6 inline-flex text-sm px-6">
             Kembali ke Battle Builder
           </a>
@@ -112,6 +122,9 @@ export default async function VersusResultPage({ searchParams }: PageProps) {
       </div>
     );
   }
+
+  const { result, sideA, sideB, source } = outcome.data.bundle;
+  const demoSource = source === 'demo';
 
   const winnerName =
     result.winner === 'a'

@@ -135,6 +135,15 @@ interface DatasetOptions {
   characterSlug?: string;
   abilityCategory?: string;
   tierCode?: string | null;
+  /**
+   * Halaman verse untuk `envelope.source_url`. Dipisahkan dari halaman karakter
+   * supaya atribusi per baris dapat diuji: `null` = halaman verse tidak
+   * dicantumkan (default lama, agar hash dataset lain di suite ini tidak
+   * bergeser tanpa alasan).
+   */
+  verseSourceUrl?: string | null;
+  /** Halaman per karakter (`characters.source_url`) — asal baris fakta. */
+  characterSourceUrl?: string | null;
 }
 
 function sampleDataset(options: DatasetOptions = {}): Record<string, unknown> {
@@ -142,7 +151,7 @@ function sampleDataset(options: DatasetOptions = {}): Record<string, unknown> {
   return {
     parser_version: 'dataset-json@1.0.0',
     source_slug: options.sourceSlug ?? 'admin-dataset-import',
-    source_url: 'dataset://admin-dataset-import/test',
+    source_url: options.verseSourceUrl ?? 'dataset://admin-dataset-import/test',
     license: 'CC BY-SA 4.0 (Astral Wiki)',
     license_url: 'https://astral.test/license',
     attribution: 'Angka contoh dikutip dari Astral Wiki (teks berlisensi CC BY-SA 4.0).',
@@ -161,6 +170,9 @@ function sampleDataset(options: DatasetOptions = {}): Record<string, unknown> {
         classification: 'swordsman',
         origin: 'Astral Verse',
         media_type: 'novel',
+        // Kunci hanya muncul bila diminta: dataset default tetap byte-identik
+        // dengan sebelumnya (`upsertCharacter` jatuh ke `envelope.source_url`).
+        ...(options.characterSourceUrl === undefined ? {} : { source_url: options.characterSourceUrl }),
         forms: [
           {
             slug: 'squire',
@@ -466,6 +478,172 @@ describe('pipeline ingestion di atas skema sungguhan', () => {
     assert.equal(await countRows('ingestion_raw_pages'), baseline.staging);
     // Atribusi per karakter juga idempoten: re-run tidak menambah baris sumber.
     assert.equal(await countRows('character_sources'), baseline.characterSources);
+  });
+
+  it('baris statistik, ability, dan resistance mewarisi halaman sumber karakter, bukan halaman verse', async () => {
+    const VERSE_PAGE = 'https://astral.test/wiki/Astral_Verse';
+    const CHARACTER_PAGE = 'https://astral.test/wiki/Aster_Vale';
+    const staged = await stageDatasetImport(
+      sql,
+      sampleDataset({
+        characterSlug: 'attrib-hero',
+        verseSourceUrl: VERSE_PAGE,
+        characterSourceUrl: CHARACTER_PAGE,
+      }),
+    );
+    const result = await runJobById(staged.job_id, { sql, ...DETACHED_DEPS });
+    assert.equal(result.status, 'completed');
+
+    const character = await sql.query<{ source_url: string | null }>(
+      `select source_url from characters where slug = 'attrib-hero'`,
+    );
+    assert.equal(character[0]!.source_url, CHARACTER_PAGE);
+
+    // Setiap baris fakta membawa halaman **karakter** — bukan halaman verse
+    // dataset yang dipakai bersama semua karakter (itulah bug yang ditutup:
+    // semua tautan per baris menunjuk `/wiki/Astral_Verse`).
+    const rows = await sql.query<{ kind: string; source_url: string | null }>(
+      `with target as (select id from characters where slug = 'attrib-hero')
+       select 'statistik' as kind, s.source_url
+         from statistics s
+         join character_versions cv on cv.id = s.character_version_id
+        where cv.character_id = (select id from target)
+       union all
+       select 'ability', ca.source_url
+         from character_abilities ca
+         join character_versions cv on cv.id = ca.character_version_id
+        where cv.character_id = (select id from target)
+       union all
+       select 'resistensi', cr.source_url
+         from character_resistances cr
+         join character_versions cv on cv.id = cr.character_version_id
+        where cv.character_id = (select id from target)`,
+    );
+
+    const perKind = new Map<string, number>();
+    for (const row of rows) perKind.set(row.kind, (perKind.get(row.kind) ?? 0) + 1);
+    // 3 statistik + tier dari form pertama + 1 statistik form kedua, 1 ability, 1 resistensi.
+    assert.deepEqual([...perKind].sort(), [
+      ['ability', 1],
+      ['resistensi', 1],
+      ['statistik', 5],
+    ]);
+    for (const row of rows) {
+      assert.equal(row.source_url, CHARACTER_PAGE, `${row.kind} harus menautkan halaman karakter`);
+    }
+  });
+
+  it('memperbaiki source_url karakter mengoreksi tautan baris di tempat, tanpa baris baru (impor ulang idempoten)', async () => {
+    const VERSE_PAGE = 'https://astral.test/wiki/Astral_Verse';
+    const BEFORE = 'https://astral.test/wiki/Aster_Vale';
+    const AFTER = 'https://astral.test/wiki/Aster_Vale_(Sovereign)';
+
+    // Keadaan awal: baris fakta sudah ada dengan tautan versi lama.
+    const legacy = await stageDatasetImport(
+      sql,
+      sampleDataset({ characterSlug: 'attrib-hero', verseSourceUrl: VERSE_PAGE, characterSourceUrl: BEFORE }),
+    );
+    await runJobById(legacy.job_id, { sql, ...DETACHED_DEPS });
+
+    const baseline = {
+      characters: await countRows('characters'),
+      versions: await countRows('character_versions'),
+      statistics: await countRows('statistics'),
+      abilities: await countRows('character_abilities'),
+      resistances: await countRows('character_resistances'),
+    };
+
+    const corrected = await stageDatasetImport(
+      sql,
+      sampleDataset({ characterSlug: 'attrib-hero', verseSourceUrl: VERSE_PAGE, characterSourceUrl: AFTER }),
+    );
+    const run = await runJobById(corrected.job_id, { sql, ...DETACHED_DEPS });
+    assert.equal(run.status, 'completed');
+    const outcome = run.outcome!;
+
+    // Nilai tidak berubah: yang bergerak hanya tautan sumbernya. Karena itu
+    // `created` tetap 0 dan perubahannya dilaporkan sebagai `updated` — bukan
+    // dilewati diam-diam seperti sebelum `source_url` ikut dibandingkan.
+    assert.equal(outcome.records_created, 0, 'koreksi tautan tidak boleh membuat baris kanonik baru');
+    assert.ok(outcome.records_updated > 0, 'koreksi tautan harus dilaporkan sebagai updated');
+    assert.ok(
+      outcome.notes.some((note) => note.includes('source_url baris diperbarui ke halaman sumber karakter')),
+      'koreksi atribusi disebut di notes job, bukan ditulis diam-diam',
+    );
+
+    // Jumlah baris tidak bertambah di satu tabel pun: statistik dikoreksi di
+    // tempat, bukan disuperseded (supersede berarti "nilainya diganti" — dan
+    // nilainya memang tidak pernah berubah).
+    assert.equal(await countRows('characters'), baseline.characters);
+    assert.equal(await countRows('character_versions'), baseline.versions);
+    assert.equal(await countRows('statistics'), baseline.statistics);
+    assert.equal(await countRows('character_abilities'), baseline.abilities);
+    assert.equal(await countRows('character_resistances'), baseline.resistances);
+
+    const after = await sql.query<{ kind: string; source_url: string | null; state: string }>(
+      `with target as (select id from characters where slug = 'attrib-hero')
+       select 'statistik' as kind, s.source_url, s.status::text as state
+         from statistics s
+         join character_versions cv on cv.id = s.character_version_id
+        where cv.character_id = (select id from target)
+       union all
+       select 'ability', ca.source_url, ca.verification_status::text
+         from character_abilities ca
+         join character_versions cv on cv.id = ca.character_version_id
+        where cv.character_id = (select id from target)
+       union all
+       select 'resistensi', cr.source_url, cr.verification_status::text
+         from character_resistances cr
+         join character_versions cv on cv.id = cr.character_version_id
+        where cv.character_id = (select id from target)`,
+    );
+    assert.equal(after.length, 7);
+    // `current` (bukan `superseded`) untuk statistik: koreksi atribusi tidak
+    // boleh tercatat sebagai revisi nilai.
+    const expectedState: Record<string, string> = {
+      statistik: 'current',
+      ability: 'imported',
+      resistensi: 'imported',
+    };
+    for (const row of after) {
+      assert.equal(row.source_url, AFTER, `${row.kind} harus memakai tautan yang sudah dikoreksi`);
+      assert.equal(row.state, expectedState[row.kind], `${row.kind} tidak boleh berubah status karena atribusi`);
+    }
+
+    // Dan setelah dikoreksi, impor ulang benar-benar tidak mengubah apa pun.
+    const rerunStaged = await stageDatasetImport(
+      sql,
+      sampleDataset({ characterSlug: 'attrib-hero', verseSourceUrl: VERSE_PAGE, characterSourceUrl: AFTER }),
+    );
+    const rerun = await runJobById(rerunStaged.job_id, { sql, ...DETACHED_DEPS });
+    assert.equal(rerun.status, 'completed');
+    assert.equal(rerun.outcome!.records_created, 0);
+    assert.equal(rerun.outcome!.records_updated, 0, 'impor ulang setelah koreksi harus idempoten');
+
+    // Jalur dry-run memakai perbandingan yang sama: admin harus melihat koreksi
+    // tautan di diff sebelum menekan Commit — dan diff itu tidak boleh menulis.
+    const preview = await stageDatasetImport(
+      sql,
+      sampleDataset({ characterSlug: 'attrib-hero', verseSourceUrl: VERSE_PAGE, characterSourceUrl: BEFORE }),
+      { dryRun: true },
+    );
+    const previewed = await runJobById(preview.job_id, { sql, ...DETACHED_DEPS });
+    assert.equal(previewed.status, 'completed');
+    assert.equal(previewed.outcome!.records_created, 0);
+    assert.ok(previewed.outcome!.records_updated > 0, 'dry-run harus melaporkan koreksi tautan sebagai updated');
+    assert.equal(await countRows('statistics'), baseline.statistics, 'dry-run tidak menulis apa pun');
+    const untouched = await sql.query<{ source_url: string | null }>(
+      `select distinct s.source_url
+         from statistics s
+         join character_versions cv on cv.id = s.character_version_id
+        where cv.character_id = (select id from characters where slug = 'attrib-hero')
+        order by 1`,
+    );
+    assert.deepEqual(
+      untouched.map((row) => row.source_url),
+      [AFTER],
+      'dry-run tidak boleh mengubah tautan baris',
+    );
   });
 
   it('reparse dari staging menghasilkan 0 baris baru (tanpa fetch)', async () => {

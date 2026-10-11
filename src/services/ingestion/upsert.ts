@@ -11,10 +11,17 @@
  * 2. **Tidak menimpa sumber yang lebih kuat.** Prioritas kecil = lebih kuat
  *    (`sources.priority`). Nilai dari sumber berprioritas lebih lemah dicatat
  *    sebagai catatan (notes), bukan ditulis.
- * 3. **Atribusi lengkap.** Setiap baris yang ditulis membawa `source_id`, dan
- *    baris kanonik yang punya kolom jejak (`characters.source_url`,
- *    `characters.source_name`) ikut diisi — inilah yang membuat AC-09 tetap
- *    benar setelah impor, bukan hanya sebelum.
+ * 3. **Atribusi lengkap dan spesifik per baris.** Setiap baris yang ditulis
+ *    membawa `source_id`, dan baris kanonik yang punya kolom jejak
+ *    (`characters.source_url`, `characters.source_name`) ikut diisi — inilah
+ *    yang membuat AC-09 tetap benar setelah impor, bukan hanya sebelum. Baris
+ *    statistik/ability/resistance mewarisi **halaman sumber karakter**
+ *    (`characters.source_url`), bukan halaman verse dari `envelope.source_url`
+ *    yang dipakai bersama: tautan per baris harus menunjuk halaman tempat
+ *    nilainya dibaca. Karena `source_url` ikut dibandingkan, memperbaiki URL
+ *    itu di dataset berlaku pada impor ulang — tanpa menambah baris dan tanpa
+ *    mencatat revisi nilai yang tidak pernah terjadi (statistik dikoreksi di
+ *    tempat, lihat `upsertStatistic`).
  * 4. **Kegagalan per record.** Satu karakter rusak tidak boleh membatalkan
  *    seluruh job. Kegagalannya dicatat di laporan dan diteruskan ke
  *    `ingestion_errors`, sehingga panel admin menyebut record mana dan kenapa
@@ -65,9 +72,12 @@ export interface UpsertContext {
   /** Dry-run: semua pemeriksaan dan pembacaan berjalan, tidak ada penulisan. */
   dryRun: boolean;
   /**
-   * URL asal yang ditulis ke kolom jejak (`verses.source_url`,
-   * `characters.source_url`, `statistics.source_url`). Untuk impor terkelola
-   * nilainya `dataset://…` dari envelope; untuk fetch nilainya URL halaman.
+   * URL asal tingkat dataset dari envelope (`envelope.source_url` bila ada,
+   * jika tidak `sources.base_url`). Dipakai untuk baris yang memang mewakili
+   * dataset/verse (`verses.source_url`, `characters.source_url` saat dataset
+   * tidak menyebut halaman karakter). Untuk baris fakta per karakter
+   * (`statistics`, `character_abilities`, `character_resistances`) yang dipakai
+   * adalah halaman karakter — lihat `CharacterUpsert.sourceUrl`.
    */
   provenanceUrl: string | null;
   /**
@@ -157,6 +167,20 @@ function noteSkipped(report: UpsertReport, what: string, existingPriority: numbe
   report.notes.push(
     `${what} dilewati: sumber baru berprioritas ${existingPriority ?? 'lebih kuat'} (PRD §18.3, upsert tidak menurunkan mutu).`,
   );
+}
+
+/**
+ * Catatan saat hanya `source_url` sebuah baris fakta yang berubah.
+ *
+ * Dipisahkan dari perubahan nilai karena artinya berbeda: nilainya tidak
+ * berubah, yang diperbaiki adalah tautan ke halaman tempat nilai itu dibaca
+ * (mis. dataset versi lama menautkan halaman verse). Operator perlu tahu
+ * koreksi ini terjadi — tetapi sebagai satu catatan per tabel, bukan puluhan
+ * baris yang sama.
+ */
+function noteAttributionFixed(report: UpsertReport, what: string): void {
+  const note = `${what}: source_url baris diperbarui ke halaman sumber karakter; nilai tidak berubah, tidak ada baris baru.`;
+  if (!report.notes.includes(note)) report.notes.push(note);
 }
 
 async function upsertVerse(
@@ -273,12 +297,23 @@ async function recordCharacterSource(
   );
 }
 
+/**
+ * Hasil upsert karakter: id barisnya **dan** halaman sumber yang menjadi asal
+ * faktanya. URL itu diteruskan ke baris statistik/ability/resistance supaya
+ * setiap baris menautkan halaman karakter sendiri (`/wiki/Saitama`), bukan
+ * halaman verse dataset (`/wiki/One-Punch_Man`) yang dipakai bersama.
+ */
+interface CharacterUpsert {
+  id: string;
+  sourceUrl: string;
+}
+
 async function upsertCharacter(
   context: UpsertContext,
   character: DatasetCharacter,
   verseId: string | null,
   report: UpsertReport,
-): Promise<string | null> {
+): Promise<CharacterUpsert | null> {
   report.found += 1;
   const { sql, source, dryRun } = context;
 
@@ -329,12 +364,15 @@ async function upsertCharacter(
       // sudah masuk. (Dry-run sudah keluar lebih awal di atas.)
       await recordCharacterSource(context, createdId, sourceUrl);
     }
-    return createdId;
+    return createdId === null ? null : { id: createdId, sourceUrl };
   }
 
   if (!canOverwrite(source.priority, existing.priority)) {
     noteSkipped(report, `karakter ${character.slug}`, existing.priority);
-    return existing.id;
+    // URL baris fakta tetap yang dari dataset: yang dilewati adalah penulisan
+    // baris karakter (mutu tidak boleh turun), bukan jejak asal faktanya —
+    // baris statistik/ability dari impor ini memang dibaca dari halaman itu.
+    return { id: existing.id, sourceUrl };
   }
 
   const changed =
@@ -372,7 +410,7 @@ async function upsertCharacter(
   // nilai berubah, karena re-run dataset yang sama harus tetap meninggalkan
   // jejak sumbernya (idempoten lewat unique index).
   await recordCharacterSource(context, existing.id, sourceUrl);
-  return existing.id;
+  return { id: existing.id, sourceUrl };
 }
 
 interface FormState {
@@ -502,8 +540,9 @@ async function upsertStatistic(
     qualifier: string;
     confidence: number;
     scale_id: string | null;
+    source_url: string | null;
   }>(
-    `select id, raw_text, qualifier, confidence::float8 as confidence, scale_id
+    `select id, raw_text, qualifier, confidence::float8 as confidence, scale_id, source_url
        from statistics
       where character_version_id = $1 and metric = $2 and source_id = $3 and status = 'current'
       order by created_at desc
@@ -512,16 +551,36 @@ async function upsertStatistic(
   );
 
   const row = current[0] ?? null;
-  if (
-    row &&
+  const valuesMatch =
+    row !== null &&
     row.raw_text === statistic.raw_text &&
     row.qualifier === statistic.qualifier &&
     Number(row.confidence) === Number(statistic.confidence) &&
-    row.scale_id === scaleId
-  ) {
-    // Nilai identik: tidak ada yang berubah. Menulis ulang di sini akan
-    // membuat `superseded` menumpuk tanpa alasan dan membuat AC-08 tidak
-    // bermakna pada statistik.
+    row.scale_id === scaleId;
+
+  if (valuesMatch && row !== null) {
+    if (row.source_url === sourceUrl) {
+      // Nilai dan atribusi identik: tidak ada yang berubah. Menulis ulang di
+      // sini akan membuat `superseded` menumpuk tanpa alasan dan membuat AC-08
+      // tidak bermakna pada statistik.
+      return;
+    }
+
+    // Hanya jejak asalnya yang berbeda (mis. dataset versi lama menautkan
+    // halaman verse). Nilainya **tidak** berubah, jadi baris `current` baru +
+    // `superseded` pada yang lama akan mencatat revisi yang tidak pernah
+    // terjadi. Kolom atribusinya dikoreksi di tempat, dan koreksinya dilaporkan
+    // sebagai `updated` + satu catatan — bukan ditulis diam-diam.
+    if (dryRun) {
+      report.updated += 1;
+      return;
+    }
+    await sql.query(`update statistics set source_url = $2, updated_at = now() where id = $1`, [
+      row.id,
+      sourceUrl,
+    ]);
+    report.updated += 1;
+    noteAttributionFixed(report, 'statistik');
     return;
   }
 
@@ -620,22 +679,23 @@ async function upsertAbility(
     evidence_text: string | null;
     confidence: number;
     source_id: string;
+    source_url: string | null;
   }>(
-    `select id, proficiency, evidence_text, confidence::float8 as confidence, source_id
+    `select id, proficiency, evidence_text, confidence::float8 as confidence, source_id, source_url
        from character_abilities
       where character_version_id = $1 and ability_id = $2`,
     [versionId, abilityId],
   );
   const link = linkRows[0] ?? null;
   const sameSource = link?.source_id === source.id;
-
-  if (
-    link &&
+  const valuesMatch =
+    link !== null &&
     sameSource &&
     link.proficiency === ability.proficiency &&
     link.evidence_text === ability.evidence_text &&
-    Number(link.confidence) === Number(ability.confidence)
-  ) {
+    Number(link.confidence) === Number(ability.confidence);
+
+  if (valuesMatch && link !== null && link.source_url === sourceUrl) {
     return;
   }
 
@@ -658,7 +718,11 @@ async function upsertAbility(
             updated_at = now()`,
     [versionId, abilityId, ability.proficiency, ability.evidence_text, source.id, sourceUrl, ability.confidence],
   );
-  report.created += 1;
+  // Baris yang sudah ada dan hanya tautan sumbernya yang berubah dihitung
+  // sebagai `updated`, bukan `created`: nilai ability-nya tidak berubah.
+  if (link === null) report.created += 1;
+  else report.updated += 1;
+  if (valuesMatch) noteAttributionFixed(report, 'ability');
 }
 
 async function upsertResistance(
@@ -710,22 +774,23 @@ async function upsertResistance(
     evidence_text: string | null;
     confidence: number;
     source_id: string;
+    source_url: string | null;
   }>(
-    `select id, level, evidence_text, confidence::float8 as confidence, source_id
+    `select id, level, evidence_text, confidence::float8 as confidence, source_id, source_url
        from character_resistances
       where character_version_id = $1 and resistance_type_id = $2`,
     [versionId, resistanceTypeId],
   );
   const existing = existingRows[0] ?? null;
   const sameSource = existing?.source_id === source.id;
-
-  if (
-    existing &&
+  const valuesMatch =
+    existing !== null &&
     sameSource &&
     existing.level === resistance.level &&
     existing.evidence_text === resistance.evidence_text &&
-    Number(existing.confidence) === Number(resistance.confidence)
-  ) {
+    Number(existing.confidence) === Number(resistance.confidence);
+
+  if (valuesMatch && existing !== null && existing.source_url === sourceUrl) {
     return;
   }
 
@@ -761,7 +826,11 @@ async function upsertResistance(
       resistance.confidence,
     ],
   );
-  report.created += 1;
+  // Sama seperti ability: baris lama yang hanya tautan sumbernya berubah
+  // dihitung `updated` — nilai resistensinya tidak berubah.
+  if (existing === null) report.created += 1;
+  else report.updated += 1;
+  if (valuesMatch) noteAttributionFixed(report, 'resistensi');
 }
 
 async function applyForm(
@@ -771,13 +840,20 @@ async function applyForm(
   form: DatasetForm,
   maps: LookupMaps,
   report: UpsertReport,
+  characterSourceUrl: string,
 ): Promise<void> {
   // `versionId === null` hanya terjadi pada dry-run untuk form yang belum ada;
   // statistik/ability/resistensi tetap divalidasi terhadap katalog, dan
   // ditampilkan sebagai "akan dibuat" — bukan langsung menghitung semua item
   // tanpa memeriksa apa pun.
   const versionId = await upsertForm(context, characterId, characterMediaType, form, report);
-  const sourceUrl = context.provenanceUrl;
+  // Atribusi per baris memakai halaman **karakter**, bukan halaman verse
+  // dataset: `envelope.source_url` menunjuk halaman verse (mis.
+  // `/wiki/One-Punch_Man`) yang dipakai bersama semua karakter, sehingga tautan
+  // per baris tidak mengatakan dari mana nilainya dibaca. Halaman karakter
+  // (`characters.source_url`, mis. `/wiki/Saitama`) sudah dihitung di
+  // `upsertCharacter` dan diteruskan dari sana.
+  const sourceUrl = characterSourceUrl;
 
   if (form.tier_code !== null && !form.statistics.some((statistic) => statistic.metric === 'tier')) {
     if (!maps.tiers.has(form.tier_code)) {
@@ -868,10 +944,10 @@ export async function applyDataset(
 
   for (const character of dataset.characters) {
     try {
-      const characterId = await upsertCharacter(context, character, verseId, report);
-      if (characterId === null) continue;
+      const upserted = await upsertCharacter(context, character, verseId, report);
+      if (upserted === null) continue;
       for (const form of character.forms) {
-        await applyForm(context, characterId, character.media_type, form, maps, report);
+        await applyForm(context, upserted.id, character.media_type, form, maps, report, upserted.sourceUrl);
       }
     } catch (error) {
       report.failed += 1;
