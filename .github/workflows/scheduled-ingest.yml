@@ -10,10 +10,11 @@
 # (zona `scheduled-worker`, tools/architecture/zones.mjs) dan berperilaku
 # fail-closed: tanpa CRON_SECRET di sisi server, ia menolak 503.
 #
-# Status: STUB. Deployment produksi belum ada (Sprint 2), sehingga job ini
-# sengaja **skip dengan pesan jelas** bila secrets belum disetel — bukan
-# mengklaim sukses palsu. Bila secrets tersedia, ia memanggil endpoint
-# sungguhan dan menggagalkan run bila respons tidak 2xx.
+# Status: AKTIF sejak 2026-10-11. `DEPLOY_URL` + `CRON_SECRET` sudah disetel di
+# repo secrets dan dispatch manual memanggil endpoint produksi sungguhan
+# (HTTP 200, `{"processed":[],"count":0}` pada antrean kosong). Step pertama
+# tetap sengaja **skip dengan pesan jelas** bila secrets kosong — bukan
+# mengklaim sukses palsu — dan run digagalkan bila respons endpoint bukan 2xx.
 name: Scheduled Ingestion
 
 on:

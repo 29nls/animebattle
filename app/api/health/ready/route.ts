@@ -5,6 +5,7 @@
  */
 
 import { getSqlClient, DatabaseNotConfiguredError } from '@/lib/db/client.ts';
+import { summarizeDatabaseFailure } from '@/lib/db/diagnostics.ts';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,10 +40,22 @@ export async function GET(): Promise<Response> {
     }
     // Konektivitas/TLS: `error.message` mentah menyebut host, sertifikat, dan
     // kadang potongan query. Route ini anonim (APPENDICES G baris 44), jadi
-    // pemanggil hanya menerima klasifikasi; detailnya masuk log server.
-    console.error('[api/health/ready] database tidak dapat dihubungi:', error);
+    // pemanggil hanya menerima **klasifikasi**; detail yang sudah dibersihkan
+    // dari kredensial masuk log server.
+    //
+    // `reason` menjawab pertanyaan pertama setiap insiden DB — "jenis
+    // kegagalannya apa?" — tanpa membocorkan pesan driver. Sebelum ini, satu-
+    // satunya cara mengetahuinya adalah mereproduksi koneksi dari mesin operator
+    // (persis yang dibutuhkan insiden 2026-10-10, `SELF_SIGNED_CERT_IN_CHAIN`).
+    const failure = summarizeDatabaseFailure(error);
+    console.error('[api/health/ready] database tidak dapat dihubungi:', failure);
     return Response.json(
-      { status: 'unhealthy', database: 'connection_failed', error: 'Database tidak dapat dihubungi.' },
+      {
+        status: 'unhealthy',
+        database: 'connection_failed',
+        reason: failure.category,
+        error: 'Database tidak dapat dihubungi.',
+      },
       { status: 503, headers: NO_STORE },
     );
   }

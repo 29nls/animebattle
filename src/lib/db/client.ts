@@ -218,13 +218,31 @@ function isSupabaseHost(url: string): boolean {
   );
 }
 
-export function databaseSslOptions(
+/**
+ * Dari mana CA yang benar-benar dipakai berasal.
+ *
+ * Dilaporkan terpisah dari opsinya supaya `npm run diagnose:db` dapat
+ * menyatakan sumbernya tanpa mengurai ulang objek TLS — dan tanpa risiko
+ * menyimpang dari keputusan aslinya, karena keduanya keluar dari satu fungsi.
+ */
+export type DatabaseCaSource = 'DATABASE_CA_CERT' | 'sslrootcert' | 'bundled_supabase_root' | 'none';
+
+export interface DatabaseSslResolution {
+  source: DatabaseCaSource;
+  options: { ssl?: { ca: string | string[] } };
+}
+
+/**
+ * Menentukan CA yang dipakai **dan** melaporkan sumbernya (urutan prioritas:
+ * `DATABASE_CA_CERT` → `sslrootcert` → root Supabase bawaan → tidak ada).
+ */
+export function resolveDatabaseSsl(
   url: string = process.env.DATABASE_URL ?? '',
   env: NodeJS.ProcessEnv = process.env,
-): { ssl?: { ca: string | string[] } } {
+): DatabaseSslResolution {
   const pem = normalizedCaValue(env.DATABASE_CA_CERT);
   if (pem) {
-    if (isPemCertificate(pem)) return { ssl: { ca: pem } };
+    if (isPemCertificate(pem)) return { source: 'DATABASE_CA_CERT', options: { ssl: { ca: pem } } };
 
     // Nilai cacat jangan diteruskan ke TLS — hasilnya galat sertifikat yang
     // membingungkan dan sulit dilacak. Penyebab paling umum: PEM multi-baris di
@@ -246,7 +264,10 @@ export function databaseSslOptions(
       // seluruh proyek ke output server (peringatan "tracing of the whole
       // project"), memperbesar deployment. Berkasnya dibaca dari disk saat
       // runtime bila ada (mesin lokal); di Vercel tidak ada dan dilewati.
-      return { ssl: { ca: readFileSync(/*turbopackIgnore: true*/ path, 'utf8') } };
+      return {
+        source: 'sslrootcert',
+        options: { ssl: { ca: readFileSync(/*turbopackIgnore: true*/ path, 'utf8') } },
+      };
     } catch {
       // Berkas tidak ada di mesin ini (kasus nyata: path Windows dari `.env`
       // lokal dipakai di Vercel): bukan alasan menggagalkan koneksi — lanjut ke
@@ -258,10 +279,26 @@ export function databaseSslOptions(
   if (isSupabaseHost(url) && (mode === null || !LOOSE_SSL_MODES.has(mode))) {
     // Verifikasi tetap penuh: root bawaan Node **plus** root Supabase, sehingga
     // host publik lain tetap dapat diverifikasi bila hostnya berubah.
-    return { ssl: { ca: [SUPABASE_ROOT_2021_CA, ...rootCertificates] } };
+    return {
+      source: 'bundled_supabase_root',
+      options: { ssl: { ca: [SUPABASE_ROOT_2021_CA, ...rootCertificates] } },
+    };
   }
 
-  return {};
+  return { source: 'none', options: {} };
+}
+
+/**
+ * Opsi TLS untuk driver Postgres — pembungkus tipis `resolveDatabaseSsl`.
+ *
+ * Nama ini sengaja dipertahankan: ia dipakai `getSqlClient`, `worker`, skrip
+ * skema, dan seluruh test TLS, sehingga kontrak yang sudah diuji tidak berubah.
+ */
+export function databaseSslOptions(
+  url: string = process.env.DATABASE_URL ?? '',
+  env: NodeJS.ProcessEnv = process.env,
+): { ssl?: { ca: string | string[] } } {
+  return resolveDatabaseSsl(url, env).options;
 }
 
 /**

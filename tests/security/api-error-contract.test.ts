@@ -121,9 +121,17 @@ describe('kontrak error route anonim', () => {
     );
     const response = await readyGet();
     assert.equal(response.status, 503);
-    const body = (await response.json()) as { status: string; database: string; error: string };
+    const body = (await response.json()) as {
+      status: string;
+      database: string;
+      reason: string;
+      error: string;
+    };
     assert.equal(body.status, 'unhealthy');
     assert.equal(body.database, 'connection_failed');
+    // Kategori diterbitkan supaya insiden dapat ditriase tanpa mereproduksi
+    // koneksi dari mesin operator — tetapi tetap tanpa satu kata pun dari driver.
+    assert.equal(body.reason, 'tls_untrusted');
     assert.doesNotMatch(JSON.stringify(body), /self-signed|certificate chain|SELF_SIGNED/);
   });
 

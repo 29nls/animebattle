@@ -2,8 +2,12 @@
 
 **Status:** aktif. Langkah SQL pada runbook ini diuji di PGlite lokal dengan
 `docs/schema.sql` + `docs/seed.sql` (2026-10-09); pemeriksaan HTTP diuji terhadap
-rute sungguhan lokal (2026-10-09). **Belum** pernah dijalankan pada instance
-Supabase produksi.
+rute sungguhan lokal (2026-10-09). **Pemeriksaan HTTP §1/§2/§3.2(c) sudah
+dijalankan terhadap produksi (2026-10-11)**: `/api/health` 200, `/api/health/ready`
+200 `ready`, `/api/cron/sync` 401 tanpa/ dengan bearer salah, dan dispatch manual
+`scheduled-ingest.yml` menerima HTTP 200 — termasuk reproduksi penyebab TLS yang
+disebut §4 lewat `npm run diagnose:db`. Langkah SQL-nya **belum** pernah dijalankan
+pada instance Supabase produksi.
 
 Dipicu oleh, salah satu saja (K3/K7, [PRD §35.2](../PRD.md)):
 
@@ -24,7 +28,12 @@ curl -sS -o /dev/null -w '%{http_code}\n' "$SITE_URL/api/health"
 curl -sS -w '\n%{http_code}\n' "$SITE_URL/api/health/ready"
 #  200 {"status":"ready","database":"connected"}  → DB sehat
 #  503 {"status":"not_configured",...}            → DATABASE_URL hilang di server
-#  503 {"status":"unhealthy","database":"connection_failed"} → DB tak terjangkau
+#  503 {"status":"unhealthy","database":"connection_failed","reason":"..."}
+#      → DB tak terjangkau. `reason` menyebut **jenisnya** tanpa membocorkan
+#        pesan driver: tls_untrusted | tls_expired | tls_hostname_mismatch | dns |
+#        refused | reset | timeout | unreachable | auth | database_missing |
+#        schema_missing | connection_limit | server_unavailable | connection_lost |
+#        unclassified (lihat §4 untuk tindakan per kategori).
 
 # 3. ringkasan sistem (butuh Bearer; rate limit 30/menit)
 curl -sS -H "Authorization: Bearer $ADMIN_INGESTION_SECRET" "$SITE_URL/api/admin/metrics"
@@ -49,6 +58,27 @@ Pemisahan yang penting: `/api/health` sengaja **tidak** menyentuh DB, dan
 `/api/health/ready` sengaja menyentuh DB — mencampur keduanya membuat platform
 me-restart proses yang sehat hanya karena DB sedang sibuk. Diagnosis yang benar
 selalu memakai keduanya, bukan salah satu.
+
+### 2.1 Triase lapisan DB dari mesin operator (`npm run diagnose:db`)
+
+`reason` pada respons menyebut **jenis** kegagalan; bila sebabnya masih perlu
+dipastikan (mis. perbedaan konfigurasi mesin vs platform), jalankan triase yang
+sama dari mesin yang menjalankan perintah:
+
+```bash
+npm run diagnose:db          # membaca .env; tanpa kredensial di keluarannya
+```
+
+Yang dilaporkan: host:port, nama database, user (disamarkan), `sslmode`,
+keberadaan `sslrootcert`, apakah host-nya pooler, **CA mana yang dipakai**, lalu
+hasil `select 1`, versi server, kelengkapan tabel wajib, dan jumlah baris inti.
+Keluaran gagal menyebut **kategori** yang sama dengan `reason` sehingga kedua sisi
+dapat dibandingkan; keluar 1 bila koneksi gagal, 2 bila `DATABASE_URL` kosong,
+3 bila tersambung tetapi skema aplikasi tidak lengkap.
+
+Batas yang harus diingat: berhasil di sini berarti **mesin ini** dapat menghubungi
+database. Ia tidak membuktikan Vercel dapat melakukannya (jaringan dan environment
+berbeda), jadi selalu bandingkan dengan `/api/health/ready` pada URL produksi.
 
 Untuk kasus "error rate 5xx > 0,5%": buka log platform dan kelompokkan 5xx per
 rute. Pola umum:
@@ -182,8 +212,13 @@ sama-sama tidak berbahaya.
 | Situasi | Bila terjadi | Yang dikerjakan |
 |---|---|---|
 | `/api/health` ≠ 200 (proses mati/error) | Bukan DB — proses gagal start atau crash | Baca log platform; jalankan `npm run typecheck && npm run build` lokal pada commit ter-deploy; bila build gagal, rollback kode ke commit hijau terakhir lalu redeploy |
-| `/api/health` 200 tapi `/api/health/ready` `connection_failed` | DB mati/overloaded/TLS | Cek `DATABASE_URL` (pooler **6543**, bukan 5432) dan status instance DB; **jangan** restart proses web — ia sehat; ulangi `/api/health/ready` tiap 30 detik sampai 200 |
-| `/api/health/ready` `connection_failed` dengan `self-signed certificate in certificate chain` (pengunjung melihat pesan generik; detailnya ada di log server) | CA privat Supabase tidak terpakai. Root CA Supabase sudah **bawaan** (`src/lib/db/supabase-ca.ts`) untuk host `*.supabase.*` — jadi ini berarti host `DATABASE_URL` bukan host Supabase, nilai `DATABASE_CA_CERT` cacat, atau `sslmode` ditulis longgar | Pastikan host `DATABASE_URL` memang Supabase (pooler). Bila bukan, setel `DATABASE_CA_CERT` berisi PEM CA host itu (nilai berkutip atau satu-baris dengan `\n` literal juga diterima). **Jangan** memakai `sslmode=require` sebagai jalan pintas — itu menonaktifkan verifikasi sertifikat. Detail: README §Konfigurasi lingkungan |
+| `/api/health` 200 tapi `/api/health/ready` `connection_failed` | DB mati/overloaded/TLS | Baca `reason` pada respons lebih dulu — itu menentukan jalur di bawah. **Jangan** restart proses web: ia sehat. Ulangi `/api/health/ready` tiap 30 detik sampai 200 |
+| `reason: "tls_untrusted"` | CA privat Supabase tidak terpakai (ini penyebab insiden 2026-10-10, direproduksi lewat `npm run diagnose:db`: `SELF_SIGNED_CERT_IN_CHAIN`). Root CA Supabase sudah **bawaan** (`src/lib/db/supabase-ca.ts`) untuk host `*.supabase.*` — jadi ini berarti host `DATABASE_URL` bukan host Supabase, nilai `DATABASE_CA_CERT` cacat, atau `sslmode` ditulis longgar | Pastikan host `DATABASE_URL` memang Supabase (pooler). Bila bukan, setel `DATABASE_CA_CERT` berisi PEM CA host itu (nilai berkutip atau satu-baris dengan `\n` literal juga diterima). **Jangan** memakai `sslmode=require` sebagai jalan pintas — itu menonaktifkan verifikasi sertifikat. Detail: README §Konfigurasi lingkungan |
+| `reason: "auth"` | Kredensial di `DATABASE_URL` ditolak (password dirotasi/salah kutip) | Cocokkan dengan dashboard database; **jangan** menonaktifkan TLS atau mengganti guard. Setelah password diganti di platform, redeploy |
+| `reason: "unreachable"` / `"timeout"` | Host tidak terjangkau dari runtime — pola paling umum: koneksi *direct* (IPv6) dipakai dari runtime serverless IPv4 | Ganti `DATABASE_URL` ke connection string **Transaction pooler** (host `*.pooler.supabase.com`, port 6543) lalu redeploy; verifikasi dengan `reason` yang hilang pada `/api/health/ready` |
+| `reason: "connection_limit"` | Batas koneksi pooler/server tercapai | Turunkan konkurensi proses (`max` koneksi per instance) atau pakai pooler; **jangan** menambah retry bertubi-tubi |
+| `reason: "schema_missing"` | Skema aplikasi belum diterapkan di database tujuan — atau URL menunjuk project lain | Terapkan `docs/schema.sql` lalu `docs/seed.sql` pada project yang benar; `npm run check:schema-drift` membandingkan berkas dengan database berjalan tanpa mengubah apa pun |
+| `reason: "unclassified"` | Bukan kategori yang dikenal | Baca log server (kategori saja tidak cukup) dan reproduksi dengan `npm run diagnose:db`; catat pesan bersihnya sebagai temuan, jangan tebak |
 | Halaman ber-DB menampilkan `relation "…" does not exist` (SQLSTATE `42P01`) padahal `/api/health/ready` 200 | Kredensial benar, tetapi skema aplikasi belum ada di database tujuan — atau URL menunjuk project lain | Cocokkan project lebih dulu: `select table_name from information_schema.tables where table_schema='public'`; bila `characters`/`verses` tidak ada, arahkan `DATABASE_URL` ke project yang benar atau terapkan `docs/schema.sql` (lalu `docs/seed.sql`) pada project itu — jangan menebak, project itu bisa dimiliki aplikasi lain |
 | `/api/health/ready` `not_configured` | `DATABASE_URL` hilang/ter-reset di env platform | Setel ulang `DATABASE_URL` + redeploy; halaman menampilkan fail-closed yang benar sampai kembali |
 | `cancel` job membalas 409 | Job `processing`, atau sudah selesai | `processing` = biarkan selesai (maks 3 job/tick), lalu pastikan job berikutnya ter-cancel; bila sudah selesai, tidak ada yang perlu dilakukan |
