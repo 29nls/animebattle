@@ -630,6 +630,15 @@ create table character_sources (
   source_url   text not null,
   role         source_role_t not null default 'identity',
   notes        text,
+  -- Metadata lisensi di tingkat atribusi. Registry `sources` dipakai bersama
+  -- banyak dataset, jadi `sources.license` untuk impor dataset hanya menyebut
+  -- "per-dataset"; lisensi sebenarnya dicantumkan di envelope dataset (mis.
+  -- CC BY-SA 3.0). Kolom ini menyalinnya per baris atribusi supaya panel Data
+  -- Traceability menampilkan lisensi + tautannya tanpa menebak, dan menolak
+  -- menyebut lisensi registry ketika lisensi dataset tersedia.
+  license          text,
+  license_url      text,
+  attribution_text text,
   imported_at  timestamptz not null default now(),
   unique (character_id, source_id, role)
 );
@@ -1329,6 +1338,11 @@ as $$
         'lifting_strength', li.rank, 'speed', sp.rank, 'reaction_speed', rs.rank,
         'combat_speed', cs.rank, 'range', rg.rank, 'stamina', sa.rank,
         'intelligence', it.rank, 'battle_iq', bi.rank,
+        -- `experience` bukan rank melainkan tahun (PRD §17.1); engine memakai
+        -- rasio logaritmiknya. Kuncinya WAJIB ada walaupun nilainya null:
+        -- saat kunci ini absen, engine pernah menghitung NaN dan melaporkan
+        -- winner 'b' dengan win_probability null (2026-10-10).
+        'experience', cv.experience_years,
         'attack_potency_physical', ap.is_physical, 'speed_physical', sp.is_physical
       ),
       -- Daftar metrik di rezim non-fisik (mis. FTL): pembandingnya diredam 0,5

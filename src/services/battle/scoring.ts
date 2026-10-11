@@ -63,8 +63,10 @@ export function buildScoreBreakdown(params: ScoringParams): ScoringOutput {
   // Pengalaman bukan metrik ber-rank, sehingga `prepareRankMetric` tidak
   // mencatat kekurangannya. PRD §17.1 menuntut entri limitations[] juga untuk
   // kasus ini — tanpa itu, nilai netral 0 tidak pernah dijelaskan ke pengguna.
-  if (sideA.metrics.experience === null) limitations.add('missing_metric:experience:a');
-  if (sideB.metrics.experience === null) limitations.add('missing_metric:experience:b');
+  // `?? null`: kunci yang absen dari sumber JSON diperlakukan sama dengan null,
+  // bukan sebagai angka — kalau tidak, skornya menjadi NaN (2026-10-10).
+  if ((sideA.metrics.experience ?? null) === null) limitations.add('missing_metric:experience:a');
+  if ((sideB.metrics.experience ?? null) === null) limitations.add('missing_metric:experience:b');
   // Asumsi dari analisis cakupan resistensi (mis. "tidak ada resistensi yang
   // terdokumentasi") harus ikut terbawa; jika tidak, peringatan penting ini
   // hilang dari hasil dan pengguna mengira sisi tersebut benar-benar kebal.
@@ -110,12 +112,14 @@ export function buildScoreBreakdown(params: ScoringParams): ScoringOutput {
   });
 
   // Experience bersifat numerik (tahun) → rasio logaritmik.
+  const yearsA = sideA.metrics.experience ?? null;
+  const yearsB = sideB.metrics.experience ?? null;
   advantages.set('experience', {
     value: experienceAdvantage(sideA, sideB),
     note:
-      sideA.metrics.experience === null || sideB.metrics.experience === null
+      yearsA === null || yearsB === null
         ? 'tahun pengalaman tidak terdokumentasi sebagian'
-        : `tahun pengalaman A=${sideA.metrics.experience}, B=${sideB.metrics.experience}`,
+        : `tahun pengalaman A=${yearsA}, B=${yearsB}`,
   });
 
   // Modifikasi kondisi pertarungan (§16.4)
@@ -164,7 +168,8 @@ export function buildScoreBreakdown(params: ScoringParams): ScoringOutput {
     if (!row.comparable) missingInputs += 1;
   }
   totalInputs += 1; // experience
-  if (sideA.metrics.experience === null || sideB.metrics.experience === null) missingInputs += 1;
+  if ((sideA.metrics.experience ?? null) === null || (sideB.metrics.experience ?? null) === null)
+    missingInputs += 1;
 
   const weakQualifierCount = {
     a: sideA.statistics.filter((s) => s.status === 'current' && isWeakQualifier(s.qualifier)).length,

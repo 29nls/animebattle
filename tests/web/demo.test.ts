@@ -146,6 +146,19 @@ test('view model demo memenuhi bentuk yang dipakai halaman', () => {
   assert.ok(detail.statistics.length > 0);
   assert.ok(detail.abilities.length > 0);
   assert.equal(detail.sources[0]?.source_name.length > 0, true);
+  // Atribusi per baris juga harus ada di mode demo: halaman menampilkan sumber
+  // di setiap baris statistik, ability, dan resistance, jadi bentuk view model
+  // kedua jalur (database & demo) wajib sama. Kunci `source_url` tetap ada
+  // walaupun nilainya null — dataset demo sintetis tidak punya halaman sumber,
+  // dan halaman menampilkan namanya sebagai teks, bukan anchor mati.
+  const attributed = [...detail.statistics, ...detail.abilities, ...detail.resistances];
+  assert.ok(attributed.length > 0);
+  assert.ok(
+    attributed.every(
+      (row) => 'source_url' in row && typeof row.source_name === 'string' && row.source_name.length > 0,
+    ),
+    'setiap baris demo harus membawa nama sumber dan kunci source_url',
+  );
   assert.ok(DEMO_NOTICE.includes('sintetis'), 'penanda demo harus menyebut datanya sintetis');
 
   assert.equal(demoCharacterDetail('tidak-ada'), null);

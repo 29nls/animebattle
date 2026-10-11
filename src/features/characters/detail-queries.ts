@@ -138,6 +138,10 @@ export interface FormAbility {
   is_passive: boolean;
   confidence: number;
   evidence: string | null;
+  /** Nama sumber untuk atribusi per baris (tautan tampil di setiap kartu). */
+  source_name: string | null;
+  /** URL halaman sumber baris ini; fallback ke `sources.base_url` registry. */
+  source_url: string | null;
 }
 
 export async function listFormAbilities(
@@ -148,15 +152,24 @@ export async function listFormAbilities(
     // `activation_speed`, `is_offensive`, dan `is_passive` adalah properti
     // katalog `abilities`; `character_abilities` menyimpan pemakaian per form
     // (proficiency, confidence). Bukti teks per record ada di `evidence_text`.
+    //
+    // Atribusi per baris: `character_abilities.source_url` adalah halaman yang
+    // dibaca saat impor; `sources.base_url` hanya fallback ketika importer tidak
+    // mencatat URL barisnya. Tanpa kolom ini, hanya panel Data Traceability yang
+    // dapat menautkan sumber — setiap kartu ability menyebut sumbernya tanpa
+    // tautan yang bisa diperiksa pembaca (2026-10-10).
     `select ca.id, ca.ability_id,
             a.name as ability_name,
             ac.slug as category_slug, ac.name as category_name,
             a.activation_speed, ca.proficiency,
             a.is_offensive, a.is_passive,
-            ca.confidence, ca.evidence_text as evidence
+            ca.confidence, ca.evidence_text as evidence,
+            src.name as source_name,
+            coalesce(ca.source_url, src.base_url) as source_url
        from character_abilities ca
        join abilities a on a.id = ca.ability_id
        join ability_categories ac on ac.id = a.category_id
+       left join sources src on src.id = ca.source_id
       where ca.character_version_id = $1
       order by ac.name asc, a.name asc`,
     [versionId],
@@ -172,6 +185,10 @@ export interface FormResistance {
   verification_status: string;
   confidence: number;
   evidence: string | null;
+  /** Nama sumber untuk atribusi per baris (tautan tampil di setiap baris). */
+  source_name: string | null;
+  /** URL halaman sumber baris ini; fallback ke `sources.base_url` registry. */
+  source_url: string | null;
 }
 
 export async function listFormResistances(
@@ -179,15 +196,20 @@ export async function listFormResistances(
   versionId: string,
 ): Promise<FormResistance[]> {
   return sql.query<FormResistance>(
+    // Atribusi per baris sama dengan ability: URL baris dulu, registry sebagai
+    // fallback — lihat catatan di `listFormAbilities`.
     `select cr.id,
             rt.name as resistance_type_name,
             ac.slug as category_slug,
             cr.level, cr.level_label,
             cr.verification_status, cr.confidence,
-            cr.evidence_text as evidence
+            cr.evidence_text as evidence,
+            src.name as source_name,
+            coalesce(cr.source_url, src.base_url) as source_url
        from character_resistances cr
        join resistance_types rt on rt.id = cr.resistance_type_id
        join ability_categories ac on ac.id = rt.category_id
+       left join sources src on src.id = cr.source_id
       where cr.character_version_id = $1
       order by cr.level desc, rt.name asc`,
     [versionId],
@@ -200,6 +222,15 @@ export interface CharacterSourceItem {
   source_url: string | null;
   fetched_at: string | null;
   verification_status: string;
+  /**
+   * Lisensi + atribusi yang ditampilkan bersama sumber di panel Data
+   * Traceability. Metadata tingkat atribusi (dari dataset) menang; kolom
+   * registry `sources` menjadi fallback untuk baris lama atau impor dataset
+   * tanpa metadata lisensi.
+   */
+  license: string | null;
+  license_url: string | null;
+  attribution_text: string | null;
 }
 
 export async function listCharacterSources(
@@ -212,10 +243,18 @@ export async function listCharacterSources(
     // status verifikasi yang ditampilkan adalah status entri karakter
     // (`characters.verification_status`) — sama dengan jalur demo yang memakai
     // status entri (`imported`), bukan status per baris sumber.
+    //
+    // Lisensi: registry dipakai bersama banyak dataset, jadi untuk impor dataset
+    // ia hanya menyebut "per-dataset". Kolom per baris atribusi menyimpan
+    // lisensi sebenarnya (mis. CC BY-SA 3.0) dari envelope dan menang lewat
+    // COALESCE; registry menjadi fallback bila metadata dataset absen.
     `select distinct cs.source_id,
             s.name as source_name, cs.source_url,
             cs.imported_at as fetched_at,
-            c.verification_status
+            c.verification_status,
+            coalesce(cs.license, s.license) as license,
+            coalesce(cs.license_url, s.license_url) as license_url,
+            coalesce(cs.attribution_text, s.attribution_text) as attribution_text
        from character_sources cs
        join sources s on s.id = cs.source_id
        join characters c on c.id = cs.character_id

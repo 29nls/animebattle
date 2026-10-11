@@ -3,6 +3,7 @@
   "source_slug": "admin-dataset-import",
   "source_url": "https://vsbattles.fandom.com/wiki/One-Punch_Man",
   "license": "CC BY-SA 3.0 (VS Battles Wiki / Fandom)",
+  "license_url": "https://vsbattles.fandom.com/wiki/VS_Battles_Wiki:Copyrights",
   "attribution": "Angka statistik dan daftar kemampuan dikutip dari halaman VS Battles Wiki (teks wiki berlisensi CC BY-SA 3.0: https://vsbattles.fandom.com/wiki/VS_Battles_Wiki:Copyrights). Deskripsi, pemetaan kategori, dan tingkat keyakinan ditulis editor.",
   "curated_at": "2026-10-10",
   "verse": {
@@ -33,8 +34,8 @@
           "statistics": [
             { "metric": "tier", "raw_text": "4-A", "qualifier": "exact", "confidence": 0.6, "scale_code": null },
             { "metric": "attack_potency", "raw_text": "Multi-Solar System level, possibly Galaxy level", "qualifier": "possibly", "confidence": 0.6, "scale_code": "multi_solar_system" },
-            { "metric": "durability", "raw_text": "Multi-Solar System level, possibly Galaxy level", "qualifier": "possibly", "confidence": 0.6, "scale_code": null },
-            { "metric": "striking_strength", "raw_text": "Multi-Solar System level, possibly Galaxy level", "qualifier": "possibly", "confidence": 0.6, "scale_code": null },
+            { "metric": "durability", "raw_text": "Multi-Solar System level, possibly Galaxy level", "qualifier": "possibly", "confidence": 0.6, "scale_code": "multi_solar_system" },
+            { "metric": "striking_strength", "raw_text": "Multi-Solar System level, possibly Galaxy level", "qualifier": "possibly", "confidence": 0.6, "scale_code": "multi_solar_system" },
             { "metric": "speed", "raw_text": "At least FTL+, likely far higher", "qualifier": "at_least", "confidence": 0.65, "scale_code": "ftl_plus" },
             { "metric": "lifting_strength", "raw_text": "At least Class Y", "qualifier": "at_least", "confidence": 0.6, "scale_code": "class_y" },
             { "metric": "range", "raw_text": "Standard Melee Range physically, Interstellar, possibly Intergalactic with Shockwaves", "qualifier": "possibly", "confidence": 0.5, "scale_code": "interstellar" },
@@ -86,8 +87,8 @@
           "statistics": [
             { "metric": "tier", "raw_text": "7-A", "qualifier": "exact", "confidence": 0.55, "scale_code": null },
             { "metric": "attack_potency", "raw_text": "At least Mountain level normally, Varies up to Country level with Boost Attacks or Incineration Cannons, at most Moon level+ with Ten Second Mode, higher with True Spiral Incineration Cannon, far higher with Self-Destruction", "qualifier": "at_least", "confidence": 0.55, "scale_code": "mountain" },
-            { "metric": "durability", "raw_text": "At least Country level", "qualifier": "at_least", "confidence": 0.55, "scale_code": null },
-            { "metric": "striking_strength", "raw_text": "At least Mountain level, Varies up to Country level with Boost Attacks", "qualifier": "at_least", "confidence": 0.5, "scale_code": null },
+            { "metric": "durability", "raw_text": "At least Country level", "qualifier": "at_least", "confidence": 0.55, "scale_code": "country" },
+            { "metric": "striking_strength", "raw_text": "At least Mountain level, Varies up to Country level with Boost Attacks", "qualifier": "at_least", "confidence": 0.5, "scale_code": "mountain" },
             { "metric": "speed", "raw_text": "Massively Hypersonic+, Varies with Boosters, Sub-Relativistic with Ten Second Mode", "qualifier": "varies", "confidence": 0.55, "scale_code": "massively_hypersonic_plus" },
             { "metric": "lifting_strength", "raw_text": "At least Class P", "qualifier": "at_least", "confidence": 0.55, "scale_code": "class_p" },
             { "metric": "range", "raw_text": "Standard Melee Range, at least Kilometers, possibly Tens of Kilometers with Incineration Cannons, Hundreds of Kilometers in Ten-Second Mode", "qualifier": "at_least", "confidence": 0.5, "scale_code": "kilometers" },
@@ -129,8 +130,8 @@
           "statistics": [
             { "metric": "tier", "raw_text": "6-A", "qualifier": "exact", "confidence": 0.55, "scale_code": null },
             { "metric": "attack_potency", "raw_text": "At least Continent level, Continent level+ at full power", "qualifier": "at_least", "confidence": 0.5, "scale_code": "large_country" },
-            { "metric": "durability", "raw_text": "At least Continent level, Continent level+ when blocking", "qualifier": "at_least", "confidence": 0.5, "scale_code": null },
-            { "metric": "striking_strength", "raw_text": "At least Continent level, Continent level+ at full power", "qualifier": "at_least", "confidence": 0.5, "scale_code": null },
+            { "metric": "durability", "raw_text": "At least Continent level, Continent level+ when blocking", "qualifier": "at_least", "confidence": 0.5, "scale_code": "large_country" },
+            { "metric": "striking_strength", "raw_text": "At least Continent level, Continent level+ at full power", "qualifier": "at_least", "confidence": 0.5, "scale_code": "large_country" },
             { "metric": "speed", "raw_text": "At least FTL+, higher with Four Shadows Burial, far higher with Ten Shadows Burial, even higher with Super Multi-Shadow Clone, far higher reaction speed", "qualifier": "at_least", "confidence": 0.55, "scale_code": "ftl_plus" },
             { "metric": "lifting_strength", "raw_text": "At least Class P", "qualifier": "at_least", "confidence": 0.55, "scale_code": "class_p" },
             { "metric": "range", "raw_text": "Standard Melee Range; Several Meters with kunai and shuriken", "qualifier": "up_to", "confidence": 0.5, "scale_code": "several_meters" },

@@ -230,6 +230,12 @@ async function applyEnvelope(
       // tidak basis registry sumber. Tanpa ini, `characters.source_url` terisi
       // `about:dataset` dan atribusi kehilangan tautan ke berkas asalnya.
       provenanceUrl: envelope.source_url ?? source.base_url,
+      // Lisensi tingkat dataset ikut turun ke baris atribusi per karakter —
+      // registry hanya bisa menyebut "per-dataset", sedangkan lisensi sebenarnya
+      // (mis. CC BY-SA 3.0 + tautan copyright) ada di envelope.
+      license: envelope.license,
+      licenseUrl: envelope.license_url,
+      attribution: envelope.attribution,
     },
     envelope,
   );

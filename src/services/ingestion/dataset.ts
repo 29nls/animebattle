@@ -146,6 +146,16 @@ export interface DatasetEnvelope {
   source_slug: string;
   /** Jejak asal untuk atribusi (`characters.source_url`, `ingestion_raw_pages.source_url`). */
   source_url: string | null;
+  /**
+   * Metadata lisensi di tingkat dataset. Opsional: sumber registry sudah wajib
+   * punya lisensi (LP-6), tetapi registry dipakai bersama banyak dataset —
+   * lisensi sebenarnya (mis. CC BY-SA 3.0) hanya diketahui envelope. Nilainya
+   * disalin ke `character_sources` supaya panel Data Traceability menampilkan
+   * lisensi + tautannya, bukan label generik "per-dataset".
+   */
+  license: string | null;
+  license_url: string | null;
+  attribution: string | null;
   verse: DatasetVerse;
   characters: DatasetCharacter[];
 }
@@ -487,6 +497,9 @@ export function parseDatasetEnvelope(value: unknown): DatasetParseResult {
       parser_version: parserVersion,
       source_slug: sourceSlug,
       source_url: asString(value.source_url),
+      license: asString(value.license),
+      license_url: asString(value.license_url),
+      attribution: asString(value.attribution),
       verse,
       characters,
     },

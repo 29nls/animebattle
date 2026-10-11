@@ -190,8 +190,12 @@ export function proficiencyWeight(proficiency: string): number {
  * `missing_metric:experience:*` (keterbatasan) di `scoring.ts`.
  */
 export function experienceAdvantage(sideA: SideData, sideB: SideData): number {
-  const yearsA = sideA.metrics.experience;
-  const yearsB = sideB.metrics.experience;
+  // `?? null`: sumber JSON (mis. `battle_dataset`) dapat tidak mengirimkan
+  // kunci `experience` sama sekali — pernah terjadi di produksi (2026-10-10),
+  // dan tanpa penjagaan ini `undefined <= 0` bernilai false sehingga rasio
+  // logaritmiknya menghitung NaN. Absen = tidak terdokumentasi, bukan nol.
+  const yearsA = sideA.metrics.experience ?? null;
+  const yearsB = sideB.metrics.experience ?? null;
   if (yearsA === null || yearsB === null || yearsA <= 0 || yearsB <= 0) return 0;
   const value = Math.log10(yearsA + 1) / Math.log10(yearsB + 1) - 1;
   return clamp(value, -1, 1);
@@ -219,7 +223,7 @@ export function missingScoringMetricCount(side: SideData): number {
   for (const metric of RANK_METRICS) {
     if (rankOf(side, metric) === null) missing += 1;
   }
-  if (side.metrics.experience === null) missing += 1;
+  if ((side.metrics.experience ?? null) === null) missing += 1;
   return missing;
 }
 

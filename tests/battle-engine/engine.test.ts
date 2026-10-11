@@ -281,6 +281,34 @@ describe('kontrak hasil (PRD §16.5)', () => {
   });
 });
 
+describe('sumber data tanpa kunci experience (bentuk battle_dataset lama)', () => {
+  it('memperlakukan kunci yang absen sebagai tidak terdokumentasi, bukan NaN', () => {
+    // Regresi produksi 2026-10-10: `battle_dataset` tidak mengirim kunci
+    // `experience`, sehingga `undefined <= 0` bernilai false dan skor menjadi
+    // NaN — hasilnya winner 'b' dengan `win_probability` {null, null}.
+    const metricsA: Partial<MetricValues> = { ...strongerSideA().metrics };
+    const metricsB: Partial<MetricValues> = { ...weakerSideB().metrics };
+    delete metricsA.experience;
+    delete metricsB.experience;
+
+    const result = runBattle(
+      battleInput(
+        { ...strongerSideA(), metrics: metricsA as MetricValues },
+        { ...weakerSideB(), metrics: metricsB as MetricValues },
+      ),
+      defaultRuleSet,
+    );
+
+    assert.ok(Number.isFinite(result.win_probability.a), `p_a=${result.win_probability.a}`);
+    assert.ok(Number.isFinite(result.win_probability.b), `p_b=${result.win_probability.b}`);
+    assert.ok(Number.isFinite(result.weighted_score), `skor=${result.weighted_score}`);
+    assert.ok(Math.abs(result.win_probability.a + result.win_probability.b - 1) < 1e-9);
+    assert.ok(result.limitations.includes('missing_metric:experience:a'));
+    assert.ok(result.limitations.includes('missing_metric:experience:b'));
+    assert.equal(result.winner, 'a', 'kunci yang absen tidak boleh membalik pemenang menjadi b');
+  });
+});
+
 describe('stabilitas hasil terhadap urutan masukan', () => {
   it('memberi hasil sama untuk input yang sama dengan urutan array berbeda', () => {
     const a = enrich(side({ version_id: 'ver_x' }));

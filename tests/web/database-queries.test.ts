@@ -81,6 +81,9 @@ function fixtureDataset(): DatasetEnvelope {
     parser_version: 'dataset-json@1.0.0',
     source_slug: SOURCE_SLUG,
     source_url: PROVENANCE_URL,
+    license: 'CC BY-SA 4.0 (Fixture Wiki)',
+    license_url: 'https://fixture.test/license',
+    attribution: 'Angka fixture dikutip dari Fixture Wiki (teks berlisensi CC BY-SA 4.0).',
     verse: {
       slug: 'fixture-verse',
       name: 'Fixture Verse',
@@ -120,6 +123,16 @@ function fixtureDataset(): DatasetEnvelope {
                 qualifier: 'possibly',
                 confidence: 0.72,
                 scale_code: 'mftl_plus',
+              },
+              {
+                // Metrik wajib Layer 0; skala durability baru ditambahkan ke seed
+                // 2026-10-10 — sebelum itu rank-nya null dan query panel tidak
+                // pernah punya nilai untuk dibaca.
+                metric: 'durability',
+                raw_text: 'Island level',
+                qualifier: 'exact',
+                confidence: 0.78,
+                scale_code: 'island',
               },
             ],
             abilities: [
@@ -186,6 +199,7 @@ before(async () => {
   // `character_versions.tier_id` dan `recompute_completeness()` ikut berjalan.
   const source = await loadSourceBySlug(sql, SOURCE_SLUG);
   assert.ok(source, `sumber ${SOURCE_SLUG} harus ter-seed`);
+  const dataset = fixtureDataset();
   const report = await applyDataset(
     {
       sql,
@@ -194,8 +208,11 @@ before(async () => {
       parserVersion: 'dataset-json@1.0.0',
       dryRun: false,
       provenanceUrl: PROVENANCE_URL,
+      license: dataset.license,
+      licenseUrl: dataset.license_url,
+      attribution: dataset.attribution,
     },
-    fixtureDataset(),
+    dataset,
   );
   assert.equal(report.failed, 0, `impor fixture gagal: ${JSON.stringify(report.failures)}`);
 
@@ -249,6 +266,9 @@ describe('query detail karakter di atas skema sungguhan', () => {
     assert.equal(typeof attackPotency.scale_rank, 'number');
     assert.equal(attackPotency.source_name, 'Admin Dataset Import');
     assert.equal(byMetric.get('speed')!.qualifier, 'possibly');
+    // Durability memetakan rank dari ladder energi bersama — tanpa skala ini
+    // engine berhenti di Layer 0 (`insufficient_data`).
+    assert.equal(typeof byMetric.get('durability')!.scale_rank, 'number');
   });
 
   it('listFormAbilities membaca properti katalog abilities dan evidence_text', async () => {
@@ -261,6 +281,10 @@ describe('query detail karakter di atas skema sungguhan', () => {
     assert.match(ability.evidence ?? '', /Menghentikan waktu/);
     // `activation_speed` milik katalog `abilities`; form pemakai mewarisinya.
     assert.equal(typeof ability.activation_speed, 'string');
+    // Atribusi per baris: halaman menautkan sumber di setiap kartu ability,
+    // bukan hanya di panel Data Traceability.
+    assert.equal(ability.source_name, 'Admin Dataset Import');
+    assert.equal(ability.source_url, PROVENANCE_URL);
   });
 
   it('listFormResistances membaca level_label dan evidence_text', async () => {
@@ -271,6 +295,31 @@ describe('query detail karakter di atas skema sungguhan', () => {
     assert.equal(resistances[0]!.level_label, 'moderate');
     assert.equal(resistances[0]!.verification_status, 'imported');
     assert.match(resistances[0]!.evidence ?? '', /menahan manipulasi waktu/i);
+    // Sama seperti ability: setiap baris membawa sumbernya sendiri.
+    assert.equal(resistances[0]!.source_name, 'Admin Dataset Import');
+    assert.equal(resistances[0]!.source_url, PROVENANCE_URL);
+  });
+
+  it('source_url baris jatuh ke base_url registry bila importer tidak mencatatnya', async () => {
+    // Baris lama (atau importer tanpa provenance) tidak punya URL barisnya.
+    // Fallback registry `admin-dataset-import` adalah `about:dataset` — bukan
+    // http(s), jadi halaman menampilkan nama sumbernya sebagai teks, bukan
+    // anchor mati. Uji ini menutup kedua sisi: COALESCE di query dan alasan
+    // penjaga URL itu ada.
+    await sql.query(`update character_abilities set source_url = null where character_version_id = $1`, [
+      versionIds.first,
+    ]);
+    await sql.query(`update character_resistances set source_url = null where character_version_id = $1`, [
+      versionIds.first,
+    ]);
+
+    const [abilities, resistances] = await Promise.all([
+      listFormAbilities(sql, versionIds.first),
+      listFormResistances(sql, versionIds.first),
+    ]);
+    assert.equal(abilities[0]!.source_url, 'about:dataset');
+    assert.equal(abilities[0]!.source_name, 'Admin Dataset Import');
+    assert.equal(resistances[0]!.source_url, 'about:dataset');
   });
 
   it('listCharacterSources menampilkan atribusi yang ditulis pipeline (G3)', async () => {
@@ -281,6 +330,33 @@ describe('query detail karakter di atas skema sungguhan', () => {
     assert.equal(sources[0]!.source_url, PROVENANCE_URL);
     assert.ok(sources[0]!.fetched_at, 'waktu impor harus terisi (imported_at)');
     assert.equal(sources[0]!.verification_status, 'imported');
+    // Lisensi tingkat dataset menang atas label registry "per-dataset" — inilah
+    // yang membuat atribusi CC BY-SA tampil utuh di panel Data Traceability.
+    assert.equal(sources[0]!.license, 'CC BY-SA 4.0 (Fixture Wiki)');
+    assert.equal(sources[0]!.license_url, 'https://fixture.test/license');
+    assert.match(sources[0]!.attribution_text ?? '', /Fixture Wiki/);
+  });
+
+  it('lisensi registry menjadi fallback bila baris atribusi tidak punya metadata dataset', async () => {
+    // Baris peran lain (mis. `stats` dari impor lama sebelum metadata lisensi
+    // ikut disimpan) tidak punya kolom lisensi sendiri; COALESCE harus jatuh ke
+    // registry, bukan menampilkan lisensi kosong.
+    const character = await getCharacterBySlug(sql, 'fixture-hero');
+    const source = await loadSourceBySlug(sql, SOURCE_SLUG);
+    await sql.query(
+      `insert into character_sources (character_id, source_id, source_url, role)
+       values ($1, $2, $3, 'stats')`,
+      [character!.id, source!.id, PROVENANCE_URL],
+    );
+
+    const rows = await listCharacterSources(sql, character!.id);
+    const fallback = rows.find((row) => row.license === 'per-dataset');
+    assert.ok(fallback, 'baris tanpa metadata dataset harus memakai lisensi registry');
+    assert.equal(fallback.license_url, null);
+    assert.equal(
+      fallback.attribution_text,
+      'Diimpor oleh admin dari dataset berlisensi; lisensi dicatat per dataset.',
+    );
   });
 });
 
@@ -318,5 +394,22 @@ describe('jalur pertarungan di atas skema sungguhan', () => {
     });
     assert.ok(['a', 'b', 'draw', 'insufficient_data'].includes(result.winner));
     assert.equal(typeof result.input_hash, 'string');
+
+    // Kontrak angka: hasil produksi harus finit. Sumber JSON pernah TIDAK
+    // mengirim kunci `experience`; tanpa penjagaan, NaN lolos sebagai winner
+    // 'b' dengan `win_probability` null (2026-10-10).
+    assert.ok(Number.isFinite(result.win_probability.a), `p_a=${result.win_probability.a}`);
+    assert.ok(Number.isFinite(result.win_probability.b), `p_b=${result.win_probability.b}`);
+    assert.ok(Number.isFinite(result.weighted_score), `skor=${result.weighted_score}`);
+
+    // Kunci `experience` wajib ada di `metrics` (null bila tidak
+    // terdokumentasi); kunci yang hilang itulah akar bug NaN di atas.
+    const keyed = await sql.query<{ has_experience: boolean }>(
+      `select jsonb_exists(elem -> 'metrics', 'experience') as has_experience
+         from jsonb_array_elements(public.battle_dataset(array[$1]::uuid[])) as t(elem)`,
+      [versionIds.first],
+    );
+    assert.equal(keyed.length, 1);
+    assert.equal(keyed[0]!.has_experience, true, 'metrics harus memuat kunci experience');
   });
 });

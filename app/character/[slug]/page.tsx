@@ -36,6 +36,47 @@ function metricLabel(metric: string): string {
   return metric.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+/**
+ * URL yang boleh dirender sebagai tautan keluar di blok atribusi.
+ *
+ * Data berasal dari impor, jadi hanya `http(s)` yang ditautkan — skema lain
+ * (mis. `javascript:`) tampil sebagai teks biasa. URL internal ber-skema
+ * `about:` juga bukan tautan yang bisa dibuka pengunjung, jadi tidak dipaksa
+ * menjadi anchor mati; namanya tetap tampil.
+ */
+function externalHttpUrl(value: string | null): string | null {
+  if (value === null) return null;
+  return value.startsWith('https://') || value.startsWith('http://') ? value : null;
+}
+
+/** Apakah baris ini punya sesuatu untuk ditampilkan sebagai sumbernya. */
+function hasRowSource(name: string | null, url: string | null): boolean {
+  return externalHttpUrl(url) !== null || (name?.trim().length ?? 0) > 0;
+}
+
+/**
+ * Atribusi per baris: tautan ke halaman sumber yang dibaca saat impor.
+ *
+ * Panel Data Traceability menautkan sumber di tingkat karakter, tetapi pembaca
+ * yang ingin memeriksa satu angka tertentu harus menemukannya sendiri di sana.
+ * Setiap baris statistik, ability, dan resistance karena itu membawa tautannya
+ * sendiri. Bila URL tersimpan bukan `http(s)` (mis. `about:dataset`), namanya
+ * tetap tampil sebagai teks — bukan anchor mati; nama kosong tetapi URL ada
+ * ditampilkan sebagai URL itu sendiri.
+ */
+function RowSource({ name, url }: { name: string | null; url: string | null }) {
+  const href = externalHttpUrl(url);
+  const label = name?.trim() ? name : href;
+  if (label === null) return null;
+  return href ? (
+    <a href={href} target="_blank" rel="nofollow noopener" className="text-accent-b hover:underline">
+      {label} ↗
+    </a>
+  ) : (
+    <span>{label}</span>
+  );
+}
+
 /** Urutan tampil yang stabil: metrik penentu lebih dulu, pengalaman terakhir. */
 const METRIC_ORDER = [
   'tier',
@@ -217,7 +258,12 @@ export default async function CharacterPage({
                     <p className="mt-1 text-sm font-medium text-ink-0">{stat.raw_text}</p>
                     <p className="mt-1 text-[0.65rem] text-ink-3">
                       Confidence {Math.round(stat.confidence * 100)}%
-                      {stat.source_name ? ` · ${stat.source_name}` : ''}
+                      {hasRowSource(stat.source_name, stat.source_url) && (
+                        <>
+                          {' · '}
+                          <RowSource name={stat.source_name} url={stat.source_url} />
+                        </>
+                      )}
                     </p>
                   </div>
                 ))}
@@ -253,6 +299,11 @@ export default async function CharacterPage({
                       {ability.is_passive && <span className="rounded bg-surface-2 px-1.5 py-0.5">Pasif</span>}
                       {ability.is_offensive && <span className="rounded bg-surface-2 px-1.5 py-0.5">Ofensif</span>}
                     </div>
+                    {hasRowSource(ability.source_name, ability.source_url) && (
+                      <p className="mt-2 text-[0.65rem] text-ink-3">
+                        Sumber: <RowSource name={ability.source_name} url={ability.source_url} />
+                      </p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -282,6 +333,11 @@ export default async function CharacterPage({
                       <span className="block text-[0.6rem] text-ink-3">
                         {entry.verification_status === 'verified' ? 'Tersumber' : entry.verification_status}
                       </span>
+                      {hasRowSource(entry.source_name, entry.source_url) && (
+                        <span className="block text-[0.6rem] text-ink-3">
+                          <RowSource name={entry.source_name} url={entry.source_url} />
+                        </span>
+                      )}
                     </span>
                   </li>
                 ))}
@@ -296,17 +352,57 @@ export default async function CharacterPage({
                 Belum ada sumber tercatat untuk karakter ini — bertentangan dengan AC-09 dan perlu diperbaiki sebelum rilis.
               </p>
             ) : (
-              <ul className="space-y-2 border-t border-line/50 pt-3">
-                {sources.map((entry) => (
-                  <li key={entry.source_id} className="flex flex-col gap-1">
-                    <span className="text-xs font-medium text-accent-b">{entry.source_name}</span>
-                    <span className="text-[0.65rem] text-ink-3">
-                      {entry.fetched_at ? `Diambil: ${entry.fetched_at.slice(0, 10)}` : 'Waktu pengambilan tidak diketahui'} ·{' '}
-                      {entry.verification_status}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <>
+                <ul className="space-y-3 border-t border-line/50 pt-3">
+                  {sources.map((entry) => {
+                    const sourceUrl = externalHttpUrl(entry.source_url);
+                    const licenseUrl = externalHttpUrl(entry.license_url);
+                    return (
+                      <li key={entry.source_id} className="flex flex-col gap-1">
+                        {sourceUrl ? (
+                          <a
+                            href={sourceUrl}
+                            target="_blank"
+                            rel="nofollow noopener"
+                            className="text-xs font-medium text-accent-b hover:underline"
+                          >
+                            {entry.source_name} ↗
+                          </a>
+                        ) : (
+                          <span className="text-xs font-medium text-accent-b">{entry.source_name}</span>
+                        )}
+                        <span className="text-[0.65rem] text-ink-3">
+                          {entry.fetched_at ? `Diambil: ${entry.fetched_at.slice(0, 10)}` : 'Waktu pengambilan tidak diketahui'} ·{' '}
+                          {entry.verification_status}
+                        </span>
+                        {entry.license ? (
+                          <span className="text-[0.65rem] text-ink-3">
+                            Lisensi:{' '}
+                            {licenseUrl ? (
+                              <a
+                                href={licenseUrl}
+                                target="_blank"
+                                rel="nofollow noopener"
+                                className="text-accent-b hover:underline"
+                              >
+                                {entry.license}
+                              </a>
+                            ) : (
+                              entry.license
+                            )}
+                          </span>
+                        ) : null}
+                        {entry.attribution_text ? (
+                          <span className="text-[0.65rem] text-ink-3">{entry.attribution_text}</span>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <p className="mt-3 border-t border-line/50 pt-3 text-[0.65rem] text-ink-3">
+                  Data berasal dari sumber eksternal; Anime VS Battle tidak mengklaim kepemilikan.
+                </p>
+              </>
             )}
           </section>
         </div>

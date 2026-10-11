@@ -143,6 +143,9 @@ function sampleDataset(options: DatasetOptions = {}): Record<string, unknown> {
     parser_version: 'dataset-json@1.0.0',
     source_slug: options.sourceSlug ?? 'admin-dataset-import',
     source_url: 'dataset://admin-dataset-import/test',
+    license: 'CC BY-SA 4.0 (Astral Wiki)',
+    license_url: 'https://astral.test/license',
+    attribution: 'Angka contoh dikutip dari Astral Wiki (teks berlisensi CC BY-SA 4.0).',
     verse: {
       slug: 'astral-verse',
       name: 'Astral Verse',
@@ -180,6 +183,16 @@ function sampleDataset(options: DatasetOptions = {}): Record<string, unknown> {
                 qualifier: 'possibly',
                 confidence: 0.72,
                 scale_code: 'mftl_plus',
+              },
+              {
+                // Durability ikut diuji: metrik wajib Layer 0 ini dulu tidak
+                // punya skala di seed, sehingga rank-nya null dan setiap
+                // pertarungan produksi berakhir `insufficient_data`.
+                metric: 'durability',
+                raw_text: 'Island level',
+                qualifier: 'exact',
+                confidence: 0.75,
+                scale_code: 'island',
               },
             ],
             abilities: [
@@ -286,7 +299,7 @@ describe('pipeline ingestion di atas skema sungguhan', () => {
     const outcome = result.outcome!;
     assert.ok(
       outcome.records_created >= 7,
-      `created=${outcome.records_created} (verse + karakter + 2 form + 3 statistik + ability + resistensi)`,
+      `created=${outcome.records_created} (verse + karakter + 2 form + 4 statistik + ability + resistensi)`,
     );
     assert.equal(outcome.records_failed, 0);
     assert.equal(outcome.parser_version, 'dataset-json@1.0.0');
@@ -311,8 +324,16 @@ describe('pipeline ingestion di atas skema sungguhan', () => {
 
     // G3: atribusi juga tercatat per karakter di `character_sources` — baris
     // inilah yang dibaca panel Data Traceability di halaman karakter.
-    const characterSources = await sql.query<{ role: string; source_url: string; source_slug: string }>(
-      `select cs.role, cs.source_url, s.slug as source_slug
+    const characterSources = await sql.query<{
+      role: string;
+      source_url: string;
+      source_slug: string;
+      license: string | null;
+      license_url: string | null;
+      attribution_text: string | null;
+    }>(
+      `select cs.role, cs.source_url, s.slug as source_slug,
+              cs.license, cs.license_url, cs.attribution_text
          from character_sources cs join sources s on s.id = cs.source_id
         where cs.character_id = (select id from characters where slug = 'aster-vale')`,
     );
@@ -320,16 +341,25 @@ describe('pipeline ingestion di atas skema sungguhan', () => {
     assert.equal(characterSources[0]!.role, 'identity');
     assert.equal(characterSources[0]!.source_slug, 'admin-dataset-import');
     assert.match(characterSources[0]!.source_url, /^dataset:\/\//);
+    // Lisensi dari envelope ikut turun ke baris atribusi — panel menampilkannya
+    // lengkap dengan tautan lisensi, bukan label generik registry.
+    assert.equal(characterSources[0]!.license, 'CC BY-SA 4.0 (Astral Wiki)');
+    assert.equal(characterSources[0]!.license_url, 'https://astral.test/license');
+    assert.match(characterSources[0]!.attribution_text ?? '', /Astral Wiki/);
 
-    // Statistik: tier dipetakan trigger ke `tiers`, cache skala form terisi.
-    const formCache = await sql.query<{ tier_code: string | null; ap_cached: boolean }>(
-      `select t.tier_code, cv.attack_potency_scale_id is not null as ap_cached
+    // Statistik: tier dipetakan trigger ke `tiers`, cache skala form terisi —
+    // termasuk durability, metrik wajib yang dulu tidak punya skala sama sekali.
+    const formCache = await sql.query<{ tier_code: string | null; ap_cached: boolean; durability_cached: boolean }>(
+      `select t.tier_code,
+              cv.attack_potency_scale_id is not null as ap_cached,
+              cv.durability_scale_id is not null as durability_cached
          from character_versions cv
          left join tiers t on t.id = cv.tier_id
         where cv.slug = 'squire'`,
     );
     assert.equal(formCache[0]!.tier_code, '5-B');
     assert.equal(formCache[0]!.ap_cached, true);
+    assert.equal(formCache[0]!.durability_cached, true, 'durability harus punya skala (Layer 0 engine)');
 
     const ability = await sql.query<{ proficiency: string; category: string }>(
       `select ca.proficiency, ac.slug as category
@@ -369,6 +399,35 @@ describe('pipeline ingestion di atas skema sungguhan', () => {
     );
     assert.equal(job[0]!.status, 'completed');
     assert.ok(job[0]!.records_created > 0);
+  });
+
+  it('reparse staging lama tanpa metadata lisensi tidak menghapus atribusi yang sudah tercatat', async () => {
+    // Dataset versi lama (belum memuat license/attribution) menghasilkan staging
+    // dengan hash berbeda. Saat dijalankan, baris `character_sources` harus tetap
+    // mempertahankan lisensi yang sudah tercatat: null berarti "tidak ada
+    // informasi baru", bukan "hapus" (COALESCE di upsert).
+    const withLicense = await stageDatasetImport(sql, sampleDataset());
+    const firstRun = await runJobById(withLicense.job_id, { sql, ...DETACHED_DEPS });
+    assert.equal(firstRun.status, 'completed');
+
+    const legacy = sampleDataset();
+    delete legacy.license;
+    delete legacy.license_url;
+    delete legacy.attribution;
+    const legacyStaged = await stageDatasetImport(sql, legacy);
+    const legacyRun = await runJobById(legacyStaged.job_id, { sql, ...DETACHED_DEPS });
+    assert.equal(legacyRun.status, 'completed');
+    assert.equal(legacyRun.outcome!.records_created, 0, 'data kanonik tidak berubah; hanya atribusi yang disentuh');
+
+    const after = await sql.query<{ license: string | null; license_url: string | null; attribution_text: string | null }>(
+      `select cs.license, cs.license_url, cs.attribution_text
+         from character_sources cs
+         join characters c on c.id = cs.character_id
+        where c.slug = 'aster-vale' and cs.role = 'identity'`,
+    );
+    assert.equal(after[0]!.license, 'CC BY-SA 4.0 (Astral Wiki)');
+    assert.equal(after[0]!.license_url, 'https://astral.test/license');
+    assert.match(after[0]!.attribution_text ?? '', /Astral Wiki/);
   });
 
   it('menjalankan dataset yang sama 3× tidak menambah baris dan created = 0 (AC-08)', async () => {

@@ -125,7 +125,52 @@ tidak menulis `ingestion_errors`.
 5. **`ingestion_raw_pages` disimpan 90 hari** (`expires_at`); `purge_expired_staging()`
    menghapus yang kedaluwarsa. Re-parse setelah itu perlu fetch ulang.
 
-## 6. Verifikasi setelah tindakan
+## 6. Atribusi & lisensi di panel Data Traceability
+
+`character_sources` menyimpan metadata lisensi di tingkat atribusi: `license`,
+`license_url`, dan `attribution_text`. Untuk impor dataset, nilainya diisi dari
+envelope dataset (`license`/`license_url`/`attribution` di berkas JSON — mis.
+CC BY-SA 3.0 untuk dataset One-Punch Man), karena registry `sources` dipakai
+bersama banyak dataset dan hanya menyebut `per-dataset`. Panel *Data Traceability*
+di halaman karakter memakai nilai per baris; registry adalah fallback bila
+dataset tidak mencantumkan lisensi.
+
+Impor ulang dataset yang sama memperbarui metadata ini (idempoten). Reparse
+staging lama yang belum memuat lisensi **tidak** menghapus lisensi yang sudah
+tercatat — `null` diperlakukan sebagai "tidak ada informasi baru".
+
+Halaman karakter juga menampilkan atribusi **per baris**: tiap statistik,
+ability, dan resistance bertaut ke URL yang tersimpan di barisnya
+(`statistics.source_url`, `character_abilities.source_url`,
+`character_resistances.source_url`), dengan `sources.base_url` registry sebagai
+fallback. URL baris form berasal dari `envelope.source_url` (halaman verse di
+dataset), sedangkan `characters.source_url` memakai halaman karakter — jadi
+untuk satu dataset semua tautan baris biasanya menunjuk halaman yang sama.
+Efek sampingnya perlu diketahui operator: memperbaiki URL baris pada dataset
+**tidak** mengubah baris yang sudah ada, karena perbandingan idempoten di
+`upsertStatistic`/`upsertAbility`/`upsertResistance` tidak membandingkan
+`source_url` — baris lama tetap membawa URL lamanya sampai nilainya berubah
+karena sebab lain.
+
+## 7. Prasyarat `stat_scales` sebelum impor statistik
+
+Setiap statistik ber-`scale_code` di-resolve ke `stat_scales(metric_id, scale_code)`
+saat upsert. Kode yang tidak punya barisnya **bukan** disimpan sebagai `null`:
+record itu gagal dengan `InvalidData` ("Skala \"x\" tidak dikenal untuk metrik y")
+dan muncul di `ingestion_errors` — jadi dataset tidak pernah diam-diam kehilangan
+rank. Konsekuensinya: ladder metrik harus ada di database tujuan **sebelum**
+impor. `docs/seed.sql` adalah sumbernya dan idempoten; blok ladder energi AP juga
+menyalin dirinya ke `durability` dan `striking_strength`.
+
+Ini bukan detail teoretis — 2026-10-10 dataset One-Punch Man sempat punya
+`raw_text` durability tanpa `scale_code`, sehingga `durability` tidak punya skala
+yang dirujuk, rank-nya `null`, dan engine berhenti di Layer 0 dengan
+`insufficient_data` walaupun teks statistiknya ada. Perbaikannya dua sisi:
+`scale_code` di dataset **dan** baris ladder di `stat_scales`. Jalankan
+`npm run validate:schema`, yang memverifikasi keempat ladder yang dibutuhkan
+(AP, durability, striking, speed) benar-benar ada di seed.
+
+## 8. Verifikasi setelah tindakan
 
 ```bash
 curl "$SITE/api/admin/ingestion/jobs?status=failed" -H "authorization: Bearer $ADMIN_INGESTION_SECRET"

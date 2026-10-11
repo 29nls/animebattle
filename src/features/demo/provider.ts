@@ -186,6 +186,11 @@ export function demoCharacterDetail(
       is_passive: entry.is_passive,
       confidence: entry.confidence,
       evidence: null,
+      // Atribusi per baris juga ada di jalur demo supaya bentuk view model
+      // identik dengan database: halaman merender tautan sumber di setiap
+      // kartu ability tanpa harus tahu dari mana datanya berasal.
+      source_name: DEMO_SOURCE.name,
+      source_url: DEMO_SOURCE.url,
     })),
     resistances: side.resistances.map((entry) => ({
       id: entry.resistance_type_id,
@@ -196,6 +201,8 @@ export function demoCharacterDetail(
       verification_status: entry.verification_status,
       confidence: entry.confidence,
       evidence: null,
+      source_name: DEMO_SOURCE.name,
+      source_url: DEMO_SOURCE.url,
     })),
     sources: [
       {
@@ -204,6 +211,12 @@ export function demoCharacterDetail(
         source_url: DEMO_SOURCE.url,
         fetched_at: DEMO_UPDATED_AT,
         verification_status: 'imported',
+        // Dataset demo sintetis tidak memakai lisensi pihak ketiga. Field
+        // tetap ada supaya bentuk view model identik dengan jalur database —
+        // panel hanya menampilkan baris lisensi bila terisi.
+        license: null,
+        license_url: null,
+        attribution_text: null,
       },
     ],
   };

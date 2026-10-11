@@ -70,6 +70,16 @@ export interface UpsertContext {
    * nilainya `dataset://…` dari envelope; untuk fetch nilainya URL halaman.
    */
   provenanceUrl: string | null;
+  /**
+   * Metadata lisensi tingkat dataset dari envelope (lihat `DatasetEnvelope`).
+   * Disalin ke `character_sources` per karakter supaya panel Data Traceability
+   * menampilkan lisensi sebenarnya (mis. CC BY-SA 3.0) beserta tautannya, bukan
+   * label generik registry (`per-dataset`). `null` bila dataset tidak
+   * mencantumkannya — baris atribusi sudah ada dari registry.
+   */
+  license: string | null;
+  licenseUrl: string | null;
+  attribution: string | null;
 }
 
 interface LookupMaps {
@@ -235,6 +245,10 @@ interface CharacterState {
  * Idempoten lewat `unique (character_id, source_id, role)`: menjalankan dataset
  * yang sama lagi tidak menambah baris. Tidak dihitung ke `report` karena bukan
  * record kanonik — AC-08 menghitung baris karakter/form/statistik.
+ *
+ * Metadata lisensi dataset (`license`, `license_url`, `attribution_text`) ikut
+ * ditulis di sini — inilah satu-satunya tempat per-karakter yang dibaca panel,
+ * dan lisensi CC BY-SA menuntut nama lisensi + tautannya tampil bersama sumber.
  */
 async function recordCharacterSource(
   context: UpsertContext,
@@ -243,10 +257,19 @@ async function recordCharacterSource(
 ): Promise<void> {
   if (context.dryRun) return;
   await context.sql.query(
-    `insert into character_sources (character_id, source_id, source_url, role)
-     values ($1, $2, $3, 'identity')
-     on conflict (character_id, source_id, role) do nothing`,
-    [characterId, context.source.id, sourceUrl],
+    // `do update` (bukan `do nothing`) supaya impor ulang memperbarui metadata
+    // lisensi. COALESCE menjaga atribusi yang sudah tercatat: reparse staging
+    // lama — yang belum memuat lisensi — tidak boleh menghapus lisensi yang
+    // sudah ada. Nilai null berarti "tidak ada informasi baru", bukan "hapus".
+    `insert into character_sources
+       (character_id, source_id, source_url, role, license, license_url, attribution_text)
+     values ($1, $2, $3, 'identity', $4, $5, $6)
+     on conflict (character_id, source_id, role) do update
+        set source_url = excluded.source_url,
+            license = coalesce(excluded.license, character_sources.license),
+            license_url = coalesce(excluded.license_url, character_sources.license_url),
+            attribution_text = coalesce(excluded.attribution_text, character_sources.attribution_text)`,
+    [characterId, context.source.id, sourceUrl, context.license, context.licenseUrl, context.attribution],
   );
 }
 

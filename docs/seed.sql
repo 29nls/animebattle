@@ -237,6 +237,18 @@ select m.id,
   join stat_scale_metrics m on m.metric = v.metric::stat_metric_t
 on conflict (metric_id, scale_code) do nothing;
 
+-- Durability & Striking Strength memakai ladder energi yang sama dengan AP
+-- (lihat komentar blok di atas). Barisnya disalin dari AP supaya ketiganya tidak
+-- pernah menyimpang. Tanpa ini, statistik durability tidak punya skala untuk
+-- dirujuk: rank-nya selalu null dan engine berhenti di Layer 0
+-- (`insufficient_data`) walaupun raw_text-nya ada di dataset (2026-10-10).
+insert into stat_scales (metric_id, scale_code, label, rank, log_value, band, is_rankable, is_physical, notes)
+select m.id, s.scale_code, s.label, s.rank, s.log_value, s.band, s.is_rankable, s.is_physical, s.notes
+  from stat_scales s
+  join stat_scale_metrics ap on ap.id = s.metric_id and ap.metric = 'attack_potency'
+  join stat_scale_metrics m on m.metric in ('durability', 'striking_strength')
+on conflict (metric_id, scale_code) do nothing;
+
 -- ---------------------------------------------------------------------------
 -- 4. Tier ladder (§12). Rank 1 = paling lemah. Termasuk baris non-rankable.
 -- ---------------------------------------------------------------------------

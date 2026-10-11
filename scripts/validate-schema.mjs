@@ -340,16 +340,31 @@ const apScale = await db.query(
 const spScale = await db.query(
   `select s.id from stat_scales s join stat_scale_metrics m on m.id = s.metric_id
     where m.metric = 'speed' and s.scale_code = 'mftl_plus'`);
-if (apScale.rows.length && spScale.rows.length) ok('seed stat_scales memuat skala attack_potency & speed');
-else bad('seed stat_scales memuat skala attack_potency & speed', 'kode skala tidak ditemukan');
+// Durability & striking memakai ladder energi yang sama dengan AP; ketiganya
+// wajib ada karena durability adalah metrik wajib Layer 0 engine (AC-29).
+const duScale = await db.query(
+  `select s.id from stat_scales s join stat_scale_metrics m on m.id = s.metric_id
+    where m.metric = 'durability' and s.scale_code = 'island'`);
+const stScale = await db.query(
+  `select s.id from stat_scales s join stat_scale_metrics m on m.id = s.metric_id
+    where m.metric = 'striking_strength' and s.scale_code = 'island'`);
+if (apScale.rows.length && spScale.rows.length && duScale.rows.length && stScale.rows.length)
+  ok('seed stat_scales memuat skala AP/durability/striking/speed');
+else
+  bad(
+    'seed stat_scales memuat skala AP/durability/striking/speed',
+    JSON.stringify({ ap: apScale.rows.length, speed: spScale.rows.length, durability: duScale.rows.length, striking: stScale.rows.length }),
+  );
 
 await db.query(
   `insert into statistics (character_version_id, metric, scale_id, raw_text, qualifier, confidence, source_id, status)
    values ($1, 'attack_potency', $2, 'Island level', 'exact', 0.80, $3, 'current'),
           ($1, 'speed',          $4, 'Massively FTL+', 'possibly', 0.72, $3, 'current'),
+          ($1, 'durability',     $5, 'Island level', 'exact', 0.75, $3, 'current'),
+          ($1, 'striking_strength', $6, 'Island level', 'exact', 0.70, $3, 'current'),
           ($1, 'tier',           null, '5-B', 'exact', 0.90, $3, 'current')`,
-  [vBase, apScale.rows[0].id, sourceId, spScale.rows[0].id]);
-ok('insert statistics (termasuk tier)');
+  [vBase, apScale.rows[0].id, sourceId, spScale.rows[0].id, duScale.rows[0].id, stScale.rows[0].id]);
+ok('insert statistics (termasuk tier, durability, striking)');
 
 await expectError(
   'statistik tanpa source_id ditolak (AC-09)',
@@ -360,10 +375,12 @@ await expectError(
 
 const cache = await db.query(
   `select attack_potency_scale_id is not null as ap_cached, speed_scale_id is not null as sp_cached,
+          durability_scale_id is not null as du_cached, striking_scale_id is not null as st_cached,
           tier_id is not null as tier_cached
      from character_versions where id = $1`, [vBase]);
 const c = cache.rows[0];
-if (c.ap_cached && c.sp_cached && c.tier_cached) ok('trigger cache stat mengisi kolom character_versions');
+if (c.ap_cached && c.sp_cached && c.du_cached && c.st_cached && c.tier_cached)
+  ok('trigger cache stat mengisi kolom character_versions (termasuk durability/striking)');
 else bad('trigger cache stat mengisi kolom character_versions', JSON.stringify(c));
 
 // Superseding: nilai baru dari sumber yang sama -> lama jadi 'superseded', bukan duplikat
