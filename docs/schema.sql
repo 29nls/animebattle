@@ -1274,7 +1274,12 @@ language sql
 stable
 as $$
   with needle as (
-    select public.f_unaccent(coalesce(q, '')) as raw,
+    -- `raw` memakai normalisasi yang sama dengan kolom yang dibandingkan
+    -- (`f_normalize_name` = NFKC → lowercase → tanpa tanda baca), bukan hanya
+    -- unaccent: tanpa itu kueri berhuruf besar atau bertanda baca ("Sai",
+    -- "speed-o") tidak pernah cocok di cabang trigram & prefiks, padahal FTS
+    -- tetap cocok — perbedaan yang tak terlihat sampai diuji dengan huruf besar.
+    select public.f_normalize_name(coalesce(q, '')) as raw,
            plainto_tsquery('simple', public.f_unaccent(coalesce(q, ''))) as ts
   )
   select c.id,
@@ -1306,6 +1311,99 @@ as $$
      )
    order by score desc, c.popularity_score desc
    limit least(coalesce(lim, 20), 200)
+$$;
+
+-- Pencarian berhalaman + filter (§26.1). Mengembalikan **satu** dokumen jsonb
+-- `{ total, rows }`, bukan setof baris, karena tiga alasan:
+--
+--   1. `total` harus benar juga ketika halamannya kosong (mis. `page` melewati
+--      halaman terakhir). `count(*) over ()` tidak dapat memberi itu — tidak ada
+--      baris untuk membawa window-nya — sehingga klien akan melaporkan total 0
+--      untuk pencarian yang sebenarnya punya hasil.
+--   2. Predikat pencocokan ditulis **sekali** (`matched`). Alternatif dua fungsi
+--      (halaman + hitungan) menggandakan logika skor/pencocokan, dan salinan
+--      yang menyimpang menghasilkan total yang tidak cocok dengan barisnya.
+--   3. Satu round-trip per permintaan pencarian.
+--
+-- `search_characters` (tanpa halaman) tetap ada: pemanggil lama dan test-nya
+-- memakai bentuk setof baris.
+--
+-- Parameter filter tidak pernah dirangkai ke SQL (hanya nilai parameter):
+--   * `verse_slug` — slug verse, `null` = semua verse;
+--   * `media`      — `characters.media_type::text`, dibandingkan sebagai teks
+--     supaya nilai tak dikenal tidak memicu error cast; route yang memvalidasi.
+-- Urutan hasil deterministik (skor → popularitas → nama), sehingga `offset`
+-- antar-request tidak mengulang atau melewatkan baris.
+create or replace function public.search_characters_page(
+  q text,
+  verse_slug text default null,
+  media text default null,
+  lim integer default 20,
+  off integer default 0,
+  only_public boolean default true
+)
+returns jsonb
+language sql
+stable
+as $$
+  with needle as (
+    -- Sama seperti `search_characters`: needle dinormalisasi agar cabang trigram,
+    -- prefiks, dan alias memakai bentuk yang sebanding dengan kolomnya.
+    select public.f_normalize_name(coalesce(q, '')) as raw,
+           plainto_tsquery('simple', public.f_unaccent(coalesce(q, ''))) as ts
+  ),
+  matched as (
+    select c.id,
+           c.slug,
+           c.name,
+           c.native_name,
+           c.data_completeness,
+           c.popularity_score,
+           v.slug as verse_slug,
+           v.name as verse_name,
+           (select t.tier_code
+              from character_versions cv join tiers t on t.id = cv.tier_id
+             where cv.character_id = c.id and cv.is_default and cv.deleted_at is null
+             limit 1) as tier_code,
+           (
+             0.60 * ts_rank_cd(c.search_vector, n.ts)
+           + 0.25 * greatest(
+               similarity(public.f_normalize_name(c.name), n.raw),
+               coalesce((select max(similarity(a.alias_norm, n.raw))
+                           from character_aliases a where a.character_id = c.id), 0))
+           + 0.10 * (case when public.f_normalize_name(c.name) like n.raw || '%' then 1 else 0 end)
+           + 0.05 * least(c.popularity_score::real / 1000.0, 1.0)
+           )::real as score
+      from characters c
+      join verses v on v.id = c.verse_id
+      cross join needle n
+     where (not only_public or c.verification_status in ('verified', 'imported', 'partially_verified'))
+       and (verse_slug is null or v.slug = verse_slug)
+       and (media is null or c.media_type::text = media)
+       and (
+            c.search_vector @@ n.ts
+         or public.f_normalize_name(c.name) % n.raw
+         -- Prefiks pendek ("sa" → Saitama) tidak lolos FTSmaupun ambang trigram,
+         -- dan justru itulah kueri pertama yang diketik pengguna pada autocomplete.
+         -- Tanpa cabang ini, /api/search/suggest tidak pernah mengembalikan apa pun
+         -- untuk satu-dua huruf (terverifikasi 2026-10-11 pada data produksi).
+         or public.f_normalize_name(c.name) like n.raw || '%'
+         or exists (select 1 from character_aliases a
+                     where a.character_id = c.id
+                       and (a.alias_norm % n.raw or a.alias_norm like n.raw || '%'))
+       )
+  ),
+  page as (
+    select * from matched
+     order by score desc, popularity_score desc, name asc
+     limit least(coalesce(lim, 20), 200)
+    offset greatest(coalesce(off, 0), 0)
+  )
+  select jsonb_build_object(
+    'total', (select count(*) from matched),
+    'rows', coalesce((select jsonb_agg(to_jsonb(p) order by p.score desc, p.popularity_score desc, p.name asc)
+                        from page p), '[]'::jsonb)
+  )
 $$;
 
 -- Dataset agregat untuk battle engine dalam SATU round-trip (menghindari N+1).

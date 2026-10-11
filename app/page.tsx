@@ -1,13 +1,69 @@
 import type { Metadata } from 'next';
 
+import { attemptLoad } from '@/features/data-source.ts';
+import { loadHomeMetrics } from '@/features/home/metrics.ts';
+import type { HomeCatalogCounts, PopularBattle, RecentImport } from '@/features/home/metrics.ts';
+import { isAdminAuthenticated } from '@/features/admin/session.ts';
+import { DatabaseUnavailable } from '@/components/database-unavailable.tsx';
+
+/**
+ * Deskripsi ini tampil di hasil pencarian dan kartu pratinjau tautan, jadi ia
+ * tidak boleh menjanjikan ukuran katalog: versi sebelumnya menjanjikan jumlah
+ * karakter yang besar sementara katalog produksi berisi tiga karakter. Janji
+ * ukuran katalog ditempatkan di halaman, di tempat angka sebenarnya dibaca dari
+ * database — bukan di metadata statis yang tidak dapat menyesuaikan diri.
+ *
+ * `tests/web/home-metrics.test.ts` menjaga teks ini tetap bebas klaim jumlah.
+ */
 export const metadata: Metadata = {
   title: 'Anime VS Battle - Who Would Win?',
   description:
-    'Compare thousands of fictional characters and simulate the battle. Pilih dua karakter, pilih form-nya, dan lihat analisis statistik, hax, serta resistances.',
+    'Pilih dua karakter, pilih form-nya, dan lihat analisis statistik, hax, serta resistances dari simulasi yang dapat dipertanggungjawabkan.',
   alternates: { canonical: '/' },
 };
 
-export default function HomePage() {
+/**
+ * Angka katalog dibaca dari database tiap permintaan. Tanpa `force-dynamic`,
+ * build statis akan menyajikan jumlah karakter dari saat build dan membuat
+ * homepage "berbohong" setelah impor berikutnya — persis masalah yang modul
+ * `features/home/metrics.ts` ada untuk mencegahnya.
+ */
+export const dynamic = 'force-dynamic';
+
+const NUMBER = new Intl.NumberFormat('id-ID');
+
+/** Tanggal ringkas untuk daftar impor/matchup; `—` bila tidak ada. */
+function formatDay(value: string | null): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toISOString().slice(0, 10);
+}
+
+const IMPORT_STATUS_LABEL: Record<RecentImport['status'], string> = {
+  completed: 'selesai',
+  partial: 'sebagian',
+  failed: 'gagal',
+};
+
+export default async function HomePage() {
+  // Galat database tidak boleh menjatuhkan homepage: `attemptLoad` mengubahnya
+  // menjadi panel jujur, bukan HTTP 500 dan bukan angka contoh.
+  const outcome = await attemptLoad(() => loadHomeMetrics());
+  const metrics = outcome.status === 'ok' ? outcome.data : null;
+  const counts: HomeCatalogCounts | null = metrics?.counts ?? null;
+  const recentImports: RecentImport[] = metrics?.recentImports ?? [];
+  const popularBattles: PopularBattle[] = metrics?.popularBattles ?? [];
+
+  const statCards: Array<{ label: string; value: number; hint: string }> = counts
+    ? [
+        { label: 'Karakter', value: counts.characters, hint: 'entitas identitas' },
+        { label: 'Form', value: counts.forms, hint: 'era/wujud' },
+        { label: 'Verse', value: counts.verses, hint: 'semesta asal' },
+        { label: 'Ability', value: counts.abilities, hint: 'katalog' },
+        { label: 'Resistensi', value: counts.resistances, hint: 'tipe' },
+      ]
+    : [];
+
   return (
     <>
       {/* ─── Hero Section ─── */}
@@ -97,6 +153,44 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* ─── Catalog Stats (dari database) ─── */}
+      <section className="animate-fade-in-up delay-400 mt-4">
+        <div className="mb-4 flex items-baseline justify-between gap-4">
+          <h2 className="text-lg font-bold text-ink-0">Katalog saat ini</h2>
+          <p className="text-xs text-ink-3">
+            {counts ? 'angka langsung dari database, tanpa cache' : 'sumber: database'}
+          </p>
+        </div>
+
+        {outcome.status === 'failed' ? (
+          <DatabaseUnavailable
+            detail={outcome.message}
+            viewerIsOperator={await isAdminAuthenticated()}
+          />
+        ) : (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+            {statCards.map((card) => (
+              <div
+                key={card.label}
+                className="rounded-xl border border-line bg-surface-1 p-4 shadow-sm"
+              >
+                <p className="text-2xl font-black tabular-nums text-ink-0">
+                  {NUMBER.format(card.value)}
+                </p>
+                <p className="mt-1 text-xs font-medium text-ink-2">{card.label}</p>
+                <p className="text-[0.65rem] text-ink-3">{card.hint}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {counts && counts.characters === 0 && (
+          <p className="mt-3 text-xs text-ink-2">
+            Katalog masih kosong. Angka ini akan berubah setelah impor data pertama tercatat.
+          </p>
+        )}
+      </section>
+
       {/* ─── Secondary Sections ─── */}
       <section className="animate-fade-in-up delay-400 mt-8 grid gap-6 sm:grid-cols-2">
         {/* Features / Database Intro */}
@@ -109,8 +203,11 @@ export default function HomePage() {
             </div>
             <h2 className="text-xl font-bold text-ink-0">Character Database</h2>
             <p className="mt-3 text-sm text-ink-2 leading-relaxed">
-              Pencarian dijalankan di server dengan PostgreSQL full text dan trigram. 
-              Lebih dari 10.000 karakter tersimpan dengan pembagian form (era/wujud) kelas satu.
+              Pencarian dijalankan di server dengan PostgreSQL full text dan trigram,
+              dengan pembagian form (era/wujud) sebagai entitas kelas satu.{' '}
+              {counts
+                ? `Saat ini tersimpan ${NUMBER.format(counts.characters)} karakter dalam ${NUMBER.format(counts.forms)} form dari ${NUMBER.format(counts.verses)} verse.`
+                : 'Statistik katalog belum dapat dimuat; angka akan tampil setelah database dapat dihubungi.'}
             </p>
             <a className="mt-6 inline-flex items-center text-sm font-medium text-accent-b transition-colors hover:text-ink-0" href="/characters">
               Jelajahi Database
@@ -144,36 +241,95 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ─── Popular Battles Placeholder ─── */}
-      <section className="animate-fade-in-up delay-500 mt-16 pt-8 border-t border-line/40">
+      {/* ─── Recent Imports (dari ingestion_jobs) ─── */}
+      <section className="animate-fade-in-up delay-500 mt-16 border-t border-line/40 pt-8">
+        <div className="mb-6 flex items-end justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-ink-0">📥 Impor terakhir</h2>
+            <p className="mt-1 text-sm text-ink-2">
+              Hasil impor terkelola yang sudah selesai dicatat, termasuk yang gagal
+            </p>
+          </div>
+        </div>
+
+        {recentImports.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-line-strong bg-surface-1/50 p-6 text-sm text-ink-2">
+            Belum ada impor tercatat. Impor terkelola (JSON/CSV) lewat panel admin akan muncul
+            di sini bersama jumlah baris yang dibuat, diperbarui, dan gagal.
+          </div>
+        ) : (
+          <ul className="grid gap-3 sm:grid-cols-3">
+            {recentImports.map((job) => (
+              <li key={job.id} className="rounded-xl border border-line bg-surface-1 p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-sm font-bold text-ink-0">
+                    {job.source_name ?? 'tanpa sumber terdaftar'}
+                  </span>
+                  <span className="shrink-0 rounded-full border border-line-strong px-2 py-0.5 text-[0.65rem] font-medium text-ink-2">
+                    {IMPORT_STATUS_LABEL[job.status] ?? job.status}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-ink-3">
+                  {job.scope} · {formatDay(job.finished_at)}
+                </p>
+                <p className="mt-3 text-xs text-ink-2 tabular-nums">
+                  {NUMBER.format(job.records_created)} dibuat · {NUMBER.format(job.records_updated)} diperbarui
+                  {job.records_failed > 0 && (
+                    <span className="text-accent-lose"> · {NUMBER.format(job.records_failed)} gagal</span>
+                  )}
+                </p>
+                <p className="mt-1 text-[0.65rem] text-ink-3 tabular-nums">
+                  {NUMBER.format(job.records_found)} record ditemukan
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* ─── Popular Battles (dari mv_battle_popularity) ─── */}
+      <section className="animate-fade-in-up delay-500 mt-12 pb-8">
         <div className="mb-8 flex items-end justify-between">
           <div>
             <h2 className="text-2xl font-bold text-ink-0">🔥 Popular Battles</h2>
-            <p className="mt-1 text-sm text-ink-2">Matchup yang sering diuji minggu ini</p>
+            <p className="mt-1 text-sm text-ink-2">Matchup dengan simulasi tersimpan terbanyak</p>
           </div>
         </div>
-        
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {/* Skeleton cards for empty state - adhering to PRD §31.4 */}
-          {[1, 2, 3].map((i) => (
-            // Tanpa `opacity-50`: opasitas menurunkan kontras teks menjadi ~2,3:1
-            // dan memicu audit color-contrast Lighthouse (AC-22). Muted-nya tetap
-            // disampaikan lewat skeleton bar + text-ink-3.
-            <div key={i} className="flex flex-col justify-between rounded-xl border border-line bg-surface-1 p-4 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div className="h-4 w-24 skeleton" />
-                <span className="text-[0.65rem] font-bold text-ink-3">VS</span>
-                <div className="h-4 w-24 skeleton" />
-              </div>
-              <div className="mt-4 flex items-center gap-2">
-                <div className="h-2 w-full skeleton" />
-              </div>
-              <p className="mt-3 text-center text-[0.65rem] text-ink-3">
-                Menunggu data mv_battle_popularity
-              </p>
-            </div>
-          ))}
-        </div>
+
+        {popularBattles.length === 0 ? (
+          // Keadaan kosong yang jujur: sebelumnya bagian ini hanya menampilkan
+          // rangka pemuatan tanpa pernah selesai, sehingga pengunjung menunggu
+          // data yang memang belum ada. Angka di sini dihitung dari
+          // `battles`/`battle_results`, jadi ia kosong sampai ada pertarungan
+          // yang tersimpan — dan halaman mengatakannya, bukan menunggu.
+          <div className="rounded-xl border border-dashed border-line-strong bg-surface-1/50 p-6 text-sm text-ink-2">
+            Belum ada matchup populer yang tercatat. Daftar ini dihitung dari hasil pertarungan
+            yang tersimpan (<span className="font-mono text-xs">battle_results</span>) &mdash; ia
+            terisi setelah ada simulasi yang disimpan, bukan diisi angka contoh.
+          </div>
+        ) : (
+          <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {popularBattles.map((battle) => (
+              <li
+                key={battle.matchup_key}
+                className="rounded-xl border border-line bg-surface-1 p-4 shadow-sm"
+              >
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="truncate font-bold text-ink-0" title={battle.side_a_form}>
+                    {battle.side_a_character}
+                  </span>
+                  <span className="shrink-0 text-[0.65rem] font-bold text-ink-3">VS</span>
+                  <span className="truncate font-bold text-ink-0" title={battle.side_b_form}>
+                    {battle.side_b_character}
+                  </span>
+                </div>
+                <p className="mt-3 text-xs text-ink-2 tabular-nums">
+                  {NUMBER.format(battle.simulations)} simulasi · terakhir {formatDay(battle.last_simulated_at)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
     </>
   );

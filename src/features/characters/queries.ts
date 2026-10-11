@@ -122,6 +122,88 @@ export async function searchCharacters(
   );
 }
 
+/** Satu baris hasil pencarian berhalaman (kolom eksplisit dari fungsi RPC). */
+export interface CharacterSearchRow {
+  id: string;
+  slug: string;
+  name: string;
+  native_name: string | null;
+  verse_slug: string;
+  verse_name: string;
+  tier_code: string | null;
+  data_completeness: string;
+  popularity_score: number;
+  score: number;
+}
+
+export interface CharacterSearchPage {
+  /** Jumlah **seluruh** baris yang cocok, bukan jumlah baris di halaman ini. */
+  total: number;
+  rows: CharacterSearchRow[];
+}
+
+export interface SearchCharacterPageParams {
+  query: string;
+  verseSlug?: string | null;
+  media?: string | null;
+  /** Dimulai dari 1. */
+  page?: number;
+  perPage?: number;
+}
+
+/**
+ * Nilai `jsonb` dari driver dapat berupa objek (sudah di-parse) atau string
+ * (terjadi pada klien yang disuntikkan maupun sebagian jalur postgres.js).
+ * Bentuk apa pun yang tak terduga menjadi hasil kosong, bukan lemparan —
+ * pencarian yang salah bentuk tidak boleh menjatuhkan halaman.
+ */
+function parseJsonPayload<T extends object>(value: unknown, fallback: T): T {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? (parsed as T) : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  return typeof value === 'object' ? (value as T) : fallback;
+}
+
+/**
+ * Pencarian berhalaman dengan filter verse/media.
+ *
+ * Satu round-trip: RPC `search_characters_page` mengembalikan `{ total, rows }`,
+ * sehingga `total` tetap benar pada halaman yang kosong (mis. `page` melewati
+ * halaman terakhir) — lihat alasan di `docs/schema.sql`.
+ *
+ * `page`/`perPage` di sini sudah divalidasi pemanggil (`search-params.ts`);
+ * fungsi ini tetap menormalkannya supaya tidak ada jalur yang dapat mengirim
+ * `offset` negatif atau `limit` di luar batas ke database.
+ */
+export async function searchCharacterPage(
+  sql: SqlClient,
+  params: SearchCharacterPageParams,
+): Promise<CharacterSearchPage> {
+  const q = params.query.trim();
+  if (q === '') return { total: 0, rows: [] };
+
+  const perPage = normalizePageSize(params.perPage);
+  const page = Math.max(1, Math.floor(params.page ?? 1));
+  const offset = (page - 1) * perPage;
+
+  const result = await sql.query<{ payload: unknown }>(
+    `select public.search_characters_page($1, $2, $3, $4, $5, true) as payload`,
+    [q, params.verseSlug ?? null, params.media ?? null, perPage, offset],
+  );
+
+  const payload = parseJsonPayload<{ total?: unknown; rows?: unknown }>(result[0]?.payload, {});
+  const rows = Array.isArray(payload.rows) ? (payload.rows as CharacterSearchRow[]) : [];
+  const total = Number(payload.total ?? rows.length);
+
+  return { total: Number.isFinite(total) ? total : rows.length, rows };
+}
+
 export async function countCharacters(sql: SqlClient): Promise<number> {
   const rows = await sql.query<{ total: string }>(`select count(*)::text as total from characters`);
   return Number(rows[0]?.total ?? '0');

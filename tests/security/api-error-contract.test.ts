@@ -26,6 +26,7 @@ import type { SqlClient } from '../../src/lib/db/client.ts';
 import type { NextRequest } from 'next/server';
 
 const { GET: searchGet } = await import('../../app/api/search/route.ts');
+const { GET: suggestGet } = await import('../../app/api/search/suggest/route.ts');
 const { GET: readyGet } = await import('../../app/api/health/ready/route.ts');
 
 /**
@@ -35,6 +36,15 @@ const { GET: readyGet } = await import('../../app/api/health/ready/route.ts');
  */
 function searchRequest(query: string): NextRequest {
   return { nextUrl: new URL(`http://localhost/api/search?q=${encodeURIComponent(query)}`) } as unknown as NextRequest;
+}
+
+/** Permintaan dengan query string apa adanya — dipakai menguji penolakan parameter. */
+function searchRequestRaw(queryString: string): NextRequest {
+  return { nextUrl: new URL(`http://localhost/api/search?${queryString}`) } as unknown as NextRequest;
+}
+
+function suggestRequest(queryString: string): NextRequest {
+  return { nextUrl: new URL(`http://localhost/api/search/suggest?${queryString}`) } as unknown as NextRequest;
 }
 
 function failingClient(error: unknown): SqlClient {
@@ -99,6 +109,108 @@ describe('kontrak error route anonim', () => {
     const body = (await response.json()) as { error: { code: string; message: string } };
     assert.equal(body.error.code, 'INTERNAL');
     assert.doesNotMatch(body.error.message, /relation|characters/);
+  });
+
+  // Bentuk respons daftar kini beramplop (`{ data, page, per_page, total, has_more }`)
+  // dan `total` dihitung database, bukan dari panjang halaman — sehingga
+  // `has_more` benar pada halaman yang kebetulan kosong.
+  it('search: halaman hasil memakai amplop daftar dengan total dari database', async () => {
+    setSqlClient({
+      query: async () => [
+        {
+          payload: {
+            total: 42,
+            rows: [
+              {
+                id: '00000000-0000-0000-0000-0000000000a1',
+                slug: 'genos',
+                name: 'Genos',
+                native_name: null,
+                verse_slug: 'one-punch-man',
+                verse_name: 'One-Punch Man',
+                tier_code: '7-A',
+                data_completeness: 'partial',
+                popularity_score: 10,
+                score: 0.95,
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const response = await searchGet(searchRequestRaw('q=genos&per_page=20&page=2'));
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as {
+      data: Array<{ slug: string }>;
+      page: number;
+      per_page: number;
+      total: number;
+      has_more: boolean;
+    };
+    assert.equal(body.data[0]?.slug, 'genos');
+    assert.equal(body.page, 2);
+    assert.equal(body.per_page, 20);
+    assert.equal(body.total, 42);
+    assert.equal(body.has_more, true, '2 × 20 < 42');
+  });
+
+  it('search: parameter di luar kontrak ditolak 400 sebelum database disentuh', async () => {
+    // Klien yang mengirim parameter tak sah tidak boleh menyentuh database:
+    // klien di sini akan melempar bila dipanggil, jadi 400 membuktikan urutannya.
+    setSqlClient({
+      query: async () => {
+        throw new Error('database tidak boleh disentuh untuk permintaan tak sah');
+      },
+    });
+
+    for (const [queryString, pattern] of [
+      ['q=goku&types=character,verse', /hanya mencari karakter/],
+      ['q=goku&sort=name', /tidak dikenal: sort/],
+      ['q=goku&per_page=37', /20, 50, 100, 200/],
+      ['q=goku&page=0', /page harus bilangan bulat/],
+    ] as const) {
+      const response = await searchGet(searchRequestRaw(queryString));
+      assert.equal(response.status, 400, `${queryString} harus 400`);
+      const body = (await response.json()) as { error: { code: string; message: string } };
+      assert.equal(body.error.code, 'INVALID_INPUT');
+      assert.match(body.error.message, pattern);
+    }
+  });
+
+  it('search: kueri kosong menjawab amplop kosong, bukan seluruh katalog', async () => {
+    setSqlClient({
+      query: async () => {
+        throw new Error('kueri kosong tidak perlu menyentuh database');
+      },
+    });
+    const response = await searchGet(searchRequestRaw('q='));
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { data: unknown[]; total: number; has_more: boolean };
+    assert.deepEqual(body.data, []);
+    assert.equal(body.total, 0);
+    assert.equal(body.has_more, false);
+  });
+
+  it('search/suggest: kueri wajib, parameter lain ditolak', async () => {
+    const missing = await suggestGet(suggestRequest('q='));
+    assert.equal(missing.status, 400);
+    const missingBody = (await missing.json()) as { error: { code: string; message: string } };
+    assert.equal(missingBody.error.code, 'INVALID_INPUT');
+    assert.match(missingBody.error.message, /q wajib diisi/);
+
+    const extra = await suggestGet(suggestRequest('q=sa&page=2'));
+    assert.equal(extra.status, 400);
+    const extraBody = (await extra.json()) as { error: { message: string } };
+    assert.match(extraBody.error.message, /tidak dikenal: page/);
+  });
+
+  it('search/suggest: gangguan database → 503 tanpa pesan driver', async () => {
+    setSqlClient(failingClient(connectivityError()));
+    const response = await suggestGet(suggestRequest('q=sa'));
+    assert.equal(response.status, 503);
+    const body = (await response.json()) as { error: { code: string; message: string } };
+    assert.equal(body.error.code, 'UNAVAILABLE');
+    assert.doesNotMatch(body.error.message, /ECONNREFUSED|10\.0\.0\.5|6543/);
   });
 
   it('search: database belum dikonfigurasi → 503 UNAVAILABLE dengan petunjuk operasional', async () => {
