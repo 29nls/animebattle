@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "codebase-architecture": {
+      "source": "mblode/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/codebase-architecture/SKILL.md",
+      "computedHash": "76c861fdb98b7af7b6e23644f56bbab54bb1bdf4ba95d148019ab44153467f8f"
+    },
+    "repo-skillopt": {
+      "source": "objectivlabs/reposkillopt",
+      "sourceType": "github",
+      "skillPath": "skills/repo-skillopt/SKILL.md",
+      "computedHash": "f173e45f89866e3c87742990f01fa8a29d23234d4c0b6a7ba93c43da558b2770"
+    }
+  }
+}
