@@ -72,7 +72,7 @@ jobs:
 
       # AC-21: hasil diarsipkan per PR.
       - name: Arsipkan laporan Lighthouse
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: lighthouse-reports
