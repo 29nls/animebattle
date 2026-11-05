@@ -90,7 +90,7 @@ try {
     `select count(*)::int as n from information_schema.tables
       where table_schema = 'animebattle' and table_type = 'BASE TABLE'`,
   );
-  check('schema animebattle berisi 38 tabel', tables[0].n === 38, `${tables[0].n} tabel`);
+  check('schema animebattle berisi 39 tabel', tables[0].n === 39, `${tables[0].n} tabel`);
 
   const publicTables = await sql.unsafe(
     `select count(*)::int as n from information_schema.tables

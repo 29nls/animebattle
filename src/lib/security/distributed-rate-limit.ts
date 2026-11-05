@@ -25,6 +25,7 @@
 
 import { getSqlClient, type SqlClient } from '../db/client.ts';
 import { apiError } from '../errors.ts';
+import { logEvent } from '../observability/logger.ts';
 import { hashIp, requestIp } from './ip-hash.ts';
 
 /** Hasil pemeriksaan kuota, dalam bentuk yang siap dipetakan route. */
@@ -126,7 +127,7 @@ export async function enforcePublicRateLimit(
   try {
     result = await checkDistributedRateLimit(getSqlClient(), bucket, options);
   } catch (error) {
-    console.error(`[rate-limit] ${options.scope}: pemeriksaan kuota gagal, permintaan diteruskan:`, error);
+    logEvent('warn', 'rate_limit.unavailable', { scope: options.scope, error });
     return null;
   }
 

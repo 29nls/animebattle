@@ -6,6 +6,8 @@ import { attemptLoad } from '@/features/data-source.ts';
 import { isAdminAuthenticated } from '@/features/admin/session.ts';
 import { DatabaseUnavailable } from '@/components/database-unavailable.tsx';
 import { DEMO_LABEL, DEMO_NOTICE } from '@/features/demo/provider.ts';
+import { loadAttribution } from '@/features/attribution/queries.ts';
+import { DataAttribution } from '@/components/data-attribution.tsx';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,7 +28,7 @@ export async function generateMetadata({
   const name = bundle?.verse.name ?? titleFromSlug(slug);
 
   return {
-    title: `${name} Verse`,
+    title: `Verse ${name}`,
     description: bundle?.verse.description ?? `Daftar karakter, peringkat kekuatan, dan informasi semesta ${name}.`,
     alternates: { canonical: `/verse/${slug}` },
   };
@@ -37,15 +39,18 @@ const MEDIA_LABELS: Record<string, string> = {
   anime: 'Anime',
   game: 'Game',
   novel: 'Novel',
-  comic: 'Comic',
-  movie: 'Movie',
-  mixed: 'Mixed',
-  other: 'Other',
+  comic: 'Komik',
+  movie: 'Film',
+  mixed: 'Campuran',
+  other: 'Lainnya',
 };
 
 export default async function VersePage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const outcome = await attemptLoad(() => loadVerseDetail(slug));
+  const [outcome, attribution] = await Promise.all([
+    attemptLoad(() => loadVerseDetail(slug)),
+    loadAttribution(),
+  ]);
 
   if (outcome.status === 'failed') {
     // Detail teknis hanya untuk operator; pengunjung anonim menerima pesan generik.
@@ -82,7 +87,7 @@ export default async function VersePage({ params }: { params: Promise<{ slug: st
             🌌
           </div>
           <div>
-            <h2 className="text-sm font-bold uppercase tracking-widest text-ink-3 mb-1">Verse / Universe</h2>
+            <h2 className="text-sm font-bold uppercase tracking-widest text-ink-3 mb-1">Verse / Semesta</h2>
             <h1 className="text-3xl font-black text-ink-0 sm:text-5xl">{verse.name}</h1>
             {verse.description && <p className="mt-3 max-w-xl text-sm text-ink-2">{verse.description}</p>}
           </div>
@@ -92,7 +97,7 @@ export default async function VersePage({ params }: { params: Promise<{ slug: st
       <div className="grid gap-8 lg:grid-cols-[2fr_1fr]">
         {/* ─── Left Column: Characters ─── */}
         <div className="space-y-6">
-          <h2 className="border-b border-line pb-2 text-xl font-bold text-ink-0">Karakter di Verse Ini</h2>
+          <h2 className="border-b border-line pb-2 text-xl font-bold text-ink-0">Karakter di verse ini</h2>
 
           {characters.length === 0 ? (
             <p className="text-sm text-ink-3">Belum ada karakter terhubung ke verse ini.</p>
@@ -179,6 +184,8 @@ export default async function VersePage({ params }: { params: Promise<{ slug: st
           </div>
         </div>
       </div>
+
+      <DataAttribution attribution={attribution} />
     </div>
   );
 }

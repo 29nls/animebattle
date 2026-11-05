@@ -1,69 +1,82 @@
 import type { Metadata } from 'next';
 
+import { TakedownForm } from '@/components/takedown-form.tsx';
+
 export const metadata: Metadata = {
-  title: 'Takedown Request',
-  description: 'Ajukan permintaan penghapusan konten yang melanggar hak cipta.',
-  // Self-canonical seperti halaman legal lain (warisan '/' dari layout tidak
-  // valid menurut audit Lighthouse `canonical`).
+  title: 'Permintaan Takedown',
+  description: 'Kirim permintaan penghapusan konten dan simpan kode tiket untuk penelusuran.',
   alternates: { canonical: '/legal/takedown' },
 };
 
-export default function TakedownPage() {
+export default async function TakedownPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ kind?: string }>;
+}) {
+  const params = await searchParams;
+  const kind = params.kind === 'privacy' ? 'privacy' : 'takedown';
+
   return (
     <div className="mx-auto max-w-3xl animate-fade-in pb-16 pt-8">
-      <h1 className="text-3xl font-black text-ink-0 sm:text-5xl mb-8">Takedown Request</h1>
-      
-      <div className="space-y-6 text-sm text-ink-2 leading-relaxed">
-        <div className="rounded-xl border border-accent-flag/30 bg-accent-flag/10 p-5">
-          <p className="text-accent-flag font-medium">
-            Anime VS Battle menghormati hak kekayaan intelektual. Jika Anda adalah pemegang hak cipta 
-            dan menemukan konten yang melanggar hak Anda, silakan ajukan permintaan penghapusan melalui 
-            formulir di bawah.
+      <h1 className="mb-4 text-3xl font-black text-ink-0 sm:text-5xl">
+        {kind === 'privacy' ? 'Permintaan Privasi' : 'Permintaan Takedown'}
+      </h1>
+      <p className="mb-6 text-sm leading-relaxed text-ink-2">
+        {kind === 'privacy'
+          ? 'Gunakan formulir ini untuk meminta akses, koreksi, atau penghapusan data pribadi. Jangan mengirim dokumen identitas melalui formulir.'
+          : 'Anime VS Battle menghormati hak kekayaan intelektual. Jika Anda pemegang hak dan menemukan konten yang melanggar, kirim laporan dengan informasi yang lengkap.'}
+      </p>
+
+      <div className="space-y-6 text-sm leading-relaxed text-ink-2">
+        <div className="rounded-xl border border-line-strong bg-surface-2 p-5">
+          <h2 className="text-lg font-bold text-ink-0">Kanal aktif</h2>
+          <p className="mt-2">
+            Laporan disimpan sebagai tiket dengan kode unik dan hanya dapat dibaca admin. Setelah
+            mengirim, simpan kode tiket yang muncul. Kami tidak menampilkan alamat surel contoh yang
+            tidak dipantau; komunikasi lanjutan dilakukan operator melalui surel yang Anda berikan.
+          </p>
+          <p className="mt-2 text-xs text-ink-3">
+            Jangan masukkan kata sandi, token, atau dokumen identitas. Bukti kepemilikan dapat diminta
+            setelah tiket dibuat.
           </p>
         </div>
 
-        <section>
-          <h2 className="text-xl font-bold text-ink-0 mb-3">Proses Penghapusan</h2>
-          <ol className="list-decimal pl-5 space-y-2">
-            <li>Kirimkan permintaan dengan informasi lengkap tentang konten yang dimaksud</li>
-            <li>Tim kami akan meninjau permintaan dalam waktu 3–5 hari kerja</li>
-            <li>Konten yang terbukti melanggar akan dihapus atau dimodifikasi</li>
-            <li>Anda akan menerima konfirmasi setelah tindakan diambil</li>
-          </ol>
+        <section aria-labelledby="formulir">
+          <h2 id="formulir" className="mb-3 text-xl font-bold text-ink-0">
+            Formulir laporan
+          </h2>
+          <TakedownForm kind={kind} />
         </section>
 
         <section>
-          <h2 className="text-xl font-bold text-ink-0 mb-3">Informasi yang Dibutuhkan</h2>
-          <form className="mt-4 space-y-4">
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3">Nama Anda / Organisasi</label>
-              <input type="text" className="input-field" placeholder="Nama lengkap atau nama organisasi" required />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3">Email Kontak</label>
-              <input type="email" className="input-field" placeholder="email@example.com" required />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3">URL Konten yang Dilaporkan</label>
-              <input type="url" className="input-field" placeholder="https://animevsbattle.com/character/..." required />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3">Deskripsi Pelanggaran</label>
-              <textarea className="input-field min-h-[120px] resize-y" placeholder="Jelaskan konten yang melanggar dan hak yang Anda miliki..." required />
-            </div>
-            <div>
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input type="checkbox" className="mt-1 h-4 w-4 rounded border-line bg-surface-2 text-accent-b" required />
-                <span className="text-xs text-ink-2">
-                  Saya menyatakan bahwa informasi dalam permintaan ini akurat dan saya berwenang 
-                  untuk bertindak atas nama pemegang hak cipta.
-                </span>
-              </label>
-            </div>
-            <button type="submit" className="btn-primary w-full sm:w-auto">
-              Kirim Permintaan Takedown
-            </button>
-          </form>
+          <h2 className="mb-3 text-xl font-bold text-ink-0">Proses penanganan</h2>
+          <ol className="list-decimal space-y-2 pl-5">
+            <li>Tiket dibuat dan masuk status <strong>new</strong>.</li>
+            <li>Operator memverifikasi kelengkapan dan kewenangan pelapor.</li>
+            <li>Konten yang terbukti melanggar disembunyikan atau sumbernya dinonaktifkan.</li>
+            <li>Operator mencatat keputusan dan menghubungi pelapor melalui surel.</li>
+          </ol>
+          <p className="mt-3 text-xs text-ink-3">
+            Target penanganan mengikuti runbook internal: verifikasi ≤ 3 hari kerja dan tindakan ≤ 7
+            hari kerja. Ini target operasional, bukan janji hukum.
+          </p>
+        </section>
+
+        <section>
+          <h2 className="mb-3 text-xl font-bold text-ink-0">Sebelum mengajukan</h2>
+          <p>
+            Setiap klaim statistik mencantumkan sumbernya. Jika masalahnya adalah data yang keliru,
+            lihat{' '}
+            <a href="/legal/methodology" className="text-accent-b underline underline-offset-2">
+              metodologi
+            </a>{' '}
+            dan panel “Jejak Sumber Data” pada halaman karakter. Untuk informasi tentang data pribadi,
+            baca{' '}
+            <a href="/legal/privacy" className="text-accent-b underline underline-offset-2">
+              kebijakan privasi
+            </a>
+            .
+          </p>
         </section>
       </div>
     </div>

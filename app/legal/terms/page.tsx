@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'Terms of Use',
+  title: 'Ketentuan Penggunaan',
   description: 'Ketentuan penggunaan layanan Anime VS Battle.',
   // Tanpa ini, halaman mewarisi canonical '/' dari layout dan audit Lighthouse
   // `canonical` gagal: "Points to the domain's root URL" (AC-22).
@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 export default function TermsPage() {
   return (
     <div className="mx-auto max-w-3xl animate-fade-in pb-16 pt-8">
-      <h1 className="text-3xl font-black text-ink-0 sm:text-5xl mb-8">Terms of Use</h1>
+      <h1 className="text-3xl font-black text-ink-0 sm:text-5xl mb-8">Ketentuan Penggunaan</h1>
       
       <div className="space-y-8 text-sm text-ink-2 leading-relaxed">
         <section>
@@ -46,7 +46,11 @@ export default function TermsPage() {
           </p>
           <p className="mt-2">
             Jika Anda adalah pemegang hak cipta dan ingin mengajukan permintaan penghapusan data, 
-            silakan kunjungi halaman <a href="/legal/takedown" className="text-accent-b underline underline-offset-2 hover:text-ink-0">Takedown Request</a>.
+            silakan kunjungi halaman <a href="/legal/takedown" className="text-accent-b underline underline-offset-2 hover:text-ink-0">permintaan takedown</a>.
+          </p>
+          <p className="mt-2">
+            Data pribadi diproses sesuai{' '}
+            <a href="/legal/privacy" className="text-accent-b underline underline-offset-2 hover:text-ink-0">kebijakan privasi</a>.
           </p>
         </section>
 
@@ -67,11 +71,15 @@ export default function TermsPage() {
             Setiap klaim statistik menyimpan referensi ke sumber aslinya (<code className="text-accent-b">source_url</code>, 
             <code className="text-accent-b">fetched_at</code>, <code className="text-accent-b">parser_version</code>).
           </p>
+          <p className="mt-2">
+            Status lisensi dan batas impor per sumber dijelaskan di{' '}
+            <a href="/legal/sources" className="text-accent-b underline underline-offset-2 hover:text-ink-0">halaman sumber &amp; lisensi</a>.
+          </p>
         </section>
 
         <div className="mt-12 rounded-xl border border-line-strong bg-surface-2 p-6">
           <p className="text-xs text-ink-3">
-            Terakhir diperbarui: Oktober 2026. Ketentuan ini dapat berubah sewaktu-waktu. 
+            Terakhir diperbarui: November 2026. Ketentuan ini dapat berubah sewaktu-waktu.
             Penggunaan Layanan setelah perubahan dianggap sebagai persetujuan terhadap ketentuan terbaru.
           </p>
         </div>

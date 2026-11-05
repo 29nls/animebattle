@@ -5,6 +5,8 @@ import { loadHomeMetrics } from '@/features/home/metrics.ts';
 import type { HomeCatalogCounts, PopularBattle, RecentImport } from '@/features/home/metrics.ts';
 import { isAdminAuthenticated } from '@/features/admin/session.ts';
 import { DatabaseUnavailable } from '@/components/database-unavailable.tsx';
+import { DataAttribution } from '@/components/data-attribution.tsx';
+import { loadAttribution } from '@/features/attribution/queries.ts';
 
 /**
  * Deskripsi ini tampil di hasil pencarian dan kartu pratinjau tautan, jadi ia
@@ -16,7 +18,7 @@ import { DatabaseUnavailable } from '@/components/database-unavailable.tsx';
  * `tests/web/home-metrics.test.ts` menjaga teks ini tetap bebas klaim jumlah.
  */
 export const metadata: Metadata = {
-  title: 'Anime VS Battle - Who Would Win?',
+  title: 'Anime VS Battle — Siapa yang Menang?',
   description:
     'Pilih dua karakter, pilih form-nya, dan lihat analisis statistik, hax, serta resistances dari simulasi yang dapat dipertanggungjawabkan.',
   alternates: { canonical: '/' },
@@ -48,7 +50,10 @@ const IMPORT_STATUS_LABEL: Record<RecentImport['status'], string> = {
 export default async function HomePage() {
   // Galat database tidak boleh menjatuhkan homepage: `attemptLoad` mengubahnya
   // menjadi panel jujur, bukan HTTP 500 dan bukan angka contoh.
-  const outcome = await attemptLoad(() => loadHomeMetrics());
+  const [outcome, attribution] = await Promise.all([
+    attemptLoad(() => loadHomeMetrics()),
+    loadAttribution(),
+  ]);
   const metrics = outcome.status === 'ok' ? outcome.data : null;
   const counts: HomeCatalogCounts | null = metrics?.counts ?? null;
   const recentImports: RecentImport[] = metrics?.recentImports ?? [];
@@ -78,7 +83,7 @@ export default async function HomePage() {
           <div className="animate-fade-in-up">
             <span className="mb-4 inline-flex items-center rounded-full border border-line-strong bg-surface-1/50 px-3 py-1 text-xs font-medium text-ink-2 backdrop-blur-md">
               <span className="mr-2 flex h-2 w-2 rounded-full bg-accent-a animate-pulse-glow" />
-              Battle Engine v1.0 Live
+              Engine pertarungan v1.0 aktif
             </span>
           </div>
 
@@ -143,7 +148,7 @@ export default async function HomePage() {
                     type="submit"
                     className="btn-battle w-full sm:w-auto h-[48px] flex items-center justify-center whitespace-nowrap"
                   >
-                    Simulate
+                    Simulasikan
                   </button>
                 </div>
                 
@@ -158,7 +163,7 @@ export default async function HomePage() {
         <div className="mb-4 flex items-baseline justify-between gap-4">
           <h2 className="text-lg font-bold text-ink-0">Katalog saat ini</h2>
           <p className="text-xs text-ink-3">
-            {counts ? 'angka langsung dari database, tanpa cache' : 'sumber: database'}
+            {counts ? 'dibaca dari database saat halaman dimuat' : 'sumber: database'}
           </p>
         </div>
 
@@ -201,7 +206,7 @@ export default async function HomePage() {
             <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-surface-2 border border-line-strong shadow-sm text-2xl">
               📚
             </div>
-            <h2 className="text-xl font-bold text-ink-0">Character Database</h2>
+            <h2 className="text-xl font-bold text-ink-0">Database Karakter</h2>
             <p className="mt-3 text-sm text-ink-2 leading-relaxed">
               Pencarian dijalankan di server dengan PostgreSQL full text dan trigram,
               dengan pembagian form (era/wujud) sebagai entitas kelas satu.{' '}
@@ -226,7 +231,7 @@ export default async function HomePage() {
             <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-surface-2 border border-line-strong shadow-sm text-2xl">
               ⚙️
             </div>
-            <h2 className="text-xl font-bold text-ink-0">Layered Battle Engine</h2>
+            <h2 className="text-xl font-bold text-ink-0">Engine Pertarungan Berlapis</h2>
             <p className="mt-3 text-sm text-ink-2 leading-relaxed">
               Bukan sekadar membandingkan angka besar. Engine kami mempertimbangkan hax, 
               resistensi, kondisi lingkungan, dan logika perlawanan untuk hasil deterministik.
@@ -287,11 +292,11 @@ export default async function HomePage() {
         )}
       </section>
 
-      {/* ─── Popular Battles (dari mv_battle_popularity) ─── */}
+      {/* ─── Pertarungan Populer (dari mv_battle_popularity) ─── */}
       <section className="animate-fade-in-up delay-500 mt-12 pb-8">
         <div className="mb-8 flex items-end justify-between">
           <div>
-            <h2 className="text-2xl font-bold text-ink-0">🔥 Popular Battles</h2>
+            <h2 className="text-2xl font-bold text-ink-0">🔥 Pertarungan Populer</h2>
             <p className="mt-1 text-sm text-ink-2">Matchup dengan simulasi tersimpan terbanyak</p>
           </div>
         </div>
@@ -331,6 +336,8 @@ export default async function HomePage() {
           </ul>
         )}
       </section>
+
+      <DataAttribution attribution={attribution} />
     </>
   );
 }

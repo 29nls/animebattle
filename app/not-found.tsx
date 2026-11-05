@@ -15,7 +15,7 @@ export default function NotFound() {
       </p>
       <div className="mt-8 flex gap-3">
         <Link href="/" className="btn-primary">
-          Kembali ke Home
+          Kembali ke beranda
         </Link>
         <Link href="/characters" className="rounded-lg border border-line bg-surface-1 px-5 py-2.5 text-sm font-medium text-ink-1 hover:bg-surface-2 transition-colors">
           Cari Karakter

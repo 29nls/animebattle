@@ -1,0 +1,42 @@
+# Alert job ingestion gagal atau macet.
+#
+# Query hanya membaca status ingestion_jobs. Job gagal dalam 24 jam, processing
+# > 15 menit, atau pending > 30 menit membuat job ini gagal; notifikasi
+# kegagalan GitHub adalah alert. ALERT_WEBHOOK_URL opsional.
+name: Ingestion health
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ingestion-health
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  queue:
+    name: Queue failed/stuck jobs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependensi
+        run: npm ci --ignore-scripts
+
+      - name: Periksa antrian ingestion
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        run: node scripts/check-ingestion-health.mjs

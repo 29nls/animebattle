@@ -41,6 +41,12 @@ jobs:
       - name: Install dependensi (npm ci)
         run: npm ci
 
+      # ── Gerbang audit environment publik ───────────────────────────────
+      # Nama saja; tidak membaca/mencetak nilai. Gagal bila ada NEXT_PUBLIC_*
+      # baru yang belum ditinjau atau berkas .env nyata ter-commit.
+      - name: Gerbang 0b · Audit environment publik
+        run: npm run audit:env
+
       # ── Gerbang audit: high/critical harus nol ───────────────────────────
       - name: Gerbang 0 · Audit dependensi (high/critical)
         run: npm audit --audit-level=high
@@ -177,3 +183,21 @@ jobs:
       # Membandingkan migrasi, relasi, jumlah baris, fungsi, dan policy.
       - name: Verifikasi restore identik dengan sumber
         run: npm run verify:restore
+
+  secret-scan:
+    name: Pemindaian secret (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout (riwayat penuh)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

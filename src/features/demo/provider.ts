@@ -67,7 +67,10 @@ export const DEMO_LABEL = 'Data demo (sintetis)';
 export const DEMO_NOTICE =
   'Halaman ini menampilkan dataset demo sintetis karena PostgreSQL belum dikonfigurasi. Semua nama, verse, dan angka dibuat untuk pengujian — bukan data kanon dan tidak dapat ditelusuri ke sumber (AC-09 belum berlaku di sini).';
 
-export function demoCharacterListItems(query?: string): CharacterListItem[] {
+export function demoCharacterListItems(
+  query?: string,
+  filters: { verseSlug?: string | null; media?: string | null } = {},
+): CharacterListItem[] {
   const q = (query ?? '').trim().toLowerCase();
   const matches = q === ''
     ? DEMO_CHARACTERS
@@ -79,19 +82,30 @@ export function demoCharacterListItems(query?: string): CharacterListItem[] {
       });
 
   return matches
+    .filter((character) => {
+      const verse = DEMO_VERSES.find((candidate) => candidate.slug === character.verse_slug);
+      if (filters.verseSlug && character.verse_slug !== filters.verseSlug) return false;
+      if (filters.media && verse?.media_type !== filters.media) return false;
+      return true;
+    })
     .slice()
     .sort((a, b) => b.popularity_score - a.popularity_score || a.name.localeCompare(b.name))
-    .map((character) => ({
-      id: `demo-character-${character.slug}`,
-      slug: character.slug,
-      name: character.name,
-      native_name: character.native_name,
-      image_url: null,
-      data_completeness: 'complete' as const,
-      popularity_score: character.popularity_score,
-      updated_at: DEMO_UPDATED_AT,
-      tier_code: demoDefaultForm(character.slug)?.side.tier.code ?? null,
-    }));
+    .map((character) => {
+      const verse = DEMO_VERSES.find((candidate) => candidate.slug === character.verse_slug);
+      return {
+        id: `demo-character-${character.slug}`,
+        slug: character.slug,
+        name: character.name,
+        native_name: character.native_name,
+        image_url: null,
+        data_completeness: 'complete' as const,
+        popularity_score: character.popularity_score,
+        updated_at: DEMO_UPDATED_AT,
+        tier_code: demoDefaultForm(character.slug)?.side.tier.code ?? null,
+        verse_slug: character.verse_slug,
+        verse_name: verse?.name ?? null,
+      };
+    });
 }
 
 export function demoVerseListItems(): VerseListItem[] {

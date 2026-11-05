@@ -8,10 +8,12 @@ import { isAdminAuthenticated } from '@/features/admin/session.ts';
 import { DatabaseUnavailable } from '@/components/database-unavailable.tsx';
 import { BattleResultView } from '@/components/battle-result-view.tsx';
 import { DEMO_LABEL, DEMO_NOTICE } from '@/features/demo/provider.ts';
+import { loadAttribution } from '@/features/attribution/queries.ts';
+import { DataAttribution } from '@/components/data-attribution.tsx';
 
 export const metadata: Metadata = {
-  title: 'Battle Result',
-  description: 'Hasil simulasi engine pertarungan.',
+  title: 'Hasil Pertarungan',
+  description: 'Hasil simulasi probabilistik engine pertarungan.',
   alternates: { canonical: '/versus/result' },
 };
 
@@ -33,14 +35,17 @@ export default async function VersusResultPage({ searchParams }: PageProps) {
   // Pilihan yang tidak sah datang sebagai `invalid` yang pesannya sudah jadi;
   // galat infrastruktur lewat `attemptLoad` sehingga halaman menjawab panel
   // jujur, bukan 500.
-  const outcome = await attemptLoad(() =>
-    loadBattleResult({
-      valueA,
-      valueB,
-      conditions: parseBattleConditionsFromQuery(params),
-      rule_set: defaultRuleSet(),
-    }),
-  );
+  const [outcome, attribution] = await Promise.all([
+    attemptLoad(() =>
+      loadBattleResult({
+        valueA,
+        valueB,
+        conditions: parseBattleConditionsFromQuery(params),
+        rule_set: defaultRuleSet(),
+      }),
+    ),
+    loadAttribution(),
+  ]);
 
   if (outcome.status === 'failed') {
     return (
@@ -60,7 +65,7 @@ export default async function VersusResultPage({ searchParams }: PageProps) {
           <h1 className="text-lg font-bold text-ink-0">Simulasi belum dapat dijalankan</h1>
           <p className="mt-2 leading-relaxed text-ink-1">{outcome.data.message}</p>
           <a href="/versus" className="btn-primary mt-6 inline-flex text-sm px-6">
-            Kembali ke Battle Builder
+            Kembali ke Pembuat Pertarungan
           </a>
         </div>
       </div>
@@ -70,18 +75,21 @@ export default async function VersusResultPage({ searchParams }: PageProps) {
   const { result, sideA, sideB, source } = outcome.data.bundle;
 
   return (
-    <BattleResultView
-      result={result}
-      sideA={sideA}
-      sideB={sideB}
-      demoSource={source === 'demo'}
-      demoLabel={DEMO_LABEL}
-      demoNotice={DEMO_NOTICE}
-      footer={
-        <a href="/versus" className="btn-primary text-xs !py-2 !px-4">
-          Simulasi lain
-        </a>
-      }
-    />
+    <div className="mx-auto max-w-4xl">
+      <BattleResultView
+        result={result}
+        sideA={sideA}
+        sideB={sideB}
+        demoSource={source === 'demo'}
+        demoLabel={DEMO_LABEL}
+        demoNotice={DEMO_NOTICE}
+        footer={
+          <a href="/versus" className="btn-primary text-xs !py-2 !px-4">
+            Simulasi lain
+          </a>
+        }
+      />
+      <DataAttribution attribution={attribution} />
+    </div>
   );
 }

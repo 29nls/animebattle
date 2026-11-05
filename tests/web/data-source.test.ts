@@ -33,6 +33,8 @@ const DATA_PAGES = [
   'app/verse/[slug]/page.tsx',
   'app/versus/page.tsx',
   'app/versus/result/page.tsx',
+  'app/versus/[...matchup]/page.tsx',
+  'app/compare/page.tsx',
 ];
 
 test('attemptLoad meneruskan keberhasilan apa adanya', async () => {

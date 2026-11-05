@@ -24,3 +24,10 @@ node_modules/
 
 # Lighthouse CI (artifact lokal)
 .lighthouseci/
+
+# Alat load test lokal (binary/platform-specific, tidak untuk repo)
+.tools/
+.loadtest-pg*/
+.loadtest-env.json
+.loadtest-*.json
+.loadtest-*.log

@@ -285,8 +285,8 @@ check(
 );
 check(
   'invarian: jumlah tabel + MV cocok dengan klaim PRD',
-  schemaTables.length === 41,
-  `didapat ${schemaTables.length}, PRD §22 menyebut 38 tabel + 3 MV`,
+  schemaTables.length === 42,
+  `didapat ${schemaTables.length}, PRD §22 menyebut 39 tabel + 3 MV`,
 );
 
 // ----------------------- invarian 4: daftar enum route = tipe engine

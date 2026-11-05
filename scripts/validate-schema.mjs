@@ -78,7 +78,7 @@ if (seedSql) {
 const tableCount = await db.query(
   `select count(*)::int as n from information_schema.tables
     where table_schema = 'animebattle' and table_type = 'BASE TABLE'`);
-const EXPECTED_TABLES = 38;  // dijaga agar sesuai klaim docs/PRD.md §22
+const EXPECTED_TABLES = 39;  // dijaga agar sesuai klaim docs/PRD.md §22
 if (tableCount.rows[0].n === EXPECTED_TABLES) {
   ok('jumlah tabel', `${tableCount.rows[0].n} tabel dasar (sesuai PRD §22)`);
 } else {

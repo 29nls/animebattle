@@ -6,6 +6,7 @@
 
 import { getSqlClient, DatabaseNotConfiguredError } from '@/lib/db/client.ts';
 import { summarizeDatabaseFailure } from '@/lib/db/diagnostics.ts';
+import { reportError } from '@/lib/observability/report-error.ts';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,7 +25,10 @@ export async function GET(): Promise<Response> {
     if (rows[0]?.ok === 1) {
       return Response.json({ status: 'ready', database: 'connected' }, { headers: NO_STORE });
     }
-    console.error('[api/health/ready] respons tak terduga dari database:', rows);
+    await reportError(new Error('health probe returned an unexpected row'), {
+      event: 'health.ready.unexpected_response',
+      route: '/api/health/ready',
+    });
     return Response.json(
       { status: 'unhealthy', database: 'unexpected_response' },
       { status: 500, headers: NO_STORE },
@@ -48,7 +52,11 @@ export async function GET(): Promise<Response> {
     // satunya cara mengetahuinya adalah mereproduksi koneksi dari mesin operator
     // (persis yang dibutuhkan insiden 2026-10-10, `SELF_SIGNED_CERT_IN_CHAIN`).
     const failure = summarizeDatabaseFailure(error);
-    console.error('[api/health/ready] database tidak dapat dihubungi:', failure);
+    await reportError(error, {
+      event: 'health.ready.database_unavailable',
+      route: '/api/health/ready',
+      reason: failure.category,
+    });
     return Response.json(
       {
         status: 'unhealthy',

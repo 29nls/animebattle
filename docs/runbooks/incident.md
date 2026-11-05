@@ -1,5 +1,7 @@
 # Runbook — Insiden Operasional
 
+**Observability (2026-11-05):** log server JSON satu baris dengan redaksi (`LOG_LEVEL`), Sentry server-only opsional (`SENTRY_DSN` kosong = no-op), probe `/api/health/ready` tiap 10 menit (`uptime.yml`), dan pemeriksaan antrean ingestion tiap 15 menit (`ingestion-health.yml`); workflow alert belum pernah diamati berjalan.
+
 **Status:** aktif. Langkah SQL pada runbook ini diuji di PGlite lokal dengan
 `docs/schema.sql` + `docs/seed.sql` (2026-10-09); pemeriksaan HTTP diuji terhadap
 rute sungguhan lokal (2026-10-09). **Pemeriksaan HTTP §1/§2/§3.2(c) sudah
@@ -49,6 +51,19 @@ paling umum**: proses web sehat, database mati. Panel admin pada kondisi ini
 menampilkan "Database tidak dapat dihubungi; tidak ada perubahan yang
 dilakukan." (fail-closed) — keadaan itu sudah benar, jangan "diperbaiki" dengan
 menonaktifkan guard.
+
+### 1.1 Log dan alert
+
+Log server memakai JSON satu baris; rahasia (password, token, DSN, surel, kredensial di URL) diredaksi sebelum ditulis. Ambang level diatur `LOG_LEVEL` (default `info`). Cari `event` berikut lebih dulu, bukan menebak dari pesan:
+
+| Event | Arti | Tindakan |
+|---|---|---|
+| `request.failed` | Route publik gagal; berisi `route`, `status`, `reason` | Mulai dari §2 |
+| `rate_limit.unavailable` | Limiter DB gagal dan permintaan diteruskan (fail-open) | Periksa DB; ini bukan bukti tidak ada abuse |
+| `ingestion.job_failed` / `ingestion.job_completed` | Hasil satu job | Bandingkan dengan query §3.1 |
+| `legal.report_insert_failed` | Tiket legal gagal disimpan | Periksa DB; jangan minta pelapor mengulang tanpa memastikan |
+
+Sentry aktif hanya bila `SENTRY_DSN` diisi. Tanpa DSN, `reportError` menjadi no-op — jangan menganggap "tidak ada event Sentry" berarti tidak ada error. Alert uptime/ingestion adalah **GitHub Actions**, bukan monitor 24/7: jadwal dapat tertunda beberapa menit, dan job hanya berjalan bila `DEPLOY_URL`/`DATABASE_URL` serta (opsional) `ALERT_WEBHOOK_URL` tersedia di Secrets.
 
 ## 2. Triase: web, DB, atau worker
 
@@ -268,8 +283,13 @@ wajib diikuti redeploy. Tidak ada rotasi otomatis.
 4. **Metrik 5xx/p95 bergantung APM eksternal** (PRD: Vercel Analytics + Sentry +
    slow query log). Tanpa APM terpasang, trigger K3/K7 hanya bisa diukur dari
    log mentah — catat hal ini saat melaporkan status insiden.
-5. **Tidak ada alerting bawaan di repo ini.** Pemicu di atas dideteksi oleh
-   uptime monitor yang dikonfigurasi di platform, bukan oleh kode kita.
+5. **Alert ada sebagai workflow, belum sebagai layanan 24/7.**
+   `uptime.yml` dan `ingestion-health.yml` memakai jadwal GitHub Actions yang
+   dapat tertunda; keduanya butuh Secrets (`DEPLOY_URL`, `DATABASE_URL`, dan
+   opsional `ALERT_WEBHOOK_URL`). Belum ada run yang diamati pada sesi ini, jadi
+   jangan mengklaim alert sudah aktif sampai Actions menunjukkannya.
+6. **Sentry tanpa DSN adalah no-op.** Ketiadaan event bukan bukti tidak ada
+   error; log platform tetap sumber utama sampai DSN diisi dan deployment ulang.
 
 ## 7. Verifikasi setelah insiden selesai
 

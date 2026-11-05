@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import type { Route } from 'next';
 import type { ReactNode } from 'react';
 
 import { requireAdminPage } from '@/features/admin/session.ts';
@@ -13,6 +14,7 @@ export const dynamic = 'force-dynamic';
 export default async function AdminDashboardLayout({ children }: { children: ReactNode }) {
   const identity = await requireAdminPage('viewer');
   const canReview = identity.effectiveRole === 'editor' || identity.effectiveRole === 'admin';
+  const canSeeLegalReports = identity.effectiveRole === 'admin';
 
   return (
     <div className="flex flex-col gap-6 lg:flex-row lg:gap-8">
@@ -59,6 +61,16 @@ export default async function AdminDashboardLayout({ children }: { children: Rea
                   className="flex items-center gap-2.5 rounded-lg px-3 py-2 font-medium text-ink-1 transition-colors hover:bg-surface-2 hover:text-ink-0"
                 >
                   <span className="text-base">🧾</span> Audit Log
+                </Link>
+              </li>
+            ) : null}
+            {canSeeLegalReports ? (
+              <li>
+                <Link
+                  href={'/admin/reports' as Route}
+                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 font-medium text-ink-1 transition-colors hover:bg-surface-2 hover:text-ink-0"
+                >
+                  <span className="text-base">⚖️</span> Laporan Legal
                 </Link>
               </li>
             ) : null}

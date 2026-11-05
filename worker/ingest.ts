@@ -20,6 +20,9 @@
  */
 
 import { getSqlClient } from '../src/lib/db/client.ts';
+import { logEvent } from '../src/lib/observability/logger.ts';
+import { reportError } from '../src/lib/observability/report-error.ts';
+import { initErrorTracking } from '../src/lib/observability/sentry.ts';
 import {
   claimNextPendingJob,
   markJobCompleted,
@@ -28,10 +31,12 @@ import {
 import { describeJobFailure, recordJobFailure, runIngestionJob } from '../src/services/ingestion/pipeline.ts';
 
 async function main(): Promise<number> {
+  await initErrorTracking();
   const sql = getSqlClient();
 
   const job = await claimNextPendingJob(sql);
   if (!job) {
+    logEvent('info', 'ingestion.idle');
     process.stdout.write('tidak ada job pending\n');
     return 0;
   }
@@ -52,12 +57,30 @@ async function main(): Promise<number> {
     process.stdout.write(
       `job ${job.job_id} selesai${outcome.dry_run ? ' (dry-run)' : ''}: ${JSON.stringify(outcome)}\n`,
     );
+    logEvent('info', 'ingestion.completed', {
+      job_id: job.job_id,
+      dry_run: outcome.dry_run,
+      records_found: outcome.records_found,
+      records_created: outcome.records_created,
+      records_updated: outcome.records_updated,
+      records_failed: outcome.records_failed,
+    });
     return 0;
   } catch (error) {
     const info = describeJobFailure(error);
+    logEvent('warn', 'ingestion.job_failed', {
+      job_id: job.job_id,
+      error_type: info.error_type,
+      terminal: info.terminal,
+      retry: job.retry_count + 1,
+    });
     try {
       await recordJobFailure(sql, job.job_id, info, job.retry_count + 1);
     } catch (recordError) {
+      logEvent('warn', 'ingestion.error_record_failed', {
+        job_id: job.job_id,
+        error: recordError,
+      });
       process.stderr.write(
         `job ${job.job_id}: gagal mencatat ingestion_errors: ${recordError instanceof Error ? recordError.message : String(recordError)}\n`,
       );
@@ -73,6 +96,13 @@ async function main(): Promise<number> {
     process.stderr.write(
       `job ${job.job_id} gagal (${after.status}, ${info.error_type}, percobaan ${after.retry_count}): ${info.message}\n`,
     );
+    if (after.status === 'failed') {
+      await reportError(error, {
+        event: 'ingestion.job_failed_terminal',
+        job_id: job.job_id,
+        error_type: info.error_type,
+      });
+    }
     // Status keluar 1 hanya untuk kegagalan terminal; kegagalan yang masih punya
     // jatah retry tidak boleh membuat supervisor menganggap job ini mati.
     return after.status === 'failed' ? 1 : 0;

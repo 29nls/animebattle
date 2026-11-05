@@ -79,4 +79,6 @@ export const SMALL_TABLES = {
   mv_battle_popularity: 'Agregat matchup populer; dibatasi jumlah matchup yang melewati ambang.',
   rate_limit_windows:
     'Satu baris per (bucket, jendela waktu); dibersihkan oportunistik dan hanya diakses lewat primary key oleh fungsi security definer.',
+  legal_reports:
+    'Tiket laporan legal; volume rendah, tetapi memuat PII sehingga hanya dibaca admin lewat kolom eksplisit.',
 };

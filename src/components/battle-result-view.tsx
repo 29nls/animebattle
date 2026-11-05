@@ -1,15 +1,15 @@
-import type { BattleResult, SideData } from '../services/battle/types.ts';
+import type { BattleResult, DecisiveEdge, SideData } from '../services/battle/types.ts';
+import { metricLabel } from '../lib/metric-label.ts';
 
 /**
  * Tampilan hasil pertarungan, dipakai dua rute:
  *
  * - `/versus/result` — form GET, URL berisi `form_a`/`form_b` (cara lama).
- * - `/versus/[matchup]` — permalink kanonik yang dapat dibagikan.
+ * - `/versus/[...matchup]` — permalink kanonik yang dapat dibagikan.
  *
- * Dipisahkan dari halaman supaya keduanya tidak menyalin 300 baris JSX dan
- * perlahan berbeda (mis. satu halaman menampilkan rujukan reasoning, yang lain
- * tidak). Semua angka datang dari `result`; komponen ini tidak menghitung apa
- * pun selain lebar bar dan format persen.
+ * Dipisahkan dari halaman supaya keduanya tidak menyalin JSX yang sama dan
+ * perlahan berbeda. Semua angka datang dari `result`; komponen ini tidak
+ * menghitung apa pun selain lebar bar dan format persen.
  */
 
 function sideName(side: SideData): string {
@@ -17,9 +17,9 @@ function sideName(side: SideData): string {
 }
 
 /**
- * Label form untuk banner. Era yang sama dengan nama form tidak diulang —
- * sebagian dataset memakai nama arc sebagai `era` sekaligus `name`
- * ("Post-Balding — Post-Balding"), dan pengulangan itu tidak memberi informasi.
+ * Label form untuk banner. Era yang sama dengan nama form tidak diulang — sebagian
+ * dataset memakai nama arc sebagai `era` sekaligus `name` ("Post-Balding —
+ * Post-Balding"), dan pengulangan itu tidak memberi informasi.
  */
 export function sideFormLabel(side: SideData): string {
   const era = side.form.era?.trim();
@@ -27,14 +27,18 @@ export function sideFormLabel(side: SideData): string {
   return `${side.form.name}${distinctEra ? ` — ${distinctEra}` : ''}`;
 }
 
-/** `metric_slug` → `Metric Slug` untuk tampilan breakdown. */
-export function metricLabel(metric: string): string {
-  return metric.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
 export function percent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
+
+const EDGE_STATUS: Record<DecisiveEdge['status'], string> = {
+  effective: 'Efektif',
+  bypasses: 'Menembus resistensi',
+  reduced: 'Diredam',
+  blocked: 'Ditahan',
+  negated: 'Dinegasikan',
+  inactive: 'Tidak aktif',
+};
 
 /** Satu blok reasoning dengan rujukan terstruktur (AC-34 tampil ke pengguna). */
 function ReasoningBlock({
@@ -50,14 +54,14 @@ function ReasoningBlock({
 }) {
   return (
     <div>
-      <h4 className="font-bold text-ink-0 mb-2">{title}</h4>
-      <p className={`leading-relaxed border-l-2 ${accent} pl-4`}>{text}</p>
+      <h4 className="mb-2 font-bold text-ink-0">{title}</h4>
+      <p className={`border-l-2 pl-4 leading-relaxed ${accent}`}>{text}</p>
       {refs.length > 0 && (
-        <ul className="mt-2 flex flex-wrap gap-1.5 pl-4">
+        <ul aria-label={`Rujukan ${title}`} className="mt-2 flex flex-wrap gap-1.5 pl-4">
           {refs.map((ref) => (
             <li
               key={ref}
-              className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[0.6rem] text-ink-3 border border-line"
+              className="rounded border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-[0.6rem] text-ink-3"
             >
               {ref}
             </li>
@@ -66,6 +70,12 @@ function ReasoningBlock({
       )}
     </div>
   );
+}
+
+function winnerLabel(result: BattleResult): string {
+  if (result.winner === 'draw') return 'Seri';
+  if (result.winner === 'insufficient_data') return 'Data tidak cukup';
+  return result.winner === 'a' ? 'Sisi A' : 'Sisi B';
 }
 
 export function BattleResultView({
@@ -86,14 +96,14 @@ export function BattleResultView({
   /** Tautan/aksi tambahan di bawah halaman (mis. tombol simulasi lain). */
   footer?: React.ReactNode;
 }) {
-  const winnerName =
-    result.winner === 'a'
-      ? sideName(sideA)
-      : result.winner === 'b'
-        ? sideName(sideB)
-        : 'Tidak ada pemenang';
-
+  const decided = result.winner === 'a' || result.winner === 'b';
+  const winnerName = decided
+    ? sideName(result.winner === 'a' ? sideA : sideB)
+    : result.winner === 'draw'
+      ? 'Seri'
+      : 'Tidak ada pemenang';
   const probabilityA = result.win_probability.a * 100;
+  const confidence = result.confidence * 100;
 
   return (
     <div className="animate-fade-in">
@@ -103,9 +113,9 @@ export function BattleResultView({
         </div>
       )}
 
-      {/* ─── Winner Banner ─── */}
+      {/* ─── Banner pemenang ─── */}
       <div
-        className={`relative overflow-hidden rounded-2xl border p-6 sm:p-10 text-center shadow-card ${
+        className={`relative overflow-hidden rounded-2xl border p-6 text-center shadow-card sm:p-10 ${
           result.winner === 'a'
             ? 'border-accent-a/50 bg-accent-a/5'
             : result.winner === 'b'
@@ -113,54 +123,71 @@ export function BattleResultView({
               : 'border-line-strong bg-surface-1'
         }`}
       >
-        <h2 className="text-sm font-bold uppercase tracking-widest text-ink-3 mb-2">Battle Concluded</h2>
+        <h2 className="mb-2 text-sm font-bold uppercase tracking-widest text-ink-3">
+          Pertarungan selesai
+        </h2>
 
-        <div className="flex flex-col items-center justify-center gap-4 sm:flex-row sm:gap-8 my-6">
+        <div className="my-6 flex flex-col items-center justify-center gap-4 sm:flex-row sm:gap-8">
           <div className={`text-center ${result.winner === 'a' ? 'text-accent-a' : 'text-ink-2 opacity-60'}`}>
-            <p className="text-2xl sm:text-4xl font-black drop-shadow-md">{sideName(sideA)}</p>
+            <p className="text-2xl font-black drop-shadow-md sm:text-4xl">{sideName(sideA)}</p>
             <p className="mt-1 text-xs text-ink-3">{sideFormLabel(sideA)}</p>
           </div>
 
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-surface-2 border border-line-strong">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface-2">
             <span className="text-xs font-bold text-ink-3">VS</span>
           </div>
 
           <div className={`text-center ${result.winner === 'b' ? 'text-accent-b' : 'text-ink-2 opacity-60'}`}>
-            <p className="text-2xl sm:text-4xl font-black drop-shadow-md">{sideName(sideB)}</p>
+            <p className="text-2xl font-black drop-shadow-md sm:text-4xl">{sideName(sideB)}</p>
             <p className="mt-1 text-xs text-ink-3">{sideFormLabel(sideB)}</p>
           </div>
         </div>
 
         <div className="mt-8 flex flex-col items-center gap-2">
-          <p className="text-base font-medium text-ink-1">
+          <p className="text-base font-medium text-ink-1" aria-live="polite">
             {result.winner === 'insufficient_data' ? (
               <strong className="text-xl text-ink-0">Data tidak cukup untuk menentukan pemenang</strong>
+            ) : result.winner === 'draw' ? (
+              <strong className="text-2xl text-ink-0">Seri — tidak ada pihak yang menang</strong>
             ) : (
               <>
-                Winner: <strong className="text-2xl text-ink-0">{winnerName}</strong>
+                Pemenang simulasi:{' '}
+                <strong className="text-2xl text-ink-0">{winnerName}</strong>
               </>
             )}
           </p>
 
-          <div className="flex items-center gap-4 w-full max-w-sm mt-2">
+          <div className="mt-2 flex w-full max-w-sm items-center gap-4">
             <span className="text-xs font-bold text-accent-a">{percent(result.win_probability.a)}</span>
-            <div className="prob-bar-wrapper flex-1 border border-line">
+            <div
+              className="prob-bar-wrapper flex-1 border border-line"
+              role="img"
+              aria-label={`Peluang menang ${sideName(sideA)} ${percent(result.win_probability.a)}, ${sideName(sideB)} ${percent(result.win_probability.b)}`}
+            >
               <div className="prob-bar-a" style={{ width: `${probabilityA}%` }} />
               <div className="prob-bar-b" style={{ width: `${100 - probabilityA}%` }} />
             </div>
             <span className="text-xs font-bold text-accent-b">{percent(result.win_probability.b)}</span>
           </div>
-          <p className="text-[0.65rem] text-ink-3 uppercase tracking-wider mt-2">Win Probability</p>
+          <p className="mt-2 text-[0.65rem] uppercase tracking-wider text-ink-3">
+            Peluang menang (bukan kepastian)
+          </p>
 
           <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-[0.65rem] font-bold uppercase tracking-wider">
-            <span className={`rounded px-2 py-0.5 border ${result.low_confidence ? 'border-accent-flag/40 bg-accent-flag/10 text-accent-flag' : 'border-line bg-surface-2 text-ink-2'}`}>
-              Confidence {percent(result.confidence)}
+            <span
+              className={`rounded border px-2 py-0.5 ${
+                result.low_confidence
+                  ? 'border-accent-flag/40 bg-accent-flag/10 text-accent-flag'
+                  : 'border-line bg-surface-2 text-ink-2'
+              }`}
+            >
+              Keyakinan {percent(result.confidence)}
             </span>
             <span className="rounded border border-line bg-surface-2 px-2 py-0.5 text-ink-2">
-              Difficulty {result.difficulty}
+              Kesulitan {result.difficulty}
             </span>
             <span className="rounded border border-line bg-surface-2 px-2 py-0.5 text-ink-2">
-              Length {result.battle_length}
+              Durasi {result.battle_length}
             </span>
             <span className="rounded border border-line bg-surface-2 px-2 py-0.5 font-mono text-ink-3 normal-case">
               {result.rule_set_version}
@@ -171,20 +198,21 @@ export function BattleResultView({
 
       {result.low_confidence && (
         <div className="mt-6 rounded-lg border border-accent-flag/30 bg-accent-flag/10 p-3 text-sm text-accent-flag">
-          Confidence berada di bawah ambang {percent(0.45)} — hasil ini memuat asumsi yang perlu dibaca sebelum dipakai.
+          Keyakinan berada di bawah ambang {percent(0.45)} — hasil ini memuat asumsi yang perlu dibaca
+          sebelum dipakai.
         </div>
       )}
 
       <div className="mt-8 grid gap-6 lg:grid-cols-2">
-        {/* ─── Reasoning (Deterministik) ─── */}
-        <section className="rounded-2xl border border-line bg-surface-1 p-6 sm:p-8">
-          <h3 className="flex items-center gap-2 text-xl font-bold text-ink-0 mb-6">
-            <span className="text-accent-win">📝</span> Engine Narrative
+        {/* ─── Narasi engine ─── */}
+        <section aria-labelledby="narasi-engine" className="rounded-2xl border border-line bg-surface-1 p-6 sm:p-8">
+          <h3 id="narasi-engine" className="mb-6 flex items-center gap-2 text-xl font-bold text-ink-0">
+            <span aria-hidden="true" className="text-accent-win">📝</span> Narasi Engine
           </h3>
 
           <div className="space-y-6 text-sm text-ink-1">
             <ReasoningBlock
-              title="Primary Reason"
+              title="Alasan utama"
               text={result.reasoning.primary.text}
               refs={result.reasoning.primary.refs}
               accent="border-accent-a"
@@ -192,8 +220,8 @@ export function BattleResultView({
 
             {result.reasoning.secondary.length > 0 && (
               <div>
-                <h4 className="font-bold text-ink-0 mb-2">Secondary Factors</h4>
-                <ul className="list-disc pl-5 space-y-2 text-ink-2">
+                <h4 className="mb-2 font-bold text-ink-0">Faktor pendukung</h4>
+                <ul className="list-disc space-y-2 pl-5 text-ink-2">
                   {result.reasoning.secondary.map((item) => (
                     <li key={item.text}>
                       {item.text}
@@ -207,61 +235,82 @@ export function BattleResultView({
             )}
 
             <ReasoningBlock
-              title="Critical Counter"
+              title="Penyeimbang kritis"
               text={result.reasoning.critical_counter.text}
               refs={result.reasoning.critical_counter.refs}
               accent="border-accent-flag"
             />
 
-            <div className="rounded-xl bg-surface-2 p-4 border border-line">
-              <h4 className="font-bold text-ink-0 mb-2">Potential Scenario</h4>
-              <p className="text-ink-2 italic">{result.reasoning.scenario.text}</p>
+            <div className="rounded-xl border border-line bg-surface-2 p-4">
+              <h4 className="mb-2 font-bold text-ink-0">Skenario potensial</h4>
+              <p className="italic text-ink-2">{result.reasoning.scenario.text}</p>
               {result.reasoning.scenario.refs.length > 0 && (
-                <p className="mt-2 font-mono text-[0.6rem] text-ink-3">{result.reasoning.scenario.refs.join(', ')}</p>
+                <p className="mt-2 font-mono text-[0.6rem] text-ink-3">
+                  {result.reasoning.scenario.refs.join(', ')}
+                </p>
               )}
             </div>
           </div>
         </section>
 
-        {/* ─── Score Breakdown ─── */}
-        <section className="rounded-2xl border border-line bg-surface-1 p-6 sm:p-8">
-          <h3 className="flex items-center gap-2 text-xl font-bold text-ink-0 mb-6">
-            <span className="text-accent-b">📈</span> Score Breakdown
+        {/* ─── Rincian skor ─── */}
+        <section aria-labelledby="rincian-skor" className="rounded-2xl border border-line bg-surface-1 p-6 sm:p-8">
+          <h3 id="rincian-skor" className="mb-2 flex items-center gap-2 text-xl font-bold text-ink-0">
+            <span aria-hidden="true" className="text-accent-b">📈</span> Rincian Skor
           </h3>
+          <p className="mb-6 flex flex-wrap items-center gap-4 text-[0.65rem] text-ink-3">
+            <span className="inline-flex items-center gap-1.5">
+              <span aria-hidden="true" className="h-2 w-3 rounded-sm bg-accent-a/80" /> {sideName(sideA)}
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span aria-hidden="true" className="h-2 w-3 rounded-sm bg-accent-b/80" /> {sideName(sideB)}
+            </span>
+            <span>Bar menunjukkan porsi relatif, bukan nilai mentah.</span>
+          </p>
 
           <div className="space-y-4">
             {result.score_breakdown
               .filter((entry) => entry.weight > 0)
               .map((entry) => {
                 const aShare = ((entry.a_value + 1) / 2) * 100;
+                const label = metricLabel(entry.metric);
                 return (
-                  <div key={entry.metric} className="group">
-                    <div className="flex justify-between text-xs font-bold text-ink-2 mb-1">
-                      <span>{metricLabel(entry.metric)}</span>
+                  <div key={entry.metric}>
+                    <div className="mb-1 flex justify-between gap-3 text-xs font-bold text-ink-2">
+                      <span>{label}</span>
                       <span className="text-ink-3">Bobot {entry.weight}</span>
                     </div>
-                    <div className="flex h-6 rounded border border-line bg-surface-2 overflow-hidden">
-                      <div className="bg-accent-a/80 h-full" style={{ width: `${aShare}%` }} />
-                      <div className="bg-accent-b/80 h-full" style={{ width: `${100 - aShare}%` }} />
+                    <div
+                      className="flex h-6 overflow-hidden rounded border border-line bg-surface-2"
+                      role="img"
+                      aria-label={`${label}: ${sideName(sideA)} ${aShare.toFixed(0)} persen, ${sideName(sideB)} ${(100 - aShare).toFixed(0)} persen`}
+                    >
+                      <div className="h-full bg-accent-a/80" style={{ width: `${aShare}%` }} />
+                      <div className="h-full bg-accent-b/80" style={{ width: `${100 - aShare}%` }} />
                     </div>
+                    <p className="mt-1 flex justify-between text-[0.65rem] text-ink-3">
+                      <span>{aShare.toFixed(0)}%</span>
+                      <span>{(100 - aShare).toFixed(0)}%</span>
+                    </p>
                     {entry.note && <p className="mt-1 text-[0.65rem] text-ink-3">{entry.note}</p>}
                   </div>
                 );
               })}
 
             <div className="mt-6 border-t border-line/50 pt-4 text-xs text-ink-3">
-              S = {result.weighted_score.toFixed(3)} (sebelum transformasi logistik, k = 2,2) · engine {result.engine_version} ·
-              hash <span className="font-mono">{result.input_hash.slice(0, 12)}</span>
+              S = {result.weighted_score.toFixed(3)} (sebelum transformasi logistik, k = 2,2) · engine{' '}
+              {result.engine_version} · hash{' '}
+              <span className="font-mono">{result.input_hash.slice(0, 12)}</span>
             </div>
           </div>
         </section>
       </div>
 
-      {/* ─── Decisive Edges ─── */}
+      {/* ─── Keunggulan penentu ─── */}
       {result.decisive_edges.length > 0 && (
-        <section className="mt-6 rounded-2xl border border-line bg-surface-1 p-6 sm:p-8">
-          <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-ink-0">
-            <span>⚡</span> Decisive Edges
+        <section aria-labelledby="keunggulan-penentu" className="mt-6 rounded-2xl border border-line bg-surface-1 p-6 sm:p-8">
+          <h3 id="keunggulan-penentu" className="mb-6 flex items-center gap-2 text-xl font-bold text-ink-0">
+            <span aria-hidden="true">⚡</span> Keunggulan Penentu
           </h3>
           <div className="grid gap-3 sm:grid-cols-2">
             {result.decisive_edges.map((edge) => (
@@ -275,12 +324,12 @@ export function BattleResultView({
                         : 'bg-accent-flag/10 text-accent-flag'
                     }`}
                   >
-                    {edge.status}
+                    {EDGE_STATUS[edge.status] ?? edge.status}
                   </span>
                 </div>
                 <p className="mt-2 text-xs text-ink-2">
                   Sisi {edge.side.toUpperCase()} · efektivitas {percent(edge.effectiveness)}
-                  {edge.satisfies_win_condition && ' · memenuhi win condition'}
+                  {edge.satisfies_win_condition && ' · memenuhi kondisi menang'}
                 </p>
                 {edge.blocked_by && (
                   <p className="mt-1 text-xs text-ink-3">
@@ -294,12 +343,12 @@ export function BattleResultView({
         </section>
       )}
 
-      {/* ─── Limitations & Assumptions ─── */}
+      {/* ─── Keterbatasan & asumsi ─── */}
       <section className="mt-6 grid gap-6 lg:grid-cols-2">
         <div className="rounded-2xl border border-line bg-surface-1 p-6">
-          <h3 className="text-sm font-bold uppercase tracking-wider text-ink-3 mb-3">Limitations</h3>
+          <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-ink-3">Keterbatasan</h3>
           {result.limitations.length > 0 ? (
-            <ul className="list-disc pl-5 space-y-1 text-sm text-ink-2">
+            <ul className="list-disc space-y-1 pl-5 text-sm text-ink-2">
               {result.limitations.map((item) => (
                 <li key={item}>{item}</li>
               ))}
@@ -309,9 +358,9 @@ export function BattleResultView({
           )}
         </div>
         <div className="rounded-2xl border border-line bg-surface-1 p-6">
-          <h3 className="text-sm font-bold uppercase tracking-wider text-ink-3 mb-3">Assumptions</h3>
+          <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-ink-3">Asumsi</h3>
           {result.assumptions.length > 0 ? (
-            <ul className="list-disc pl-5 space-y-1 text-sm text-ink-2">
+            <ul className="list-disc space-y-1 pl-5 text-sm text-ink-2">
               {result.assumptions.map((item) => (
                 <li key={item}>{item}</li>
               ))}
@@ -330,6 +379,7 @@ export function BattleResultView({
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3 text-xs text-ink-3">
         <span>
           battle_id <span className="font-mono">{result.battle_id.slice(0, 16)}</span>
+          {decided && <> · pemenang simulasi {winnerLabel(result).toLowerCase()}</>}
         </span>
         {footer}
       </div>

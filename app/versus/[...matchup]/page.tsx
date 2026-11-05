@@ -9,6 +9,8 @@ import { attemptLoad } from '@/features/data-source.ts';
 import { isAdminAuthenticated } from '@/features/admin/session.ts';
 import { DatabaseUnavailable } from '@/components/database-unavailable.tsx';
 import { BattleResultView } from '@/components/battle-result-view.tsx';
+import { DataAttribution } from '@/components/data-attribution.tsx';
+import { loadAttribution } from '@/features/attribution/queries.ts';
 import { DEMO_LABEL, DEMO_NOTICE } from '@/features/demo/provider.ts';
 import { siteUrl } from '@/lib/site-url.ts';
 import type { BattleConditions, SideData } from '@/services/battle/types.ts';
@@ -35,12 +37,27 @@ function sideTitle(selection: { characterSlug: string; formSlug: string }): stri
   return `${pretty(selection.characterSlug)} (${pretty(selection.formSlug)})`;
 }
 
+const MODE_LABELS: Record<string, string> = {
+  standard: 'mode standar',
+  in_character: 'sesuai karakter',
+  bloodlusted: 'tanpa ragu',
+  random_encounter: 'pertemuan acak',
+};
+
+const WIN_LABELS: Record<string, string> = {
+  any: 'apa pun',
+  death: 'kematian/kehancuran',
+  ko: 'knockout',
+  incapacitation: 'tidak mampu bertarung',
+  bfr: 'keluar dari medan',
+};
+
 function conditionsLabel(conditions: BattleConditions): string {
   const parts = [
-    conditions.mode.replace(/_/g, ' '),
+    MODE_LABELS[conditions.mode] ?? conditions.mode.replace(/_/g, ' '),
     conditions.battlefield === 'neutral' ? null : `medan ${conditions.battlefield}`,
     conditions.speed_equalized ? 'kecepatan disetarakan' : null,
-    `kondisi menang ${conditions.win_condition}`,
+    `kondisi menang ${WIN_LABELS[conditions.win_condition] ?? conditions.win_condition}`,
   ].filter(Boolean);
   return parts.join(', ');
 }
@@ -164,9 +181,10 @@ export default async function MatchupPage({ params, searchParams }: PageProps & 
   const valueA = `${parsed.sideA.characterSlug}/${parsed.sideA.formSlug}`;
   const valueB = `${parsed.sideB.characterSlug}/${parsed.sideB.formSlug}`;
 
-  const outcome = await attemptLoad(() =>
-    loadBattleResult({ valueA, valueB, conditions, rule_set: defaultRuleSet() }),
-  );
+  const [outcome, attribution] = await Promise.all([
+    attemptLoad(() => loadBattleResult({ valueA, valueB, conditions, rule_set: defaultRuleSet() })),
+    loadAttribution(),
+  ]);
 
   if (outcome.status === 'failed') {
     return (
@@ -186,10 +204,18 @@ export default async function MatchupPage({ params, searchParams }: PageProps & 
       ? sideA.character.name
       : result.winner === 'b'
         ? sideB.character.name
-        : 'Tidak ada pemenang';
+        : result.winner === 'draw'
+          ? 'Seri'
+          : 'Data tidak cukup';
 
   const title = `${sideA.character.name} (${sideA.form.name}) vs ${sideB.character.name} (${sideB.form.name})`;
-  const description = `Simulasi ${title}: ${winnerName === 'Tidak ada pemenang' ? 'tanpa pemenang' : `${winnerName} menang`} dengan probabilitas ${(result.win_probability.a * 100).toFixed(1)}% vs ${(result.win_probability.b * 100).toFixed(1)}%.`;
+  const outcomeLabel =
+    result.winner === 'draw'
+      ? 'seri'
+      : result.winner === 'insufficient_data'
+        ? 'data tidak cukup untuk menentukan pemenang'
+        : `${winnerName} menang`;
+  const description = `Simulasi ${title}: ${outcomeLabel} dengan probabilitas ${(result.win_probability.a * 100).toFixed(1)}% vs ${(result.win_probability.b * 100).toFixed(1)}%.`;
 
   return (
     <>
@@ -229,6 +255,7 @@ export default async function MatchupPage({ params, searchParams }: PageProps & 
           </a>
         }
       />
+      <DataAttribution attribution={attribution} />
     </>
   );
 }

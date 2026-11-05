@@ -6,6 +6,7 @@ import { attemptLoad } from '@/features/data-source.ts';
 import { isAdminAuthenticated } from '@/features/admin/session.ts';
 import { DatabaseUnavailable } from '@/components/database-unavailable.tsx';
 import { DEMO_LABEL, DEMO_NOTICE } from '@/features/demo/provider.ts';
+import { METRIC_ORDER, metricLabel } from '@/lib/metric-label.ts';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,14 +28,11 @@ export async function generateMetadata({
 
   return {
     title: name,
-    description: bundle?.character.description ?? `Statistik, abilities, resistances, dan form dari ${name}.`,
+    description: bundle?.character.description ?? `Statistik, kemampuan, resistensi, dan form dari ${name}.`,
     alternates: { canonical: `/character/${slug}` },
   };
 }
 
-function metricLabel(metric: string): string {
-  return metric.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
 
 /**
  * URL yang boleh dirender sebagai tautan keluar di blok atribusi.
@@ -77,23 +75,6 @@ function RowSource({ name, url }: { name: string | null; url: string | null }) {
   );
 }
 
-/** Urutan tampil yang stabil: metrik penentu lebih dulu, pengalaman terakhir. */
-const METRIC_ORDER = [
-  'tier',
-  'attack_potency',
-  'durability',
-  'speed',
-  'reaction_speed',
-  'combat_speed',
-  'range',
-  'striking_strength',
-  'lifting_strength',
-  'stamina',
-  'intelligence',
-  'battle_iq',
-  'experience',
-];
-
 export default async function CharacterPage({
   params,
   searchParams,
@@ -120,8 +101,8 @@ export default async function CharacterPage({
 
   const { character, forms, activeForm, statistics, abilities, resistances, sources, source } = bundle;
   const orderedStatistics = statistics.slice().sort((a, b) => {
-    const indexA = METRIC_ORDER.indexOf(a.metric);
-    const indexB = METRIC_ORDER.indexOf(b.metric);
+    const indexA = (METRIC_ORDER as readonly string[]).indexOf(a.metric);
+    const indexB = (METRIC_ORDER as readonly string[]).indexOf(b.metric);
     return (indexA === -1 ? 99 : indexA) - (indexB === -1 ? 99 : indexB);
   });
 
@@ -182,7 +163,7 @@ export default async function CharacterPage({
               )}
               {character.gender && (
                 <p>
-                  <span className="font-semibold text-ink-3">Gender:</span> {character.gender}
+                  <span className="font-semibold text-ink-3">Jenis kelamin:</span> {character.gender}
                 </p>
               )}
               {character.age && (
@@ -198,8 +179,8 @@ export default async function CharacterPage({
               href={`/versus?a=${character.slug}/${activeForm?.slug ?? 'base'}`}
               className="btn-battle flex w-full items-center justify-center gap-2 sm:w-auto"
             >
-              Battle Character
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              Adukan Karakter
+              <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
               </svg>
             </a>
@@ -208,26 +189,37 @@ export default async function CharacterPage({
       </div>
 
       {/* ─── Form Tabs (Era/Versi) ─── */}
-      <div className="mt-8 flex flex-wrap gap-2 border-b border-line pb-px">
-        {forms.map((form) => {
-          const isActive = form.id === activeForm?.id;
-          return (
-            <a
-              key={form.id}
-              href={`/character/${slug}?form=${form.slug}`}
-              className={`relative rounded-t-lg px-4 py-2.5 text-sm font-medium transition-colors ${
-                isActive
-                  ? 'bg-surface-2 text-accent-a border-x border-t border-line-strong'
-                  : 'text-ink-2 hover:bg-surface-1 hover:text-ink-0'
-              }`}
-            >
-              {form.name}
-              {form.era && <span className="ml-2 text-[0.6rem] uppercase tracking-wider text-ink-3">{form.era}</span>}
-              {form.is_default && <span className="ml-2 text-[0.6rem] uppercase tracking-wider text-ink-3">(Default)</span>}
-            </a>
-          );
-        })}
-      </div>
+      {forms.length === 0 ? (
+        <p className="mt-8 rounded-xl border border-dashed border-line-strong bg-surface-1/50 p-4 text-sm text-ink-2">
+          Belum ada form (era/wujud) yang tercatat untuk karakter ini. Statistik tidak dapat
+          ditampilkan sampai form pertama diimpor.
+        </p>
+      ) : (
+        <nav
+          aria-label="Pilih form karakter"
+          className="mt-8 flex flex-wrap gap-2 border-b border-line pb-px"
+        >
+          {forms.map((form) => {
+            const isActive = form.id === activeForm?.id;
+            return (
+              <a
+                key={form.id}
+                href={`/character/${slug}?form=${form.slug}`}
+                aria-current={isActive ? 'page' : undefined}
+                className={`relative rounded-t-lg px-4 py-2.5 text-sm font-medium transition-colors ${
+                  isActive
+                    ? 'border-x border-t border-line-strong bg-surface-2 text-accent-a'
+                    : 'text-ink-2 hover:bg-surface-1 hover:text-ink-0'
+                }`}
+              >
+                {form.name}
+                {form.era && <span className="ml-2 text-[0.6rem] uppercase tracking-wider text-ink-3">{form.era}</span>}
+                {form.is_default && <span className="ml-2 text-[0.6rem] uppercase tracking-wider text-ink-3">(bawaan)</span>}
+              </a>
+            );
+          })}
+        </nav>
+      )}
 
       {activeForm?.description && <p className="mt-4 text-sm text-ink-2">{activeForm.description}</p>}
 
@@ -236,7 +228,7 @@ export default async function CharacterPage({
         <div className="space-y-8">
           <section className="rounded-2xl border border-line bg-surface-1 p-6">
             <h2 className="mb-6 flex items-center gap-2 text-xl font-bold text-ink-0">
-              <span className="text-accent-a">📊</span> Combat Statistics
+              <span aria-hidden="true" className="text-accent-a">📊</span> Statistik Pertarungan
             </h2>
 
             {orderedStatistics.length === 0 ? (
@@ -257,7 +249,7 @@ export default async function CharacterPage({
                     </div>
                     <p className="mt-1 text-sm font-medium text-ink-0">{stat.raw_text}</p>
                     <p className="mt-1 text-[0.65rem] text-ink-3">
-                      Confidence {Math.round(stat.confidence * 100)}%
+                      Keyakinan {Math.round(stat.confidence * 100)}%
                       {hasRowSource(stat.source_name, stat.source_url) && (
                         <>
                           {' · '}
@@ -273,7 +265,7 @@ export default async function CharacterPage({
 
           <section className="rounded-2xl border border-line bg-surface-1 p-6">
             <h2 className="mb-6 flex items-center gap-2 text-xl font-bold text-ink-0">
-              <span className="text-accent-b">✨</span> Abilities &amp; Hax
+              <span aria-hidden="true" className="text-accent-b">✨</span> Kemampuan &amp; Hax
             </h2>
 
             {abilities.length === 0 ? (
@@ -315,7 +307,7 @@ export default async function CharacterPage({
         <div className="space-y-8">
           <section className="rounded-2xl border border-line bg-surface-1 p-6">
             <h2 className="mb-6 flex items-center gap-2 text-xl font-bold text-ink-0">
-              <span className="text-accent-win">🛡️</span> Resistances
+              <span aria-hidden="true" className="text-accent-win">🛡️</span> Resistensi
             </h2>
 
             {resistances.length === 0 ? (
@@ -346,7 +338,7 @@ export default async function CharacterPage({
           </section>
 
           <section className="rounded-2xl border border-line bg-surface-1 p-6">
-            <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-ink-3">Data Traceability</h2>
+            <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-ink-3">Jejak Sumber Data</h2>
             {sources.length === 0 ? (
               <p className="text-xs text-ink-3">
                 Belum ada sumber tercatat untuk karakter ini — bertentangan dengan AC-09 dan perlu diperbaiki sebelum rilis.

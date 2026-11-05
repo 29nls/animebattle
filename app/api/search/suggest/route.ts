@@ -23,6 +23,8 @@ import {
 } from '@/lib/db/client.ts';
 import { apiError } from '@/lib/errors.ts';
 import { searchCacheHeaders } from '@/lib/http-cache.ts';
+import { reportError } from '@/lib/observability/report-error.ts';
+import { enforcePublicRateLimit } from '@/lib/security/distributed-rate-limit.ts';
 import { searchCharacterPage } from '@/features/characters/queries.ts';
 import { parseSuggestQuery } from '@/features/characters/search-params.ts';
 import type { NextRequest } from 'next/server';
@@ -32,11 +34,17 @@ export const dynamic = 'force-dynamic';
 /** Batas saran yang dijanjikan kontrak. */
 const SUGGEST_LIMIT = 8;
 
+/** Autocomplete lebih murah dari pencarian penuh, tetapi tetap berkuota. */
+const RATE_LIMIT = { scope: 'search-suggest', limit: 120, windowMs: 60_000 } as const;
+
 export async function GET(request: NextRequest) {
   const parsed = parseSuggestQuery(request.nextUrl.searchParams);
   if (!parsed.ok) {
     return apiError('INVALID_INPUT', parsed.message, 400);
   }
+
+  const limited = await enforcePublicRateLimit(request.headers, RATE_LIMIT);
+  if (limited) return limited;
 
   try {
     const sql = getSqlClient();
@@ -63,10 +71,16 @@ export async function GET(request: NextRequest) {
       return apiError('UNAVAILABLE', error.message, 503);
     }
     if (isDatabaseUnavailable(error)) {
-      console.error('[api/search/suggest] database tidak dapat dihubungi:', error);
+      await reportError(error, {
+        event: 'api.search_suggest.database_unavailable',
+        route: '/api/search/suggest',
+      });
       return apiError('UNAVAILABLE', 'Database tidak dapat dihubungi saat ini.', 503);
     }
-    console.error('[api/search/suggest] kesalahan tak terduga:', error);
+    await reportError(error, {
+      event: 'api.search_suggest.unexpected',
+      route: '/api/search/suggest',
+    });
     return apiError('INTERNAL', 'Terjadi kesalahan internal.', 500);
   }
 }

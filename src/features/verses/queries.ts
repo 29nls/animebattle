@@ -50,6 +50,39 @@ export async function listVerses(
   );
 }
 
+/** Satu opsi filter verse; hanya kolom yang dibutuhkan `<select>`. */
+export interface VerseFilterOption {
+  slug: string;
+  name: string;
+  media_type: string;
+}
+
+export async function listVerseFilterOptions(sql: SqlClient): Promise<VerseFilterOption[]> {
+  return sql.query<VerseFilterOption>(
+    `select v.slug, v.name, v.origin_media as media_type
+       from verses v
+      order by v.name asc`,
+  );
+}
+
+export async function loadVerseFilterOptions(): Promise<{
+  rows: VerseFilterOption[];
+  source: DataSource;
+}> {
+  if (demoEnabled() && !isDatabaseConfigured()) {
+    return {
+      rows: demoVerseListItems().map((verse) => ({
+        slug: verse.slug,
+        name: verse.name,
+        media_type: verse.media_type,
+      })),
+      source: 'demo',
+    };
+  }
+
+  return { rows: await listVerseFilterOptions(getSqlClient()), source: 'database' };
+}
+
 export async function countVerses(sql: SqlClient): Promise<number> {
   const rows = await sql.query<{ total: string }>(`select count(*)::text as total from verses`);
   return Number(rows[0]?.total ?? '0');

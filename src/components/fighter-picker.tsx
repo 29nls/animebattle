@@ -166,7 +166,7 @@ export function FighterPicker({ name, side, initial, demoOptions }: Props) {
           htmlFor={inputId}
           className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3"
         >
-          Character &amp; Form
+          Karakter &amp; Form
         </label>
 
         <div className="relative">
@@ -269,7 +269,11 @@ export function FighterPicker({ name, side, initial, demoOptions }: Props) {
           )}
         </div>
 
-        {status === 'loading' && <p className="mt-1 text-xs text-ink-3">Memuat…</p>}
+        {status === 'loading' && (
+          <p role="status" aria-live="polite" className="mt-1 text-xs text-ink-3">
+            Memuat…
+          </p>
+        )}
         {status === 'error' && (
           <p className="mt-1 text-xs text-accent-flag">
             Saran tidak dapat dimuat. Periksa koneksi lalu coba lagi.

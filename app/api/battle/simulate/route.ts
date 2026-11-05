@@ -23,6 +23,7 @@ import { defaultRuleSet } from '@/features/battle/rule-set.ts';
 import { simulateFromSides, simulateFromVersions } from '@/features/battle/simulate.ts';
 import { DatabaseNotConfiguredError, getSqlClient, isDatabaseUnavailable } from '@/lib/db/client.ts';
 import { apiError } from '@/lib/errors.ts';
+import { reportError } from '@/lib/observability/report-error.ts';
 import { enforcePublicRateLimit } from '@/lib/security/distributed-rate-limit.ts';
 import type { BattleInput } from '@/services/battle/types.ts';
 
@@ -111,7 +112,10 @@ export async function POST(request: Request): Promise<Response> {
     }
     // Konektivitas: 503 + pesan generik (detail driver tidak untuk pemanggil anonim).
     if (isDatabaseUnavailable(error)) {
-      console.error('[api/battle/simulate] database tidak dapat dihubungi:', error);
+      await reportError(error, {
+        event: 'api.battle_simulate.database_unavailable',
+        route: '/api/battle/simulate',
+      });
       return apiError('UNAVAILABLE', 'Database tidak dapat dihubungi saat ini.', 503);
     }
     return apiError('INVALID_INPUT', message, 400);

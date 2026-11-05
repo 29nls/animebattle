@@ -22,6 +22,7 @@ import {
 } from '@/lib/db/client.ts';
 import { apiError } from '@/lib/errors.ts';
 import { searchCacheHeaders } from '@/lib/http-cache.ts';
+import { reportError } from '@/lib/observability/report-error.ts';
 import { enforcePublicRateLimit } from '@/lib/security/distributed-rate-limit.ts';
 import { searchCharacterPage } from '@/features/characters/queries.ts';
 import { parseSearchQuery } from '@/features/characters/search-params.ts';
@@ -80,10 +81,13 @@ export async function GET(request: NextRequest) {
     // Gangguan konektivitas: jangan bocorkan detail driver ke pemanggil anonim
     // (host, TLS, pesan SQL); detailnya masuk log server, klien dapat 503.
     if (isDatabaseUnavailable(error)) {
-      console.error('[api/search] database tidak dapat dihubungi:', error);
+      await reportError(error, {
+        event: 'api.search.database_unavailable',
+        route: '/api/search',
+      });
       return apiError('UNAVAILABLE', 'Database tidak dapat dihubungi saat ini.', 503);
     }
-    console.error('[api/search] kesalahan tak terduga:', error);
+    await reportError(error, { event: 'api.search.unexpected', route: '/api/search' });
     return apiError('INTERNAL', 'Terjadi kesalahan internal.', 500);
   }
 }

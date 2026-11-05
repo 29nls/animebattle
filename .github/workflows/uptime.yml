@@ -1,0 +1,39 @@
+# Probe uptime /api/health/ready.
+#
+# Alert utama adalah kegagalan job GitHub (notifikasi ke pemilik repo). Bila
+# secret ALERT_WEBHOOK_URL diisi, skrip juga mengirim ringkasan ke webhook
+# Slack-compatible. Scheduled workflow GitHub dapat tertunda beberapa menit;
+# ini bukan pengganti monitor uptime berbayar dengan SLA.
+name: Uptime probe
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: uptime-probe
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    name: /api/health/ready
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Probe readiness
+        env:
+          DEPLOY_URL: ${{ secrets.DEPLOY_URL }}
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        run: node scripts/check-health.mjs

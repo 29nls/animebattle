@@ -150,7 +150,7 @@ describe('migrasi berversi', () => {
       const fromMigrations = await snapshot(migrated);
       const fromSnapshot = await snapshot(snapshotDb);
 
-      assert.equal(fromMigrations.tables.length, 38, '38 tabel dasar');
+      assert.equal(fromMigrations.tables.length, 39, '39 tabel dasar');
       assert.equal(fromMigrations.matviews.length, 3, '3 materialized view');
       assert.deepEqual(fromMigrations, fromSnapshot);
     } finally {

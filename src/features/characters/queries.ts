@@ -25,14 +25,14 @@ import type { SearchType } from './search-params.ts';
  * payload cache.
  */
 export const CHARACTER_LIST_COLUMNS = [
-  'id',
-  'slug',
-  'name',
-  'native_name',
-  'image_url',
-  'data_completeness',
-  'popularity_score',
-  'updated_at',
+  'c.id',
+  'c.slug',
+  'c.name',
+  'c.native_name',
+  'c.image_url',
+  'c.data_completeness',
+  'c.popularity_score',
+  'c.updated_at',
 ] as const;
 
 export interface CharacterListItem {
@@ -43,13 +43,13 @@ export interface CharacterListItem {
   image_url: string | null;
   data_completeness: 'complete' | 'partial' | 'minimal';
   popularity_score: number;
-  updated_at: string;
-  /**
-   * Kode tier form default. Hanya diisi jalur demo saat ini; jalur database
-   * menambahkannya bersama join tier ketika halaman daftar mengembalikan tier
-   * (Sprint 1) — sengaja opsional supaya kedua sumber tetap cocok.
-   */
+  /** Bisa `null` pada hasil pencarian: RPC tidak mengembalikan kolom audit ini. */
+  updated_at?: string | null;
+  /** Kode tier form default; `null` bila form default belum punya tier. */
   tier_code?: string | null;
+  /** Verse asal — ditampilkan di kartu dan dipakai filter. */
+  verse_slug?: string | null;
+  verse_name?: string | null;
 }
 
 /** Batas atas yang sama dengan yang dipaksakan fungsional RPC (PRD §18: 20/50/100/200). */
@@ -66,6 +66,15 @@ export function normalizePageSize(requested: number | undefined): number {
 export interface ListCharactersParams {
   limit?: number;
   offset?: number;
+  /** Filter verse (slug) dan media; `null`/absen berarti tidak menyaring. */
+  verseSlug?: string | null;
+  media?: string | null;
+}
+
+/** Kondisi filter yang dipakai query daftar dan hitungan. */
+export interface CharacterListFilters {
+  verseSlug?: string | null;
+  media?: string | null;
 }
 
 /**
@@ -82,11 +91,19 @@ export async function listCharacters(
   const offset = Math.max(0, Math.floor(params.offset ?? 0));
 
   return sql.query<CharacterListItem>(
-    `select ${columns}
-       from characters
-      order by popularity_score desc, name asc
-      limit $1 offset $2`,
-    [limit, offset],
+    `select ${columns},
+            v.slug as verse_slug, v.name as verse_name,
+            t.tier_code
+       from characters c
+       join verses v on v.id = c.verse_id
+       left join character_versions cv
+         on cv.character_id = c.id and cv.is_default = true and cv.deleted_at is null
+       left join tiers t on t.id = cv.tier_id
+      where ($1::text is null or v.slug = $1)
+        and ($2::text is null or v.origin_media::text = $2)
+      order by c.popularity_score desc, c.name asc
+      limit $3 offset $4`,
+    [params.verseSlug ?? null, params.media ?? null, limit, offset],
   );
 }
 
@@ -222,8 +239,18 @@ export async function searchCharacterPage(
   return { total: Number.isFinite(total) ? total : rows.length, rows };
 }
 
-export async function countCharacters(sql: SqlClient): Promise<number> {
-  const rows = await sql.query<{ total: string }>(`select count(*)::text as total from characters`);
+export async function countCharacters(
+  sql: SqlClient,
+  filters: CharacterListFilters = {},
+): Promise<number> {
+  const rows = await sql.query<{ total: string }>(
+    `select count(*)::text as total
+       from characters c
+       join verses v on v.id = c.verse_id
+      where ($1::text is null or v.slug = $1)
+        and ($2::text is null or v.origin_media::text = $2)`,
+    [filters.verseSlug ?? null, filters.media ?? null],
+  );
   return Number(rows[0]?.total ?? '0');
 }
 
@@ -244,18 +271,75 @@ export interface CharacterListResult {
  * dikonfigurasi tetapi tidak dapat dihubungi sengaja **tidak** ditutupi data demo:
  * galatnya diteruskan supaya gangguan infrastruktur terlihat, bukan tersamar.
  */
+function completeness(value: string): CharacterListItem['data_completeness'] {
+  return value === 'complete' || value === 'partial' ? value : 'minimal';
+}
+
+function fromSearchRow(row: CharacterSearchRow): CharacterListItem {
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    native_name: row.native_name,
+    image_url: null,
+    data_completeness: completeness(row.data_completeness),
+    popularity_score: row.popularity_score,
+    updated_at: null,
+    tier_code: row.tier_code,
+    verse_slug: row.verse_slug,
+    verse_name: row.verse_name,
+  };
+}
+
+/**
+ * Pemilih sumber data untuk halaman `/characters`.
+ *
+ * Urutan yang disengaja: **database dulu**, demo hanya bila database memang belum
+ * dikonfigurasi dan operator mengaktifkannya (`ALLOW_DEMO_DATA=1`). Database yang
+ * dikonfigurasi tetapi tidak dapat dihubungi sengaja **tidak** ditutupi data demo:
+ * galatnya diteruskan supaya gangguan infrastruktur terlihat, bukan tersamar.
+ *
+ * Kueri non-kosong memakai RPC pencarian yang sama dengan `/api/search` supaya
+ * halaman dan API tidak berbeda pendapat soal hasil, total, dan urutan. Kueri
+ * kosong memakai query daftar ber-filter — RPC sengaja menjawab kosong untuk
+ * kueri kosong, bukan seluruh katalog.
+ */
 export async function loadCharacterList(
-  params: ListCharactersParams & { query?: string } = {},
+  params: ListCharactersParams & { query?: string; verseSlug?: string | null; media?: string | null } = {},
 ): Promise<CharacterListResult> {
   if (demoEnabled() && !isDatabaseConfigured()) {
-    const rows = demoCharacterListItems(params.query);
+    const rows = demoCharacterListItems(params.query, {
+      verseSlug: params.verseSlug,
+      media: params.media,
+    });
     return { rows, total: rows.length, source: 'demo' };
   }
 
   const sql = getSqlClient();
+  const perPage = normalizePageSize(params.limit);
+  const offset = Math.max(0, Math.floor(params.offset ?? 0));
+  const query = (params.query ?? '').trim();
+
+  if (query !== '') {
+    const result = await searchCharacterPage(sql, {
+      query,
+      verseSlug: params.verseSlug ?? null,
+      media: params.media ?? null,
+      page: Math.floor(offset / perPage) + 1,
+      perPage,
+      types: ['character'],
+    });
+    return { rows: result.rows.map(fromSearchRow), total: result.total, source: 'database' };
+  }
+
   const [rows, total] = await Promise.all([
-    listCharacters(sql, { limit: params.limit, offset: params.offset }),
-    countCharacters(sql),
+    listCharacters(sql, {
+      limit: perPage,
+      offset,
+      verseSlug: params.verseSlug,
+      media: params.media,
+    }),
+    countCharacters(sql, { verseSlug: params.verseSlug, media: params.media }),
   ]);
   return { rows, total, source: 'database' };
 }

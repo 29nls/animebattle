@@ -5,10 +5,12 @@ import { attemptLoad } from '@/features/data-source.ts';
 import { isAdminAuthenticated } from '@/features/admin/session.ts';
 import { DatabaseUnavailable } from '@/components/database-unavailable.tsx';
 import { DEMO_LABEL, DEMO_NOTICE } from '@/features/demo/provider.ts';
+import { loadAttribution } from '@/features/attribution/queries.ts';
+import { DataAttribution } from '@/components/data-attribution.tsx';
 import type { VerseListItem } from '@/features/verses/queries.ts';
 
 export const metadata: Metadata = {
-  title: 'Verses / Universes',
+  title: 'Daftar Verse',
   description: 'Jelajahi semua semesta fiksi yang terdaftar dalam database.',
   alternates: { canonical: '/verses' },
 };
@@ -30,7 +32,10 @@ export default async function VersesPage() {
   // Galat database tidak boleh menjatuhkan halaman: `attemptLoad` mengubahnya
   // menjadi hasil `failed` yang dirender sebagai panel, bukan HTTP 500
   // (audit Lighthouse pernah gagal di sini dengan ERRORED_DOCUMENT_REQUEST).
-  const outcome = await attemptLoad(() => loadVerseList());
+  const [outcome, attribution] = await Promise.all([
+    attemptLoad(() => loadVerseList()),
+    loadAttribution(),
+  ]);
   const rows: VerseListItem[] = outcome.status === 'ok' ? outcome.data.rows : [];
 
   return (
@@ -43,7 +48,7 @@ export default async function VersesPage() {
 
       <div className="mb-8">
         <h1 className="text-3xl font-black tracking-tight text-ink-0 sm:text-4xl">
-          Verse <span className="text-gradient-vs">Encyclopedia</span>
+          Ensiklopedia <span className="text-gradient-vs">Verse</span>
         </h1>
         <p className="mt-2 text-sm text-ink-2 max-w-2xl">
           Setiap verse memiliki kosmologi, hukum alam, dan skala kekuatan yang berbeda.
@@ -91,7 +96,7 @@ export default async function VersesPage() {
 
                 <div className="mt-4 flex items-center gap-3 text-xs text-ink-2">
                   <span className="flex items-center gap-1">
-                    <span className="font-bold text-ink-0">{verse.character_count}</span> characters
+                    <span className="font-bold text-ink-0">{verse.character_count}</span> karakter
                   </span>
                   <span className="h-3 w-px bg-line" />
                   <span>{MEDIA_LABELS[verse.media_type] ?? verse.media_type}</span>
@@ -101,6 +106,8 @@ export default async function VersesPage() {
           ))}
         </div>
       )}
+
+      <DataAttribution attribution={attribution} />
     </div>
   );
 }

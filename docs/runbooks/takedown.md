@@ -1,6 +1,6 @@
 # Runbook — Takedown (Hak Cipta)
 
-**Status:** aktif. Langkah SQL diuji di PGlite lokal dengan `docs/schema.sql` +
+**Status:** aktif. Formulir `/legal/takedown` menyimpan tiket ke `legal_reports` dan admin membacanya di `/admin/reports` (sejak 2026-11-05). Langkah SQL diuji di PGlite lokal dengan `docs/schema.sql` +
 `docs/seed.sql` (2026-10-09); **belum** pernah dijalankan pada instance Supabase
 produksi. Prosedur mengikuti [PRD §30.3](../PRD.md#303-proses-takedown).
 
@@ -9,9 +9,14 @@ notifikasi platform — tentang gambar, teks, atau data di situs ini.
 
 ## 1. Membaca keadaan dalam 30 detik
 
-Cari dulu objek yang dilaporkan (URL diambil dari laporan pelapor):
+Ambil tiket dari kode yang diberikan pelapor, lalu cari objek yang dilaporkan (URL diambil dari laporan):
 
 ```sql
+-- tiket formulir (2026-11-05): kode dari pelapor
+select id, ticket_code, kind, status, reporter_email, reported_url, description,
+       created_at, reviewed_by, reviewed_at
+  from legal_reports where ticket_code = 'AB-XXXXXXXXXX';
+
 -- gambar/teks: karakter dari URL /character/<slug>
 select id, slug, name, image_url, image_source, image_license, image_attribution
   from characters where slug = '<slug-dari-url>';
@@ -43,10 +48,28 @@ Tiga kemungkinan hasil, dan mana yang berlaku menentukan jalur di §3:
 | 4 | **≤ 7 hari kerja** | Konfirmasi tertulis ke pelapor + catat di changelog legal |
 | 5 | Berkelanjutan | Pastikan domain tidak dapat diimpor kembali (deny-list, §3.3) |
 
-Tiket hari ini = pelacakan manual (lihat §6 — belum ada tabel tiket khusus dan
-formulir belum menyimpan apa pun). Rekam minimal: waktu masuk, bukti kepemilikan,
-URL terlapor, dan setiap langkah yang dieksekusi. IG-6 mengukur pemenuhan SLA
-≤ 5 hari kerja; R5 menetapkan target ≤ 7 hari.
+Tiket dari formulir tersimpan di `legal_reports` dengan `ticket_code` unik; itulah
+identitas yang dipakai pelapor. Rekam juga bukti kepemilikan yang dikirim menyusul
+lewat surel. IG-6 mengukur pemenuhan SLA ≤ 5 hari kerja; R5 menetapkan target ≤ 7 hari.
+
+### 2.1 Memperbarui status tiket (belum ada UI)
+
+Panel `/admin/reports` hanya membaca. Setelah verifikasi, ubah status dan catat
+peninjau secara eksplisit — jangan mengandalkan `auth.uid()` dari SQL editor:
+
+```sql
+update legal_reports
+   set status = 'reviewing', reviewed_by = '<uuid-admin>', reviewed_at = now()
+ where ticket_code = 'AB-XXXXXXXXXX';
+
+update legal_reports
+   set status = 'accepted', resolution_note = '<ringkasan tindakan>'
+ where ticket_code = 'AB-XXXXXXXXXX';
+```
+
+`rejected` hanya dipakai bila konten terbukti sah; tulis alasannya di
+`resolution_note`. Jangan menghapus baris tiket saat menutup — tidak ada masa
+retensi yang ditetapkan, jadi penghapusan adalah keputusan manusia, bukan default.
 
 ## 3. Tindakan yang aman
 
@@ -201,13 +224,15 @@ menolak kebijakan sumber non-`allowed`.
 
 ## 6. Batas yang diketahui (jujur)
 
-1. **Formulir `/legal/takedown` belum menyimpan apa pun** — tidak ada `action`,
-   tidak ada rute API. Hari ini laporan masuk lewat email/kontak manual; tiket
-   dicatat manual. Ini celah yang harus ditutup sebelum volume laporan nyata.
-2. **Tidak ada tabel tiket khusus.** `data_reports` (dengan status
-   `new/reviewing/accepted/rejected`) adalah kandidat terdekat, tetapi belum ada
-   kode yang menulisnya — jangan mengklaim tiket "sudah tercatat di DB" selama
-   langkah itu belum dibangun.
+1. **Formulir menyimpan tiket, tetapi tidak memberi notifikasi.** `POST
+   /api/legal/takedown` menulis ke `legal_reports` (status `new`) dan membalas
+   `ticket_code`; admin harus membuka `/admin/reports` secara berkala. Tidak ada
+   surel otomatis ke operator atau pelapor.
+2. **Status tiket masih diubah manual.** Panel `/admin/reports` hanya membaca;
+   belum ada aksi `reviewing`/`accepted`/`rejected`. Perubahan status ditulis
+   lewat SQL admin (contoh di §2.1), dan `reviewed_by`/`reviewed_at` diisi UUID
+   admin yang benar-benar meninjau. `data_reports` bukan tempat tiket ini:
+   `character_id`-nya wajib, sedangkan laporan legal berbasis URL.
 3. **Tidak ada notifikasi otomatis.** Pengingat SLA harus dipantau manual
    (kalender/tiket); tidak ada yang akan memperingatkan Anda bahwa langkah 2
    hampir lewat 3 hari kerja.

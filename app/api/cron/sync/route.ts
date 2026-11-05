@@ -19,6 +19,8 @@
 
 import { getSqlClient } from '@/lib/db/client.ts';
 import { apiError } from '@/lib/errors.ts';
+import { logEvent } from '@/lib/observability/logger.ts';
+import { reportError } from '@/lib/observability/report-error.ts';
 import { secretsMatch } from '@/lib/security/secrets.ts';
 import { claimNextPendingJob, markJobCompleted, markJobFailed } from '@/services/queue/job-lifecycle.ts';
 import {
@@ -75,6 +77,12 @@ export async function GET(request: Request): Promise<Response> {
       processed.push({ job_id: job.job_id, outcome: outcome.records_failed > 0 ? 'partial' : 'completed' });
     } catch (error) {
       const info = describeJobFailure(error);
+      logEvent('warn', 'ingestion.job_failed', {
+        job_id: job.job_id,
+        error_type: info.error_type,
+        terminal: info.terminal,
+        retry: job.retry_count + 1,
+      });
       try {
         await recordJobFailure(sql, job.job_id, info, job.retry_count + 1);
       } catch {
@@ -86,9 +94,17 @@ export async function GET(request: Request): Promise<Response> {
         terminal: info.terminal,
         ...(info.retry_after_seconds === null ? {} : { base_seconds: info.retry_after_seconds }),
       });
+      if (info.terminal) {
+        await reportError(error, {
+          event: 'ingestion.job_failed_terminal',
+          job_id: job.job_id,
+          error_type: info.error_type,
+        });
+      }
       processed.push({ job_id: job.job_id, outcome: `${after.status}:${info.error_type}` });
     }
   }
 
+  logEvent('info', 'ingestion.cron_tick', { processed: processed.length });
   return Response.json({ processed, count: processed.length });
 }
