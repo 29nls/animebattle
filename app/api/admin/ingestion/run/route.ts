@@ -1,52 +1,21 @@
 /**
  * `POST /api/admin/ingestion/run` — memicu sinkronisasi dari dashboard admin.
  *
- * Berkas ini adalah demonstrasi aturan AC-25 dalam praktik. Route ini memicu
- * ingestion, tetapi **tidak mengimpor `services/ingestion/*`** dan tidak pernah
- * menjalankan fetch, parse, atau tulis massal di dalam siklus request. Yang
- * dilakukannya hanya satu `insert` ke `ingestion_jobs`; worker terpisah
- * (`worker/ingest.ts`) yang mengambilnya.
- *
- * Konsekuensi yang terlihat oleh admin: respons `202 Accepted` berisi `job_id`
- * dan halaman `/admin/ingestion/[id]` memantau statusnya. Itu memang lebih
- * repot daripada menunggu di dalam request — dan itulah maksudnya. Ingestion
- * yang berjalan di jalur request akan menahan respons sampai timeout platform,
- * kehilangan seluruh pekerjaan saat timeout, dan menyembunyikan status
- * sebenarnya dari admin (PRD §18.1, D10).
- *
- * Keamanan (AC-26, PRD §28): guard otentikasi Bearer fail-closed + rate limit
- * per identitas (6 permintaan/menit). Tanpa `ADMIN_INGESTION_SECRET`, route ini
- * menolak 503 untuk SEMUA penelepon — tidak pernah bisa dipanggil publik.
- * CSRF menyusul bersama migrasi ke Supabase Auth (Sprint 4).
+ * Hanya insert ke `ingestion_jobs`; worker terpisah yang mengerjakan fetch,
+ * parse, dan upsert (AC-25). Autentikasi memakai sesi Supabase (role minimal
+ * editor), bukan Bearer shared secret. Setiap job mencatat aktor sesi dan
+ * `audit_logs`.
  */
 
 import { apiError } from '@/lib/errors.ts';
-import { adminGuard } from '@/lib/security/admin-guard.ts';
-import { FixedWindowRateLimiter } from '@/lib/security/rate-limiter.ts';
+import { guardAdminRequest } from '@/features/admin/guard.ts';
+import { recordAdminAudit } from '@/features/admin/audit.ts';
+import { hashIp, requestIp } from '@/lib/security/ip-hash.ts';
 import { getSqlClient, isDatabaseUnavailable } from '@/lib/db/client.ts';
 import { enqueueIngestionJob } from '@/services/queue/ingestion-jobs.ts';
 import type { IngestionJobScope } from '@/services/queue/ingestion-jobs.ts';
 
 export const dynamic = 'force-dynamic';
-
-// Limit 6/menit: jauh di bawah kebutuhan operasional (tombol Sync Now),
-// jauh di atas yang sah; AC-26 menugaskan 60/jam/admin untuk import.
-const limiter = new FixedWindowRateLimiter(6, 60_000, () => Date.now());
-
-function reject(request: Request): Response | null {
-  const auth = adminGuard(request, process.env, 'ADMIN_INGESTION_SECRET');
-  if (!auth.ok) {
-    return apiError(auth.status === 503 ? 'UNAVAILABLE' : 'UNAUTHORIZED', auth.error, auth.status);
-  }
-  const limit = limiter.check(auth.identity);
-  if (!limit.allowed) {
-    return apiError('RATE_LIMITED', 'Terlalu banyak permintaan.', 429, {
-      details: { retry_after_ms: limit.retryAfterMs },
-      headers: { 'retry-after': String(Math.ceil(limit.retryAfterMs / 1000)) },
-    });
-  }
-  return null;
-}
 
 const SCOPES: readonly IngestionJobScope[] = [
   'incremental',
@@ -64,8 +33,12 @@ function isScope(value: unknown): value is IngestionJobScope {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const denied = reject(request);
-  if (denied) return denied;
+  const auth = await guardAdminRequest(request, {
+    limit: 6,
+    windowMs: 60_000,
+    minLevel: 'editor',
+  });
+  if (!auth.ok) return auth.response;
 
   let body: unknown;
   try {
@@ -81,13 +54,26 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const targetRef = typeof payload.target_ref === 'string' ? payload.target_ref : undefined;
+  const dryRun = payload.dry_run === true;
+  const priority = typeof payload.priority === 'number' ? payload.priority : 3;
 
   try {
-    const job = await enqueueIngestionJob(getSqlClient(), {
+    const sql = getSqlClient();
+    const job = await enqueueIngestionJob(sql, {
       scope,
       target_ref: targetRef,
-      dry_run: payload.dry_run === true,
-      priority: typeof payload.priority === 'number' ? payload.priority : 3,
+      dry_run: dryRun,
+      priority,
+      created_by: auth.identity.userId,
+    });
+
+    await recordAdminAudit(sql, {
+      actorId: auth.identity.userId,
+      action: 'ingestion.run',
+      entityType: 'ingestion_job',
+      entityId: job.job_id,
+      params: { scope, target_ref: targetRef ?? null, dry_run: dryRun, priority },
+      ipHash: hashIp(requestIp(request.headers)),
     });
 
     return Response.json(
@@ -95,8 +81,6 @@ export async function POST(request: Request): Promise<Response> {
         job_id: job.job_id,
         status: job.status,
         created_at: job.created_at,
-        // Pesan ini bagian dari kontrak UX: admin harus tahu pekerjaannya belum
-        // jalan, bukan mengira kegagalan.
         message:
           'Job masuk antrian. Worker mengambilnya di proses terpisah; pantau status di /admin/ingestion.',
       },
@@ -104,8 +88,6 @@ export async function POST(request: Request): Promise<Response> {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    // Admin adalah pemanggil tepercaya, jadi pesan asli tetap ditampilkan;
-    // yang diperbaiki adalah klasifikasinya (gangguan konektivitas → 503).
     return isDatabaseUnavailable(error)
       ? apiError('UNAVAILABLE', message, 503)
       : apiError('INTERNAL', message, 500);

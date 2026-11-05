@@ -26,6 +26,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { unaccent } from '@electric-sql/pglite/contrib/unaccent';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
+import postgres from 'postgres';
 
 import type { SqlClient } from '../src/lib/db/client.ts';
 import {
@@ -68,21 +69,109 @@ const PLANS_ONLY = process.argv.includes('--plans-only');
 
 // --- 1. Database bersih + skema sungguhan ------------------------------------
 
-const db = await PGlite.create({ extensions: { pg_trgm, unaccent, pgcrypto } });
+interface BenchBackend {
+  label: string;
+  exec(text: string): Promise<void>;
+  query<T>(text: string, params?: readonly unknown[]): Promise<T[]>;
+  close(): Promise<void>;
+}
+
+interface EmbeddedCluster {
+  initialise(): Promise<void>;
+  start(): Promise<void>;
+  createDatabase(name: string): Promise<void>;
+  stop(): Promise<void>;
+}
+
+/**
+ * Dua backend, satu harness. PGlite tetap default supaya `npm run bench:search`
+ * tidak berubah; PostgreSQL nyata dipilih lewat `BENCH_DATABASE_URL` (staging/CI)
+ * atau `--embedded` (binary PostgreSQL lokal, bukan WASM).
+ *
+ * `BENCH_DATABASE_URL` sengaja dipisah dari `DATABASE_URL`: skrip ini menulis
+ * 10.000 baris sintetis, dan tidak boleh menebak bahwa database aplikasi yang
+ * sedang aktif memang boleh diisi data benchmark.
+ */
+const BENCH_DATABASE_URL = process.env.BENCH_DATABASE_URL ?? arg('database-url', '');
+const USE_EMBEDDED = process.argv.includes('--embedded');
+
+let backend: BenchBackend;
+let embedded: EmbeddedCluster | null = null;
+
+if (BENCH_DATABASE_URL !== '' || USE_EMBEDDED) {
+  let url = BENCH_DATABASE_URL;
+  if (url === '') {
+    const specifier = 'embedded-postgres';
+    const module = (await import(specifier)) as {
+      default: new (options: Record<string, unknown>) => EmbeddedCluster;
+    };
+    const EmbeddedPostgres = module.default;
+    const port = Number.parseInt(arg('port', '55432'), 10);
+    const databaseDir = resolve(ROOT, `node_modules/.cache/bench-pg-${process.pid}`);
+    embedded = new EmbeddedPostgres({
+      databaseDir,
+      user: 'postgres',
+      password: 'postgres',
+      port,
+      persistent: false,
+      // initdb Windows default-nya WIN1252; data benchmark berisi Kanji/CJK,
+      // jadi encoding harus UTF8 sejak cluster dibuat (bukan saat insert).
+      initdbFlags: ['--encoding=UTF8', '--locale=C'],
+      autoRehydrateSymlinks: true,
+      onLog: () => {},
+      onError: (error: unknown) => console.error('[embedded-postgres]', error),
+    });
+    await embedded.initialise();
+    await embedded.start();
+    await embedded.createDatabase('animebattle_bench');
+    url = `postgres://postgres:postgres@127.0.0.1:${port}/animebattle_bench`;
+  }
+
+  const pg = postgres(url, { max: 1, connect_timeout: 15, onnotice: () => {} });
+  const versionRows = await pg.unsafe<{ version: string }[]>(
+    `select current_setting('server_version') as version`,
+  );
+  backend = {
+    label: `PostgreSQL ${versionRows[0]?.version ?? '?'} (TCP, binary asli)`,
+    exec: async (text) => {
+      await pg.unsafe(text).simple();
+    },
+    query: async <T>(text: string, params?: readonly unknown[]) =>
+      (await pg.unsafe(text, params as unknown[])) as unknown as T[],
+    close: async () => {
+      await pg.end({ timeout: 5 });
+      if (embedded) await embedded.stop();
+    },
+  };
+} else {
+  const db = await PGlite.create({ extensions: { pg_trgm, unaccent, pgcrypto } });
+  backend = {
+    label: 'PGlite (WASM, proses yang sama)',
+    exec: async (text) => {
+      await db.exec(text);
+    },
+    query: async <T>(text: string, params?: readonly unknown[]) => {
+      const result = await db.query(text, params as unknown[]);
+      return result.rows as T[];
+    },
+    close: async () => {
+      await db.close();
+    },
+  };
+}
+
 const sql: SqlClient = {
-  async query<T>(text: string, params?: readonly unknown[]): Promise<T[]> {
-    const result = await db.query(text, params as unknown[]);
-    return result.rows as T[];
-  },
+  query: async <T>(text: string, params?: readonly unknown[]): Promise<T[]> =>
+    backend.query<T>(text, params),
 };
 
-await db.exec(readFileSync(SCHEMA, 'utf8'));
+await backend.exec(readFileSync(SCHEMA, 'utf8'));
 
 // --- 2. Isi sintetis (berlabel) ----------------------------------------------
 
 const seedStart = performance.now();
 
-await db.exec(`
+await backend.exec(`
 insert into sources (slug, name, base_url, source_type, legal_status, license,
                      legal_reviewed_by, legal_reviewed_at)
 values ('bench-synthetic', 'Benchmark Synthetic (DATA SINTETIS, bukan katalog)', 'about:benchmark',
@@ -162,7 +251,7 @@ where (('x' || substr(md5(c.slug), 1, 6))::bit(24)::int % 3) = 0;
 // Statistik/ability/resistensi hanya untuk sebagian form: relasi 1:N ini tidak
 // perlu menutupi 12.000 form untuk mengukur bentuk query-nya, dan menahan waktu
 // seeding tetap wajar di PGlite.
-await db.exec(`
+await backend.exec(`
 with picked as (
   select cv.id, row_number() over (order by cv.slug) as rn
     from character_versions cv
@@ -210,9 +299,15 @@ from picked p cross join (select id from resistance_types where slug = 'bench-re
 cross join (select id from sources where slug = 'bench-synthetic') s;
 `);
 
+// WAJIB: tanpa ANALYZE, planner memakai statistik tabel kosong dari saat skema
+// dibuat. Rencana yang dihasilkan lalu memilih seq scan untuk segalanya dan
+// angka "sebelum" menjadi artefak harness, bukan perilaku query. Diukur sebagai
+// bagian dari seeding karena di produksi autovacuum yang mengisinya.
+await backend.exec('analyze;');
+
 const seedMs = performance.now() - seedStart;
 
-const counts = (await db.query<{
+const counts = await sql.query<{
   characters: number; versions: number; aliases: number; statistics: number;
   abilities: number; resistances: number; verses: number;
 }>(
@@ -223,7 +318,7 @@ const counts = (await db.query<{
           (select count(*)::int from character_abilities) as abilities,
           (select count(*)::int from character_resistances) as resistances,
           (select count(*)::int from verses) as verses`,
-)).rows;
+);
 const shape = counts[0]!;
 
 // --- 3. Query yang diukur (modul produksi, bukan SQL tulis ulang) -------------
@@ -275,6 +370,22 @@ const cases: Case[] = [
     },
   },
   {
+    name: 'search prefiks 2 huruf',
+    note: '"go" → awalan nama (jalur autocomplete selektif)',
+    run: async () => {
+      const page = await searchCharacterPage(sql, { query: 'go', perPage: 20 });
+      return { rows: page.rows.length, top: page.rows[0]?.slug ?? null, detail: `total=${page.total}` };
+    },
+  },
+  {
+    name: 'search prefiks 2 huruf (luas)',
+    note: `"be" → cocok dengan seluruh ${CHARACTERS.toLocaleString('id-ID')} baris lewat awalan nama`,
+    run: async () => {
+      const page = await searchCharacterPage(sql, { query: 'be', perPage: 20 });
+      return { rows: page.rows.length, top: page.rows[0]?.slug ?? null, detail: `total=${page.total}` };
+    },
+  },
+  {
     name: 'search unicode (CJK)',
     note: `"${FAMILY_NATIVE}" → native_name`,
     run: async () => {
@@ -288,6 +399,23 @@ const cases: Case[] = [
     run: async () => {
       const page = await searchCharacterPage(sql, { query: 'benchmark', perPage: 20 });
       return { rows: page.rows.length, top: page.rows[0]?.slug ?? null, detail: `total=${page.total}` };
+    },
+  },
+  {
+    name: 'search lintas tipe (karakter+verse)',
+    note: 'types=[character,verse] pada kueri luas "benchmark"',
+    run: async () => {
+      const page = await searchCharacterPage(sql, {
+        query: 'benchmark',
+        perPage: 20,
+        types: ['character', 'verse'],
+      });
+      const kinds = new Set(page.rows.map((row) => row.type));
+      return {
+        rows: page.rows.length,
+        top: page.rows[0]?.slug ?? null,
+        detail: `total=${page.total} types=${[...kinds].sort().join('+')}`,
+      };
     },
   },
   {
@@ -399,7 +527,7 @@ const cases: Case[] = [
     note: 'battle_dataset untuk 2 form — satu round-trip simulasi',
     run: async () => {
       const rows = await sql.query<{ payload: unknown }>(
-        `select public.battle_dataset($1::uuid[]) as payload`,
+        `select battle_dataset($1::uuid[]) as payload`,
         [[familyForm.id, secondForm.id]],
       );
       const payload = rows[0]?.payload;
@@ -468,35 +596,98 @@ for (const c of cases) {
   });
 }
 
+// --- 4b. Rencana DALAM fungsi ------------------------------------------------
+//
+// `search_characters_page` memakai `set search_path`, dan PostgreSQL tidak
+// meng-inline fungsi ber-SET. Akibatnya `explain select * from
+// search_characters_page(...)` hanya menampilkan `Function Scan` dengan biaya
+// 0.25 — tidak memberi tahu bagian mana yang mahal. Untuk diagnosis, salinan
+// fungsi dibuat tanpa klausa SET (nama berbeda), lalu di-EXPLAIN. Salinan ini
+// hanya hidup di database benchmark dan tidak pernah dipakai aplikasi.
+if (process.argv.includes('--explain-inline')) {
+  const definition = (
+    await sql.query<{ def: string }>(
+      `select pg_get_functiondef('search_characters_page(text,text,text,integer,integer,boolean,text[])'::regprocedure) as def`,
+    )
+  )[0]!.def;
+  // Fungsi SQL berbadan CTE tidak pernah di-inline planner (dan fungsi ber-SET
+  // malah tidak boleh di-inline), jadi `explain select * from
+  // search_characters_page(...)` hanya menampilkan Function Scan berbiaya 0.25.
+  // Solusinya: jalankan BADAN fungsi sebagai pernyataan siap pakai lewat
+  // PREPARE, lalu EXPLAIN EXECUTE dengan nilai nyata. Planner melihat nilai
+  // parameter (custom plan), sehingga rencana yang tercetak adalah rencana yang
+  // benar-benar dipakai RPC.
+  const open = /\bas \$([a-z_]*)\$/i.exec(definition);
+  if (open === null) throw new Error('definisi fungsi tanpa badan dolar');
+  const tag = `$${open[1]}$`;
+  // Di dalam fungsi, parameter dirujuk dengan nama; di prepared statement harus
+  // `$n`. Penggantian dilakukan pada pola pemakaian yang spesifik — bukan
+  // `\bq\b` global — karena `verse_slug`/`media` juga nama kolom keluaran.
+  const body = definition
+    .slice((open.index ?? 0) + open[0].length, definition.lastIndexOf(tag))
+    .replace(/coalesce\(q, ''\)/g, "coalesce($1, '')")
+    .replace(/v\.slug = verse_slug/g, 'v.slug = $2')
+    .replace(/\(verse_slug is null or/g, '($2 is null or')
+    .replace(/c\.media_type::text = media/g, 'c.media_type::text = $3')
+    .replace(/v\.origin_media::text = media/g, 'v.origin_media::text = $3')
+    .replace(/\(media is null or/g, '($3 is null or')
+    .replace(/coalesce\(lim, 20\)/g, 'coalesce($4, 20)')
+    .replace(/coalesce\(off, 0\)/g, 'coalesce($5, 0)')
+    .replace(/only_public/g, '$6')
+    .replace(/coalesce\(types, array\['character'\]::text\[\]\)/g, 'coalesce($7, array[\'character\']::text[])')
+    .replace(/'character' = any\(w\.kinds\)/g, "'character' = any(w.kinds)")
+    .replace(/\btypes\b/g, '$7');
+  await backend.exec(
+    `prepare bench_search_plan(text, text, text, integer, integer, boolean, text[]) as ${body}`,
+  );
+  for (const needle of ['benchmark', 'gokuto bench', 'be']) {
+    const rows = await sql.query<Record<string, string>>(
+      `explain (analyze, buffers) execute bench_search_plan('${needle}', null, null, 20, 0, true, array['character']::text[])`,
+    );
+    const text = rows.map((row) => Object.values(row)[0] ?? '').join('\n');
+    console.error(`\n[inner plan] "${needle}"\n${text.slice(0, 20000)}`);
+  }
+  await backend.exec('deallocate bench_search_plan');
+}
+
 // --- 5. Rencana eksekusi untuk query yang paling berat -----------------------
 
 const PLANS: { label: string; text: string; params: unknown[] }[] = [
   {
     label: `search karakter luas ("benchmark")`,
-    text: `explain (analyze, buffers) select * from public.search_characters_page('benchmark', null, null, 20, 0, true)`,
+    text: `explain (analyze, buffers) select * from search_characters_page('benchmark', null, null, 20, 0, true)`,
     params: [],
   },
   {
     label: `search luas + filter media ("benchmark", manga)`,
-    text: `explain (analyze, buffers) select * from public.search_characters_page('benchmark', null, 'manga', 20, 0, true)`,
+    text: `explain (analyze, buffers) select * from search_characters_page('benchmark', null, 'manga', 20, 0, true)`,
     params: [],
   },
   {
     label: `search selektif ("gokuto bench")`,
-    text: `explain (analyze, buffers) select * from public.search_characters_page('gokuto bench', null, null, 20, 0, true)`,
+    text: `explain (analyze, buffers) select * from search_characters_page('gokuto bench', null, null, 20, 0, true)`,
+    params: [],
+  },
+  {
+    label: 'search prefiks 2 huruf luas ("be")',
+    text: `explain (analyze, buffers) select * from search_characters_page('be', null, null, 20, 0, true)`,
     params: [],
   },
   {
     label: `search berhalaman + filter verse ("benchmark")`,
-    text: `explain (analyze, buffers) select public.search_characters_page('benchmark', 'bench-verse-03', null, 20, 0, true)`,
+    text: `explain (analyze, buffers) select search_characters_page('benchmark', 'bench-verse-03', null, 20, 0, true)`,
     params: [],
   },
   {
     label: 'probe index trigram pada characters (name + native)',
+    // Predikat harus identik dengan RPC. Versi lama memakai
+    // `f_normalize_name(name)` mentah, sehingga rencana yang tercetak adalah
+    // seq scan dan tidak membuktikan apa pun tentang index yang dipakai query
+    // sebenarnya (kolom generated + GIN).
     text: `explain (analyze, buffers)
-             select id from characters where public.f_normalize_name(name) % 'gokuto'
+             select id from characters where name_norm % 'gokuto'
              union all
-             select id from characters where coalesce(native_name, '') % 'ベンチゴクト'`,
+             select id from characters where native_norm % 'ベンチゴクト'`,
     params: [],
   },
   {
@@ -511,9 +702,11 @@ const PLANS: { label: string; text: string; params: unknown[] }[] = [
 const planText: string[] = [];
 for (const p of PLANS) {
   console.error(`[plan] ${p.label}`);
-  const result = await db.query<Record<string, string>>(p.text, p.params);
-  const lines = result.rows.map((r) => Object.values(r)[0] ?? '');
-  planText.push(`### ${p.label}\n\n\`\`\`\n${lines.slice(0, 24).join('\n')}\n\`\`\`\n`);
+  const result = await sql.query<Record<string, string>>(p.text, p.params);
+  const lines = result.map((r) => Object.values(r)[0] ?? '');
+  // 24 baris terlalu pendek: rencana dengan banyak cabang UNION memotong tepat
+  // di bagian yang menjelaskan biayanya. 80 baris cukup untuk seluruh pohon.
+  planText.push(`### ${p.label}\n\n\`\`\`\n${lines.slice(0, 80).join('\n')}\n\`\`\`\n`);
 }
 
 // --- 6. Keluaran --------------------------------------------------------------
@@ -521,7 +714,13 @@ for (const p of PLANS) {
 const fmt = (n: number): string => `${n.toFixed(1).padStart(8)} ms`;
 
 const lines: string[] = [];
-lines.push('## Benchmark pencarian — dataset sintetis ' + CHARACTERS.toLocaleString('id-ID') + ' karakter');
+lines.push(
+  '## Benchmark pencarian — dataset sintetis ' +
+    CHARACTERS.toLocaleString('id-ID') +
+    ' karakter (' +
+    backend.label +
+    ')',
+);
 lines.push('');
 lines.push(
   `Bentuk dataset: ${shape.characters.toLocaleString('id-ID')} karakter, ` +
@@ -539,8 +738,11 @@ for (const m of measurements) {
 }
 lines.push('');
 lines.push(
-  'Semua angka dari PGlite dalam proses yang sama (tanpa jaringan/SSL ke Supabase), jadi ini batas bawah ' +
-    'relatif: yang diukur adalah bentuk query, pemakaian index, dan biaya relatif antar query — bukan latency produksi.',
+  BENCH_DATABASE_URL !== '' || USE_EMBEDDED
+    ? 'Angka dari PostgreSQL asli lewat TCP loopback (satu koneksi, tanpa batas jaringan produksi). ' +
+        'Yang diukur: bentuk query, pemakaian index, dan biaya relatif antar query — bukan latency Supabase dari region lain.'
+    : 'Semua angka dari PGlite dalam proses yang sama (tanpa jaringan/SSL ke Supabase), jadi ini batas bawah ' +
+        'relatif: yang diukur adalah bentuk query, pemakaian index, dan biaya relatif antar query — bukan latency produksi.',
 );
 lines.push('');
 lines.push(...planText);
@@ -556,7 +758,7 @@ if (OUT) {
 }
 
 const failures = measurements.filter((m) => !m.ok);
-await db.close();
+await backend.close();
 if (failures.length > 0) {
   console.error(`\n${failures.length} query tidak mengembalikan bentuk yang diharapkan:`);
   for (const f of failures) console.error(` - ${f.name}: ${f.problem}`);

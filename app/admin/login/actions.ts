@@ -3,53 +3,113 @@
 /**
  * Server action login/logout panel admin.
  *
- * Token yang dimasukkan operator adalah `ADMIN_INGESTION_SECRET` yang sama dengan
- * bearer API — satu rahasia, dua penggunaan. Perbandingannya memakai
- * `secretsMatch` (timing-safe, diuji di `tests/security/admin-guard.test.ts`),
- * bukan `===`.
+ * Login memakai email + password Supabase Auth. Admin/owner yang sudah
+ * terdaftar faktor TOTP harus menyelesaikan `mfaAction` sebelum guard memberi
+ * akses (AAL2). Tidak ada shared secret di UI.
  *
- * Rate limit 10 percobaan/menit per IP ditaruh di sini karena inilah satu-satunya
- * tempat rahasia admin dapat ditebak lewat UI. Tanpa itu, halaman login menjadi
- * oracle tebakan yang lebih nyaman daripada API yang sudah dibatasi.
+ * Semua kegagalan autentikasi dikembalikan sebagai pesan generik: membedakan
+ * "email tidak ada" dan "password salah" memberi oracle enumerasi akun.
  */
 
-import { cookies, headers } from 'next/headers';
+import type { Route } from 'next';
+import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 
-import { secretsMatch } from '@/lib/security/admin-guard.ts';
-import { FixedWindowRateLimiter } from '@/lib/security/rate-limiter.ts';
-import {
-  ADMIN_SESSION_COOKIE,
-  createAdminSessionToken,
-} from '@/lib/security/admin-session.ts';
-import { adminSecret, adminSessionCookieOptions } from '@/features/admin/session.ts';
+import { isAdminAuthConfigured } from '@/features/admin/auth.ts';
+import { createSupabaseServerClient } from '@/features/admin/auth-server.ts';
+import { checkLoginRateLimit } from '@/features/admin/login.ts';
 
-const loginLimiter = new FixedWindowRateLimiter(10, 60_000, () => Date.now());
+function clientIp(headersBag: { get(name: string): string | null }): string {
+  const forwarded = headersBag.get('x-forwarded-for');
+  if (forwarded !== null) {
+    const first = forwarded.split(',')[0]?.trim() ?? '';
+    if (first !== '') return first;
+  }
+  return headersBag.get('x-real-ip')?.trim() || 'unknown-client';
+}
 
 export async function loginAction(formData: FormData): Promise<void> {
-  const secret = adminSecret();
-  if (secret === null) {
+  if (!isAdminAuthConfigured()) {
     redirect('/admin/login?state=not_configured');
   }
 
   const headerBag = await headers();
-  const identity = headerBag.get('x-forwarded-for')?.trim() || 'admin-login';
-  if (!loginLimiter.check(identity).allowed) {
+  if (!checkLoginRateLimit(clientIp(headerBag)).allowed) {
     redirect('/admin/login?state=rate_limited');
   }
 
-  const token = String(formData.get('token') ?? '');
-  if (!secretsMatch(token, secret)) {
+  const email = String(formData.get('email') ?? '').trim().toLowerCase();
+  const password = String(formData.get('password') ?? '');
+  if (email === '' || password === '') {
     redirect('/admin/login?state=invalid');
   }
 
-  const cookieStore = await cookies();
-  cookieStore.set(ADMIN_SESSION_COOKIE, createAdminSessionToken(secret, Date.now()), adminSessionCookieOptions());
+  let failed = false;
+  try {
+    const supabase = await createSupabaseServerClient();
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    failed = error !== null;
+  } catch {
+    failed = true;
+  }
+
+  if (failed) redirect('/admin/login?state=invalid');
+  redirect('/admin');
+}
+
+export async function mfaAction(formData: FormData): Promise<void> {
+  if (!isAdminAuthConfigured()) {
+    redirect('/admin/login?state=not_configured');
+  }
+
+  const headerBag = await headers();
+  if (!checkLoginRateLimit(clientIp(headerBag)).allowed) {
+    redirect('/admin/login/mfa?state=rate_limited' as Route);
+  }
+
+  const code = String(formData.get('code') ?? '').trim();
+  if (!/^\d{6}$/.test(code)) {
+    redirect('/admin/login/mfa?state=invalid' as Route);
+  }
+
+  let state: string | null = null;
+  try {
+    const supabase = await createSupabaseServerClient();
+    const factors = await supabase.auth.mfa.listFactors();
+    const factor = factors.data?.totp.find((entry) => entry.status === 'verified');
+
+    if (factors.error !== null || factor === undefined) {
+      state = 'not_enrolled';
+    } else {
+      const challenge = await supabase.auth.mfa.challenge({ factorId: factor.id });
+      if (challenge.error !== null) {
+        state = 'invalid';
+      } else {
+        const verified = await supabase.auth.mfa.verify({
+          factorId: factor.id,
+          challengeId: challenge.data.id,
+          code,
+        });
+        if (verified.error !== null) state = 'invalid';
+      }
+    }
+  } catch {
+    state = 'invalid';
+  }
+
+  if (state !== null) redirect(`/admin/login/mfa?state=${state}` as Route);
   redirect('/admin');
 }
 
 export async function logoutAction(): Promise<void> {
-  const cookieStore = await cookies();
-  cookieStore.set(ADMIN_SESSION_COOKIE, '', { ...adminSessionCookieOptions(), maxAge: 0 });
-  redirect('/admin/login');
+  try {
+    if (isAdminAuthConfigured()) {
+      const supabase = await createSupabaseServerClient();
+      await supabase.auth.signOut();
+    }
+  } catch {
+    // Sesi lokal tetap diarahkan ke login; kegagalan jaringan tidak boleh
+    // menahan operator di panel.
+  }
+  redirect('/admin/login?state=signed_out');
 }

@@ -1142,12 +1142,16 @@ score ≥ 0.90 → merge otomatis (form dipindahkan, alias digabung, redirect 30
 | + | `character_sources` | Atribusi sumber per karakter (identitas/stat/ability/feat/image) | n—1 `characters`, `sources` |
 | + | `character_traits` | Perilaku karakter per form (dipakai mode `in_character`) | n—1 `character_versions` |
 | + | `slug_redirects` | Redirect 301 setelah merge/rename | Berdiri sendiri |
+| + | `battle_narratives` | Narasi AI terpisah dari fakta hasil (dengan `citation_coverage`) | n—1 `battles` |
+| + | `rate_limit_windows` | Jendela hit limiter terdistribusi lintas instance | Berdiri sendiri (bucket + `window_start`) |
 
 **Catatan atas daftar di atas**
 
 - `battle_popularity`, `verse_tier_distribution`, dan `character_search_mv` adalah **materialized view**, bukan tabel dasar — dihitung ulang terjadwal, bukan ditulis oleh aplikasi.
-- Empat tabel tambahan (`battles`, `character_sources`, `character_traits`, `slug_redirects`) muncul saat perancangan rinci: `battles` memisahkan *identitas matchup* dari *hasil perhitungan* sehingga satu pasangan dapat punya banyak hasil untuk kondisi berbeda tanpa duplikasi baris besar.
-- **Total: 37 tabel dasar + 3 materialized view.** Kebenaran jumlah ini diverifikasi otomatis oleh `scripts/validate-schema.mjs`.
+- Enam tabel tambahan (`battles`, `character_sources`, `character_traits`, `slug_redirects`, `battle_narratives`, `rate_limit_windows`) muncul saat perancangan rinci: `battles` memisahkan *identitas matchup* dari *hasil perhitungan* sehingga satu pasangan dapat punya banyak hasil untuk kondisi berbeda tanpa duplikasi baris besar.
+- **Total: 38 tabel dasar + 3 materialized view.** Kebenaran jumlah ini diverifikasi otomatis oleh `scripts/validate-schema.mjs` (59 uji) dan oleh pemeriksaan arsitektur yang mengklasifikasikan setiap tabel/MV (41 entri).
+
+**Isolasi schema (2026-11-04).** Instance Supabase yang ada memakai schema `public` bersama aplikasi lain, sehingga seluruh objek Anime VS Battle dipindahkan ke schema khusus **`animebattle`**; ekstensi tetap di `public`. Aplikasi memakai `search_path = animebattle, public` pada setiap koneksi (`src/lib/db/client.ts`), bukan sekali per pool. DDL ada di `migrations/0001_schema_animebattle.sql`, grant/revoke di `migrations/0002_grants_animebattle.sql`, dan checksum setiap migrasi dicatat di `animebattle.schema_migrations`. Grant eksplisit diberikan ke `anon`/`authenticated`; `EXECUTE` fungsi pemeliharaan dicabut dari `PUBLIC`. **Batas:** role `postgres` tetap dapat membaca `public` dan melewati RLS, jadi scheme terpisah bukan isolasi kredensial penuh; project/role Supabase terpisah tetap direkomendasikan untuk produksi. Rencana rollout/rollback ada di [runbook schema-migrations](runbooks/schema-migrations.md).
 
 **Index minimum (alasan)**
 
@@ -1206,7 +1210,7 @@ Prinsip: **server-side filtering wajib**, semua endpoint publik read-only, mutas
 
 **Konvensi:** `GET /api/...` cacheable (`s-maxage` + `stale-while-revalidate`), error format seragam `{ error: { code, message, details? } }`, pagination `?page=&per_page=20|50|100|200` (cap 200), semua list mengembalikan `{ data, page, per_page, total, has_more }`.
 
-**Status implementasi (Sprint 0/1 scaffold).** Envelope error sudah diterapkan di seluruh route yang ada melalui [`src/lib/errors.ts`](../src/lib/errors.ts); field tambahan (mis. `retry_after_ms` pada 429) berada di `details`, bukan di akar objek. Tabel rate limit di atas adalah target setelah limiter terdistribusi (Upstash/KV, Sprint 4); implementasi jembatan saat ini memakai limiter in-process per instance — 6/menit untuk `run`/`import` dan 30/menit untuk `metrics`, dengan identitas dari `X-Forwarded-For` (fallback principal statis, mengikuti guard admin). `POST /api/battle/simulate` dan `GET /api/search` belum memakai rate limit — Sprint 1/Sprint 4. Sejak 2026-10-11 `GET /api/search` **sudah** memakai envelope list (§24) beserta pagination dan filter `verse`/`media`, dan `/api/search/suggest` menyediakan autocomplete; parameter di luar kontrak dijawab 400 sebelum database disentuh, sedangkan `types` (pencarian lintas tipe) masih ditolak karena belum diimplementasikan. Target latensi §26.2 belum dapat dinyatakan lulus: pada katalog 3 baris latensinya didominasi jaringan, dan benchmark 10.000 baris yang kini ada (`npm run bench:search`, [docs/benchmarks/README.md](benchmarks/README.md)) justru mengukuhkan kekhawatiran itu — pencarian selektif 561–654 ms dan pencarian luas 924 ms pada PGlite, karena rencana eksekusi RPC tidak memakai index trigram untuk cabang nama/alias. Rewrite prefilter ber-`union` yang diuji untuk memperbaikinya membuat kasus luas ×38 lebih lambat dan dibatalkan. Klasifikasi error mengikuti tabel di bawah: gangguan konektivitas database → 503 `UNAVAILABLE` dengan pesan generik, sedangkan bug → 500 `INTERNAL` dengan pesan generik pada route anonim (detail asli hanya di log server; `isDatabaseUnavailable()` di `src/lib/db/client.ts`). Pengecualian bentuk: `GET /api/health` dan `GET /api/health/ready` mengembalikan dokumen status yang dibaca probe infrastruktur (bukan envelope), namun tidak pernah memuat pesan driver — `database` hanya berisi klasifikasi, `reason` berisi kategori sanit (`tls_untrusted`, `dns`, `timeout`, `auth`, `connection_limit`, …), dan `error` berisi kalimat generik. Kategori itu ada karena insiden 2026-10-10 membuktikan biaya menyembunyikan *semuanya*: penyebab aslinya (`SELF_SIGNED_CERT_IN_CHAIN`) hanya dapat dipastikan dengan mereproduksi koneksi dari mesin operator. Klasifikasi lengkap ada di `src/lib/db/diagnostics.ts`; pesan driver yang sudah dibersihkan kredensialnya tetap hanya masuk log server, dan `npm run diagnose:db` menyediakan jalur triase yang sama untuk operator.
+**Status implementasi (Sprint 0/1 scaffold).** Envelope error sudah diterapkan di seluruh route yang ada melalui [`src/lib/errors.ts`](../src/lib/errors.ts); field tambahan (mis. `retry_after_ms` pada 429) berada di `details`, bukan di akar objek. Panel admin memakai limiter in-process per instance — 6/menit untuk `run`/`import` dan 30/menit untuk `metrics`, dengan identitas dari `X-Forwarded-For` (fallback principal statis, mengikuti guard admin); itu memadai karena hanya satu operator yang memicunya. Route publik memakai **limiter terdistribusi** berbasis tabel Postgres `rate_limit_windows` + RPC `rate_limit_hit(bucket, window_ms, limit, now)` (migrasi `0006_rate_limit.sql`), karena memori per instance tidak mengikat lintas instance serverless: `POST /api/battle/simulate` 30/menit, `GET /api/search` 60/menit, `GET /api/characters/:slug/versions` 120/menit. Bucket = hash IP bersalt harian + nama endpoint, kuota diperiksa **setelah** validasi parameter (request cacat dijawab 400, bukan menghabiskan kuota), dan limiter **fail-open** bila RPC sendiri gagal — ketersediaan simulasi lebih penting daripada penegakan yang bergantung pada database yang sedang bermasalah. Upstash/Vercel KV tetap opsi bila tabel Postgres menjadi titik panas; tidak dipilih karena tidak ada kredensial tambahan yang tersedia. Sejak 2026-10-11 `GET /api/search` **sudah** memakai envelope list (§24) beserta pagination dan filter `verse`/`media`, dan `/api/search/suggest` menyediakan autocomplete; parameter di luar kontrak dijawab 400 sebelum database disentuh, sedangkan `types` (pencarian lintas tipe) masih ditolak karena belum diimplementasikan. Target latensi §26.2 belum dapat dinyatakan lulus: pada katalog 3 baris latensinya didominasi jaringan, dan benchmark 10.000 baris yang kini ada (`npm run bench:search`, [docs/benchmarks/README.md](benchmarks/README.md)) justru mengukuhkan kekhawatiran itu — pencarian selektif 561–654 ms dan pencarian luas 924 ms pada PGlite, karena rencana eksekusi RPC tidak memakai index trigram untuk cabang nama/alias. Rewrite prefilter ber-`union` yang diuji untuk memperbaikinya membuat kasus luas ×38 lebih lambat dan dibatalkan. Klasifikasi error mengikuti tabel di bawah: gangguan konektivitas database → 503 `UNAVAILABLE` dengan pesan generik, sedangkan bug → 500 `INTERNAL` dengan pesan generik pada route anonim (detail asli hanya di log server; `isDatabaseUnavailable()` di `src/lib/db/client.ts`). Pengecualian bentuk: `GET /api/health` dan `GET /api/health/ready` mengembalikan dokumen status yang dibaca probe infrastruktur (bukan envelope), namun tidak pernah memuat pesan driver — `database` hanya berisi klasifikasi, `reason` berisi kategori sanit (`tls_untrusted`, `dns`, `timeout`, `auth`, `connection_limit`, …), dan `error` berisi kalimat generik. Kategori itu ada karena insiden 2026-10-10 membuktikan biaya menyembunyikan *semuanya*: penyebab aslinya (`SELF_SIGNED_CERT_IN_CHAIN`) hanya dapat dipastikan dengan mereproduksi koneksi dari mesin operator. Klasifikasi lengkap ada di `src/lib/db/diagnostics.ts`; pesan driver yang sudah dibersihkan kredensialnya tetap hanya masuk log server, dan `npm run diagnose:db` menyediakan jalur triase yang sama untuk operator.
 
 | Method | Path | Auth | Fungsi | Cache | Rate limit |
 |---|---|---|---|---|---|
@@ -1332,12 +1336,13 @@ Prinsip: **server-side filtering wajib**, semua endpoint publik read-only, mutas
 
 | Role | Boleh |
 |---|---|
-| `viewer` | Melihat dashboard & log |
-| `curator` | + edit karakter/form/stat, resolve konflik, merge |
-| `admin` | + kelola sumber, tier, ability, rule set, jalankan sync |
-| `owner` | + kelola role user, konfigurasi global |
+| `viewer` | Melihat dashboard, log, dan halaman ingestion read-only |
+| `editor` | + import/retry/cancel job, edit karakter/form/stat, resolve konflik, merge, melihat audit |
+| `admin` | + kelola sumber, tier, ability, rule set, jalankan sync; **wajib MFA `aal2`** |
+| `owner` | + kelola role user, konfigurasi global; **wajib MFA `aal2`** |
+| `curator` | Peran legacy, diperlakukan sebagai `editor` |
 
-Semua write action mencatat `audit_logs`: `actor_id`, `action`, `entity_type`, `entity_id`, `before`, `after`, `ip_hash`, `created_at`.
+Semua write action mencatat `audit_logs`: `actor_id` (dari sesi Supabase yang diverifikasi, bukan body request), `action`, `entity_type`, `entity_id`, `before`, `after` (parameter aksi), `ip_hash`, `created_at`. Panel `/admin/audit` menampilkannya untuk viewer/editor/admin; hanya admin yang boleh menulis/menghapus baris audit.
 
 ### 25.3 UX operasional
 
@@ -1445,9 +1450,9 @@ LIMIT $2;
 
 | Area | Kontrol | Detail |
 |---|---|---|
-| Autentikasi | Supabase Auth (email magic link + OAuth) | Admin wajib MFA |
-| Otorisasi | `user_roles` + RLS per tabel | Anon: SELECT pada data publik; mutasi hanya role admin/curator |
-| Rate limiting | Per IP (Upstash/KV) + per token; tier berbeda untuk anonim vs admin | Endpoint simulasi 30/min/IP; search 60/min/IP; import 60/jam/admin |
+| Autentikasi | Supabase Auth email/password + TOTP | Admin/owner wajib MFA `aal2`; panel dan `/api/admin/*` memakai cookie sesi server-side, bukan Bearer shared secret. OAuth belum diimplementasikan |
+| Otorisasi | `user_roles` + RLS per tabel | Anon: SELECT pada data publik; mutasi hanya role editor/curator/admin/owner; aksi admin butuh `is_admin()` |
+| Rate limiting | Per IP (hash harian ber-salt) + per token; tier berbeda untuk anonim vs admin. **Publik**: tabel Postgres `rate_limit_windows` via RPC `rate_limit_hit` (dipakai bersama semua instance, fail-open bila limiter gagal). **Admin**: limiter in-process per instance | Endpoint simulasi 30/min/IP; search 60/min/IP; versi karakter 120/min/IP; import 60/jam/admin |
 | Bot mitigation | Turnstile/hCaptcha pada `POST /api/battle/simulate` (anonim) dan `/api/reports` saat skor risiko tinggi | Hanya trigger bila anomali, bukan semua request |
 | Input validation | zod di boundary API + server action; whitelist enum; reject unknown keys | Tidak ada parsing longgar |
 | SQL injection | Parameterized query lewat `SqlClient` (postgres.js `unsafe` + array parameter); **tidak ada** string SQL dari input; `search_path` dipatok | Anti-injeksi |
@@ -1723,7 +1728,7 @@ Semua AC diverifikasi dengan bukti konkret (test otomatis, query SQL, laporan Li
 | AC-11 | Character page dapat diindeks search engine | HTML awal memuat nama, tier, dan deskripsi tanpa JS; title/description/canonical/OG/JSON-LD valid; tampil di `sitemap-characters.xml` |
 | AC-12 | Halaman karakter lengkap | Semua blok §10 ada atau menampilkan status "not documented" (tidak ada blok hilang secara senyap) |
 | AC-13 | Battle result menyertakan disclaimer & label simulasi | Disclaimer verbatim §18.4 tampil di semua halaman hasil |
-| AC-14 | Permalink battle deterministik | Membuka `/versus/goku-vs-naruto` menghasilkan `input_hash` & winner yang sama dengan simulasi asal |
+| AC-14 | Permalink battle deterministik | Membuka `/versus/karakter/form-vs-karakter/form` menghasilkan `input_hash` & winner yang sama dengan simulasi asal; urutan terbalik → 308, sisi sama → 404. **Terpenuhi (2026-11-05)**: `parseMatchupSlug` + `canonicalMatchup`, halaman `app/versus/[...matchup]/page.tsx`, cache `battle_results.result_payload` |
 | AC-15 | Konflik sumber tidak menimpa data | Dua sumber dengan nilai berbeda pada metrik sama → 1 baris `character_source_conflicts` (status `open`), nilai lama utuh |
 | AC-16 | Duplicate detection membedakan karakter & form | "Naruto"/"Naruto Uzumaki" → 1 karakter 2 alias; "Naruto (Part I)"/"Naruto (Six Paths)" → 1 karakter 2 form; "Sakura (Naruto)"/"Sakura (CCS)" → 2 karakter |
 | AC-17 | Admin dapat re-parse tanpa kehilangan data | Setelah reparse, versi stat sebelumnya tetap tersimpan (`status = superseded`) dan dapat ditampilkan |
@@ -1740,13 +1745,13 @@ Semua AC diverifikasi dengan bukti konkret (test otomatis, query SQL, laporan Li
 | AC-23 | JS klien ≤ 150 KB transfer per URL template (anggaran dikalibrasi dari 120 KB; hasil ukur 142,3 KB) | Lighthouse CI `resource-summary:script:size` (profil mobile) — lihat catatan di bawah |
 | AC-24 | Tidak ada full table scan pada query kritis | `EXPLAIN ANALYZE` untuk 6 query inti menunjukkan index scan |
 | AC-25 | Ingestion tidak pernah berjalan di jalur request user | Kode path request tidak mengimpor modul `services/ingestion/*` (uji lint arsitektur) |
-| AC-26 | Rate limit berfungsi | 31 request simulasi berturut-turut dari IP sama → request ke-31 mendapat 429 |
+| AC-26 | Rate limit berfungsi | 31 request simulasi berturut-turut dari IP sama → request ke-31 mendapat 429. **Terpenuhi (2026-11-05)**: limiter terdistribusi berbasis tabel Postgres (`rate_limit_hit`) di `/api/battle/simulate` (30/menit), `/api/search` (60/menit), `characters/:slug/versions` (120/menit); diuji di `tests/security/battle-simulate-rate-limit.test.ts` |
 | AC-27 | SSRF tertutup | Import URL `http://169.254.169.254/…` dan `http://localhost/…` → ditolak |
 | AC-28 | Determinisme engine | Jalankan 500 pasangan acak 2×: 100% `input_hash` & hasil identik |
 | AC-29 | Hasil dengan data kurang jujur | Form tanpa durability → `insufficient_data` atau flag `low_confidence` + `limitations[]` terisi; tidak ada tebakan diam-diam |
 | AC-30 | Dokumentasi operasional tersedia | Runbook ingestion, conflict review, takedown, dan rollback tersimpan di repo |
 
-**Status bukti per 2026-10-09** (jujur — AC yang belum lulus dilaporkan sebagai belum lulus): Lighthouse CI kini mengukur dengan **profil mobile** (emulasi perangkat + slow 4G — default Lighthouse, persis target §29.1) dan menegakkan kelima anggaran sebagai `error`. **AC-21 lulus** (Performance best-of-3 94–96 pada 5 URL build produksi), **AC-22 lulus** (Accessibility 100, SEO 100 — heading order, kontras `ink-3`, pembeda tautan, dan self-canonical halaman legal diperbaiki), dan **AC-23 lulus dengan anggaran terkalibrasi 150 KB** (`resource-summary:script:size` 142.277 B pada setiap URL; rasional di catatan bawah). **AC-27 lulus pada dua lapis**: jalur request menolak URL di luar allow-list sebelum satu baris antrian ditulis (`http://169.254.169.254/…` dan `http://localhost/…` tidak pernah masuk antrian), dan worker menolak alamat privat/loopback bahkan ketika host-nya cocok allow-list — diuji di `tests/ingestion/`, termasuk redirect yang diikuti manual agar guard tidak dapat dilewati `302 Location`; AC-24 (benchmark index scan) dan adapter crawling per sumber tetap lanjutan Sprint 2. **AC-30 lulus**: keenam runbook — [ingestion](runbooks/ingestion.md), conflict-review, merge, takedown, rollback, incident — tersimpan di repo dengan isi wajib sesuai [runbooks/README](runbooks/README.md); langkah SQL lima runbook baru diuji langkah demi langkah di PGlite dengan `docs/schema.sql` + `docs/seed.sql` (**74 pemeriksaan lulus pada 2026-10-09, termasuk jalur gagalnya** — constraint menolak, trigger, update 0 baris), dan pemeriksaan HTTP `incident.md` diverifikasi terhadap rute dev yang berjalan (`/api/health`, `/api/health/ready`, admin & cron fail-closed) plus integration test `tests/security/`. Catatan jujur: belum satu pun dieksekusi di instance Supabase produksi; bagian “Batas yang diketahui (jujur)” tiap runbook mencatat fitur yang memang belum ada (detektor konflik AC-15, tombol merge, penyimpanan formulir takedown, penulis `audit_logs`), sehingga prosedur hari ini dieksekusi lewat SQL admin sampai fitur itu dibangun. **AC-08 lulus di atas skema nyata**: `tests/ingestion/` menjalankan dataset yang sama tiga kali lewat jalur produksi (route impor → cron → pipeline) dan menuntut `records_created = 0` pada eksekusi kedua dan ketiga tanpa perubahan jumlah baris `characters`/`character_versions`/`statistics`/staging — bukti ini di PGlite (Postgres WASM) dengan klien yang disuntikkan, belum di instance Supabase. **AC-10 lulus pada tingkat kontrak**: kegagalan per record muncul di `ingestion_errors` dengan `error_type`, `http_status`, `retry_count`, pesan, dan `source_url`, terbaca lewat `GET /api/admin/ingestion/jobs/:id/errors` serta panel `/admin/ingestion` (yang juga menampilkan retry/cancel dan riwayat percobaan). AC-25 lulus lewat lint arsitektur. AC-26 sebagian: rute admin lama dibatasi 6/menit (`run`, `import`) dan 30/menit (`metrics`), rute baru 300/jam (`jobs`, `errors`) dan 120/jam (`retry`, `cancel`), seluruhnya teruji di `tests/security/` + `tests/ingestion/`; `POST /api/battle/simulate` belum dibatasi. AC-28 belum dijalankan pada 500 pasangan acak — determinisme baru terbukti pada 39 kasus (AC-35). AC-29 lulus lewat kasus `incomplete-*`. Catatan varians: pada host lokal yang sibuk, run homepage sempat 77–94 (median 87) pada build yang sama — LHCI memakai agregasi `optimistic` (satu run terbaik dari 3) sehingga gerbang tidak flaky, dan agregasi itu kini dipatok eksplisit di `.lighthouserc.json`; follow-up: turunkan TBT homepage (audit berbobot 30) lalu pertimbangkan pengetatan ke `median`.
+**Status bukti per 2026-10-09** (jujur — AC yang belum lulus dilaporkan sebagai belum lulus): Lighthouse CI kini mengukur dengan **profil mobile** (emulasi perangkat + slow 4G — default Lighthouse, persis target §29.1) dan menegakkan kelima anggaran sebagai `error`. **AC-21 lulus** (Performance best-of-3 94–96 pada 5 URL build produksi), **AC-22 lulus** (Accessibility 100, SEO 100 — heading order, kontras `ink-3`, pembeda tautan, dan self-canonical halaman legal diperbaiki), dan **AC-23 lulus dengan anggaran terkalibrasi 150 KB** (`resource-summary:script:size` 142.277 B pada setiap URL; rasional di catatan bawah). **AC-27 lulus pada dua lapis**: jalur request menolak URL di luar allow-list sebelum satu baris antrian ditulis (`http://169.254.169.254/…` dan `http://localhost/…` tidak pernah masuk antrian), dan worker menolak alamat privat/loopback bahkan ketika host-nya cocok allow-list — diuji di `tests/ingestion/`, termasuk redirect yang diikuti manual agar guard tidak dapat dilewati `302 Location`; AC-24 (benchmark index scan) dan adapter crawling per sumber tetap lanjutan Sprint 2. **AC-30 lulus**: keenam runbook wajib — [ingestion](runbooks/ingestion.md), conflict-review, merge, takedown, rollback, incident — ditambah [schema-migrations](runbooks/schema-migrations.md) dan [backup-restore](runbooks/backup-restore.md) — tersimpan di repo dengan isi wajib sesuai [runbooks/README](runbooks/README.md); langkah SQL lima runbook baru diuji langkah demi langkah di PGlite dengan `docs/schema.sql` + `docs/seed.sql` (**74 pemeriksaan lulus pada 2026-10-09, termasuk jalur gagalnya** — constraint menolak, trigger, update 0 baris), dan pemeriksaan HTTP `incident.md` diverifikasi terhadap rute dev yang berjalan (`/api/health`, `/api/health/ready`, admin & cron fail-closed) plus integration test `tests/security/`. Catatan jujur: belum satu pun dieksekusi di instance Supabase produksi; bagian “Batas yang diketahui (jujur)” tiap runbook mencatat fitur yang memang belum ada (detektor konflik AC-15, tombol merge, penyimpanan formulir takedown; penulis `audit_logs` kini ada untuk import/run/retry/cancel, sedangkan takedown/merge masih manual), sehingga prosedur hari ini dieksekusi lewat SQL admin sampai fitur itu dibangun. **AC-08 lulus di atas skema nyata**: `tests/ingestion/` menjalankan dataset yang sama tiga kali lewat jalur produksi (route impor → cron → pipeline) dan menuntut `records_created = 0` pada eksekusi kedua dan ketiga tanpa perubahan jumlah baris `characters`/`character_versions`/`statistics`/staging — bukti ini di PGlite (Postgres WASM) dengan klien yang disuntikkan, belum di instance Supabase. **AC-10 lulus pada tingkat kontrak**: kegagalan per record muncul di `ingestion_errors` dengan `error_type`, `http_status`, `retry_count`, pesan, dan `source_url`, terbaca lewat `GET /api/admin/ingestion/jobs/:id/errors` serta panel `/admin/ingestion` (yang juga menampilkan retry/cancel dan riwayat percobaan). AC-25 lulus lewat lint arsitektur. AC-26 sebagian: rute admin lama dibatasi 6/menit (`run`, `import`) dan 30/menit (`metrics`), rute baru 300/jam (`jobs`, `errors`) dan 120/jam (`retry`, `cancel`), seluruhnya teruji di `tests/security/` + `tests/ingestion/`; `POST /api/battle/simulate` belum dibatasi. AC-28 belum dijalankan pada 500 pasangan acak — determinisme baru terbukti pada 39 kasus (AC-35). AC-29 lulus lewat kasus `incomplete-*`. Catatan varians: pada host lokal yang sibuk, run homepage sempat 77–94 (median 87) pada build yang sama — LHCI memakai agregasi `optimistic` (satu run terbaik dari 3) sehingga gerbang tidak flaky, dan agregasi itu kini dipatok eksplisit di `.lighthouserc.json`; follow-up: turunkan TBT homepage (audit berbobot 30) lalu pertimbangkan pengetatan ke `median`.
 
 **Catatan AC-23 — kalibrasi anggaran (keputusan 2026-10-09, D22; perlu konfirmasi produk).** Target awal `< 120 KB gzip` terbukti **tidak dapat dicapai** pada stack ini, terlepas dari kode aplikasi: (1) transfer chunk framework bersama saja — React 19 + runtime Next.js App Router + entry + runtime Turbopack — ± 133 KB sebelum satu baris kode aplikasi dihitung; (2) seluruh 10 opsi optimasi ukuran Turbopack plus `clientRouterFilter: false` diuji dan total hanya menghemat ± 0,6 KB (perubahan di-revert); (3) `next start` hanya menyajikan gzip; bahkan estimasi brotli hipotetis tetap ± 122,5 KB > 120 KB. Anggaran karena itu diselaraskan ke **≤ 150 KB transfer per URL** (± 5% headroom di atas hasil ukur 142,3 KB) dan tetap ditegakkan `error` — gerbang CI yang mustahil lulus tidak menjaga apa pun. **Asumsi yang dipakai:** yang dianggarkan adalah transfer script aktual (gzip + header HTTP) per URL template pada profil mobile — persis cara audit `resource-summary:script:size` mengukur; angka §29.3 yang lebih tua (80–110 KB) ditandai non-enforced di sana. Bila produk tetap menghendaki plafon 120 KB mutlak, dibutuhkan keputusan arsitektur yang lebih besar (mis. evaluasi rendering non-React atau anggaran per-lapis) — di luar scope Sprint 1 dan dicatat sebagai follow-up.
 
@@ -1837,7 +1842,7 @@ Skala: Dampak (1–5) × Kemungkinan (1–5) = severity.
 | Validasi | zod (boundary API) + generated types dari DB | Valibot | Satu sumber kebenaran validasi; bagus dengan TypeScript |
 | Database | PostgreSQL 15+ (Supabase managed) | Neon, RDS | FTS + `pg_trgm` + `unaccent` + JSONB + RLS dalam satu mesin → menghapus kebutuhan search engine di MVP |
 | ORM / query | Driver `postgres` (postgres.js) di belakang antarmuka `SqlClient` yang diinjeksi + SQL/RPC untuk query agregat; migrasi SQL versioned | Prisma, Drizzle, supabase-js | Kontrol penuh atas query (penting untuk tuning & indexing); menghindari ORM yang menyembunyikan N+1; satu pintu database memudahkan pengujian tanpa DB nyata (implementasi `SqlClient` diinjeksi: PGlite untuk skema, postgres.js untuk runtime) |
-| Auth | Supabase Auth (magic link + OAuth, MFA admin) | Clerk, Auth.js | Sudah sepaket dengan DB & RLS → kontrol akses per-baris tanpa lapisan tambahan |
+| Auth | Supabase Auth email/password + TOTP (MFA admin/owner) | Clerk, Auth.js | Sudah sepaket dengan DB & RLS → kontrol akses per-baris tanpa lapisan tambahan |
 | Storage & CDN | Supabase Storage + `next/image` | S3 + CloudFront | Sederhana; transformasi gambar terbantu |
 | Queue / jobs | Tabel `ingestion_jobs` + cron platform (Vercel Cron) | Upstash QStash, Redis+BullMQ | Transaksional, dapat diaudit, tanpa broker tambahan pada MVP; upgrade path jelas |
 | Cache | ISR + Next `unstable_cache` + Upstash Redis (KV) | Redis mandiri | Murah, serverless, cukup untuk invalidation key-level |
@@ -1865,11 +1870,12 @@ anime-vs-battle/
 │  │  ├─ character/[slug]/
 │  │  │  ├─ page.tsx                    # Halaman karakter (SSR/ISR)
 │  │  │  ├─ form/[formSlug]/page.tsx    # Halaman form bernilai konten tinggi (canonical sendiri)
-│  │  │  └─ opengraph-image.tsx
+│  │  │  └─ opengraph-image.tsx        # (karakter) — OG matchup dilayani route handler
 │  │  ├─ verse/[slug]/page.tsx
 │  │  ├─ versus/
 │  │  │  ├─ page.tsx                    # VS builder
-│  │  │  └─ [matchup]/page.tsx          # Permalink deterministik + OG image
+│  │  │  └─ [...matchup]/page.tsx       # Permalink deterministik (catch-all: slug memuat `/`)
+│  │  ├─ og/versus/[...matchup]/route.tsx # OG image 1200×630 (route handler; konvensi opengraph-image ditolak di catch-all)
 │  │  ├─ compare/page.tsx
 │  │  ├─ search/page.tsx
 │  │  ├─ legal/{terms,privacy,takedown,methodology}/page.tsx
@@ -1970,7 +1976,7 @@ anime-vs-battle/
 │  ├─ ingestion/                        # idempotency, resume, rate limit, robots
 │  └─ e2e/                              # Playwright: search → battle → share
 ├─ scripts/
-│  ├─ validate-schema.mjs               # [ada] eksekusi schema+seed di PostgreSQL, 56 uji
+│  ├─ validate-schema.mjs               # [ada] eksekusi schema+seed di PostgreSQL, 59 uji
 │  ├─ run-battle-cases.mjs              # [ada] runner AC-31..34, 425 pemeriksaan
 │  ├─ mutate-battle-guards.mjs          # [ada] uji mutasi guard AC-36 (6 mutasi)
 │  ├─ check-architecture.mjs            # [ada] fixture + false-positive + 4 invarian, 38 pemeriksaan
@@ -1981,20 +1987,26 @@ anime-vs-battle/
 │  └─ import-dataset.ts
 ├─ docs/
 │  ├─ PRD.md · APPENDICES.md · schema.sql · seed.sql
-│  └─ runbooks/{ingestion.md,conflict-review.md,merge.md,takedown.md,rollback.md,incident.md}
-└─ .github/workflows/{ci.yml,lighthouse.yml,scheduled-ingest.yml}
+│  └─ runbooks/{ingestion.md,conflict-review.md,merge.md,takedown.md,rollback.md,incident.md,schema-migrations.md,backup-restore.md}
+└─ .github/workflows/{ci.yml,lighthouse.yml,scheduled-ingest.yml,refresh-views.yml}
 ```
 
-> **Status penegakan CI (diperbarui):** ketiga workflow pada pohon di atas
-> **telah terpasang** di `.github/workflows/`. `ci.yml` menjalankan sembilan
-> gerbang (typecheck, lint, schema, battle-cases, guards, architecture,
-> test engine+security+web+lint-rules+config, build produksi); `lighthouse.yml`
-> menegakkan anggaran §29.1 (AC-21, AC-22, dan AC-23 semuanya `error`;
-> anggaran script dikalibrasi 150 KB — §35.2);
-> `scheduled-ingest.yml` adalah pemicu cron */15m yang fail-closed hingga
-> deployment produksi tersedia. Guard rute admin memakai bearer secret
-> (`ADMIN_INGESTION_SECRET`) sebagai jembatan §28 sebelum Supabase Auth + RLS
-> + MFA (Sprint 4).
+> **Status penegakan CI (diperbarui 2026-11-04):** keempat workflow pada pohon
+> di atas **telah terpasang** di `.github/workflows/`. `ci.yml` menjalankan
+> sembilan gerbang (typecheck, lint, schema 59 uji, battle-cases, guards,
+> architecture, test engine+security+web+ingestion+db+lint-rules+config, build
+> produksi) ditambah `npm audit --audit-level=high`; dua job database menjalankan
+> migrasi dari nol → drift `docs/schema.sql` → RLS JWT + `REFRESH ... CONCURRENTLY`
+> pada Postgres 16, serta `pg_dump`/`pg_restore` → `verify:restore`.
+> `lighthouse.yml` menegakkan anggaran §29.1 (AC-21, AC-22, dan AC-23 semuanya
+> `error`; anggaran script dikalibrasi 150 KB — §35.2); `scheduled-ingest.yml`
+> adalah pemicu cron */15m yang fail-closed hingga deployment produksi tersedia;
+> `refresh-views.yml` me-refresh ketiga MV setiap jam dan dilewati dengan pesan
+> jelas bila `DATABASE_URL` belum disetel. Dependabot mingguan (npm + Actions)
+> aktif; branch protection yang harus diaktifkan manual didokumentasikan di
+> [BRANCH_PROTECTION.md](BRANCH_PROTECTION.md). Panel dan rute admin memakai
+> Supabase Auth (email/password + TOTP), `user_roles`, dan `audit_logs`; admin/owner
+> wajib `aal2`. `CRON_SECRET` tetap khusus untuk `/api/cron/*`.
 
 **Aturan arsitektur yang ditegakkan tooling**
 
@@ -2039,7 +2051,7 @@ Asumsi kapasitas: 1–2 full-stack engineer + 1 data curator part-time. Durasi d
 | Deliverable | Detail |
 |---|---|
 | Repo & CI | Next.js (App Router) + TS strict + Tailwind; lint/typecheck/unit/Lighthouse pipeline. Lint batas arsitektur (§39.1) termasuk di sini karena dibangun sebelum kode yang harus dijaganya |
-| Skema & migrasi | `schema.sql` dijalankan via migrasi versioned; seed tier/stat scale/kategori ability |
+| Skema & migrasi | Tujuh migrasi (`0001`–`0007`) dijalankan dari nol dengan checksum di `animebattle.schema_migrations`; `docs/schema.sql` dibandingkan di CI; seed tier/stat scale/kategori ability |
 | Auth & role | Supabase Auth; `user_roles`; guard `/admin` |
 | Design token | Palet dark, tipografi, spacing, komponen badge tier & stat card |
 | **Exit criteria** | CI hijau; admin dapat login; migrasi & seed reprodusibel dari nol |
@@ -2074,7 +2086,7 @@ Asumsi kapasitas: 1–2 full-stack engineer + 1 data curator part-time. Durasi d
 | Hax engine | `hax_interactions` + matriks §15.3 + efek kondisi §16.4 |
 | VS builder & hasil | `/versus`, blok hasil lengkap, disclaimer |
 | Comparison mode | `/compare` + indicator |
-| Battle cache & permalink | `input_hash`, `/versus/[matchup]`, OG image |
+| Battle cache & permalink | `input_hash` berversi + cache `battle_results.result_payload`, `/versus/[...matchup]` (kanonik + 308), OG image `/og/versus/[...matchup]`, JSON-LD, sitemap matchup populer — **terpenuhi 2026-11-05** |
 | Case library | ≥ 30 kasus uji (AC-31) |
 | **Exit criteria** | AC-03, AC-05, AC-06, AC-13, AC-14, AC-28, AC-29, AC-31–34 lulus |
 
@@ -2084,7 +2096,7 @@ Asumsi kapasitas: 1–2 full-stack engineer + 1 data curator part-time. Durasi d
 |---|---|
 | Konflik & merge | Conflict queue + UI diff; merge candidates + redirect 301 |
 | Rule & tier editor | Editor bobot dengan preview dampak; manage tier/ability/resistance |
-| Keamanan | Rate limiting, CSRF, CSP, SSRF guard, audit log, uji injeksi |
+| Keamanan | Rate limiting (**terdistribusi untuk route publik, 2026-11-05**; in-process untuk admin), CSRF, CSP, SSRF guard, audit log, uji injeksi |
 | Performa | Tuning index, MV, image optimization, bundle budget |
 | Ingestion terjadwal | Cron incremental + full mingguan; alert error rate |
 | **Exit criteria** | AC-17, AC-18, AC-20, AC-26, AC-30 lulus; semua AC §35 tervalidasi |

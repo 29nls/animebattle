@@ -1,12 +1,14 @@
 # CI — Anime VS Battle
 #
-# Menjalankan kesembilan gerbang verifikasi pada setiap push (dan pull request).
-# Angka yang diharapkan tiap gerbang terdokumentasi di README.md ("Verifikasi")
-# dan docs/CONTRIBUTING.md; test engine, web, dan ingestion menuntut Node >= 22
-# (type stripping).
-# Penjaga schema (validate:schema) memakai PGlite (Postgres 16 WASM) — bekerja
-# penuh di runner Linux tanpa jaringan/outbound tambahan.
+# Gerbang verifikasi pada setiap push dan pull request:
+#   - 9 gerbang PGlite/unit/arsitektur/build (job `verify`)
+#   - npm audit high/critical sebagai gerbang (job `verify`)
+#   - migrasi dari nol + drift docs/schema.sql + RLS JWT + REFRESH CONCURRENTLY
+#     pada service container PostgreSQL 16 (job `database`)
+#   - uji restore pg_dump/pg_restore ke database terpisah (job `backup-restore`)
 #
+# Angka yang diharapkan tiap gerbang ada di README.md ("Verifikasi") dan
+# docs/CONTRIBUTING.md; angka itu diperbarui hanya dari hasil run nyata.
 name: CI
 
 on:
@@ -14,8 +16,6 @@ on:
     branches: ['**']
   pull_request:
 
-# Batalkan run lama pada branch yang sama supaya tidak menumpuk gerbang
-# berat (validate:schema / check:battle-guards) berjalan paralel.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   verify:
-    name: Verifikasi lengkap (9 gerbang)
+    name: Verifikasi lengkap (9 gerbang + audit)
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -41,38 +41,139 @@ jobs:
       - name: Install dependensi (npm ci)
         run: npm ci
 
-      # ── Gerbang 1: typecheck ─────────────────────────────────────────────
+      # ── Gerbang audit: high/critical harus nol ───────────────────────────
+      - name: Gerbang 0 · Audit dependensi (high/critical)
+        run: npm audit --audit-level=high
+
+      # ── Gerbang 1: typecheck ────────────────────────────────────────────
       - name: Gerbang 1 · Typecheck
         run: npm run typecheck
 
-      # ── Gerbang 2: lint batas arsitektur ─────────────────────────────────
+      # ── Gerbang 2: lint batas arsitektur ───────────────────────────────
       - name: Gerbang 2 · Lint batas arsitektur
         run: npm run lint
 
-      # ── Gerbang 3: schema + seed di Postgres WASM ───────────────────────
-      - name: Gerbang 3 · Schema (56 uji)
+      # ── Gerbang 3: schema + seed di Postgres WASM ──────────────────────
+      - name: Gerbang 3 · Schema (59 uji)
         run: npm run validate:schema
 
-      # ── Gerbang 4: case library AC-31..34 ─────────────────────────────────
+      # ── Gerbang 4: case library AC-31..34 ──────────────────────────────
       - name: Gerbang 4 · Battle cases (425 pemeriksaan)
         run: npm run validate:battle-cases
 
-      # ── Gerbang 5: mutasi guard AC-36 ────────────────────────────────────
-      - name: Gerbang 5 · Battle guards (6/6 mutasi tertangkap)
+      # ── Gerbang 5: mutasi guard AC-36 ─────────────────────────────────
+      - name: Gerbang 5 · Battle guards
         run: npm run check:battle-guards
 
-      # ── Gerbang 6: invarian arsitektur ─────────────────────────────────
+      # ── Gerbang 6: invarian arsitektur ────────────────────────────────
       - name: Gerbang 6 · Architecture (38 pemeriksaan)
         run: npm run check:architecture
 
-      # ── Gerbang 7+8: engine + security + web + ingestion + lint/anggaran ─
-      # Suite ingestion menjalankan pipeline + route admin di atas PGlite
-      # (Postgres WASM) — sama seperti Gerbang 3, tanpa jaringan tambahan.
-      - name: Gerbang 7+8 · Unit engine, security, web, ingestion, lint rules & anggaran (226+62+46+31+3+4 = 372)
+      # ── Gerbang 7+8: unit engine/security/web/ingestion/db + aturan ──
+      - name: Gerbang 7+8 · Unit test (engine, security, web, ingestion, db, lint, lighthouse)
         run: npm test
 
-      # ── Gerbang 9: build produksi (next build) ─────────────────────────
-      # Menangkap regresi routing/serialiasi RSC yang tidak terlihat oleh
-      # typecheck: halaman yang gagal render server-side tetap lolos tsc.
+      # ── Gerbang 9: build produksi ─────────────────────────────────────
       - name: Gerbang 9 · Build produksi (next build)
         run: npm run build
+
+  database:
+    name: Migrasi + drift + Postgres nyata (RLS JWT, MV CONCURRENTLY)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: animebattle
+          POSTGRES_PASSWORD: animebattle_ci
+          POSTGRES_DB: animebattle_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U animebattle -d animebattle_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://animebattle:animebattle_ci@localhost:5432/animebattle_ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependensi (npm ci)
+        run: npm ci
+
+      # Dari database kosong: 0001 → 0002, dicatat di schema_migrations.
+      - name: Terapkan semua migrasi dari nol
+        run: npm run migrate
+
+      # Baseline PGlite (docs/schema.sql) vs database hasil migrasi.
+      - name: Drift docs/schema.sql vs database hasil migrasi
+        run: npm run check:schema-drift
+
+      # RLS berbasis request.jwt.claims + REFRESH ... CONCURRENTLY.
+      - name: Verifikasi RLS JWT + REFRESH CONCURRENTLY
+        run: npm run verify:postgres
+
+  backup-restore:
+    name: Uji restore pg_dump/pg_restore
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: animebattle
+          POSTGRES_PASSWORD: animebattle_ci
+          POSTGRES_DB: animebattle_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U animebattle -d animebattle_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://animebattle:animebattle_ci@localhost:5432/animebattle_ci
+      RESTORE_DATABASE_URL: postgres://animebattle:animebattle_ci@localhost:5432/animebattle_restore
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependensi (npm ci)
+        run: npm ci
+
+      - name: Migrasi + seed database sumber
+        run: |
+          npm run migrate
+          npm run seed:db
+
+      - name: Buat database tujuan restore
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c 'create database animebattle_restore'
+
+      - name: Dump logis
+        run: |
+          pg_dump "$DATABASE_URL" \
+            --format=custom --no-owner --no-acl \
+            --file=/tmp/animebattle.dump
+          ls -lh /tmp/animebattle.dump
+
+      - name: Restore ke database terpisah
+        run: pg_restore --no-owner --no-acl --dbname="$RESTORE_DATABASE_URL" /tmp/animebattle.dump
+
+      # Membandingkan migrasi, relasi, jumlah baris, fungsi, dan policy.
+      - name: Verifikasi restore identik dengan sumber
+        run: npm run verify:restore

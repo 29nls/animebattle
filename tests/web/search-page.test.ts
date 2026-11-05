@@ -47,7 +47,13 @@ const ANIME_VERSE = 'search-fixture-anime';
 /** Envelope satu karakter; `native_name` dipakai untuk menguji pencarian Kanji. */
 function dataset(
   verse: { slug: string; name: string; media: 'manga' | 'anime' },
-  character: { slug: string; name: string; native_name: string | null; media: 'manga' | 'anime' },
+  character: {
+    slug: string;
+    name: string;
+    native_name: string | null;
+    media: 'manga' | 'anime';
+    aliases?: Array<{ alias: string; script: 'latin' | 'kanji' | 'kana' | 'hangul' | 'cyrillic' | 'other' }>;
+  },
 ): DatasetEnvelope {
   return {
     parser_version: 'dataset-json@1.0.0',
@@ -72,6 +78,7 @@ function dataset(
         origin: verse.name,
         media_type: character.media,
         source_url: `dataset://search-fixture/${character.slug}`,
+        aliases: character.aliases ?? [],
         forms: [
           {
             slug: 'default',
@@ -136,10 +143,23 @@ before(async () => {
     },
   };
 
+  // Alias kini datang dari **impor dataset**, bukan INSERT manual: inilah yang
+  // membuktikan jalur impor benar-benar menulis `character_aliases` (sebelumnya
+  // kolom itu hanya terisi lewat SQL langsung, sehingga data hasil impor tidak
+  // pernah bisa ditemukan lewat alias).
   await importCharacter(
     dataset(
       { slug: MANGA_VERSE, name: 'Search Fixture Manga', media: 'manga' },
-      { slug: 'sun-wukong', name: 'Sun Wukong', native_name: '孫悟空', media: 'manga' },
+      {
+        slug: 'sun-wukong',
+        name: 'Sun Wukong',
+        native_name: '孫悟空',
+        media: 'manga',
+        aliases: [
+          { alias: 'The Great Sage', script: 'latin' },
+          { alias: '孫行者', script: 'kanji' },
+        ],
+      },
     ),
   );
   await importCharacter(
@@ -147,14 +167,6 @@ before(async () => {
       { slug: ANIME_VERSE, name: 'Search Fixture Anime', media: 'anime' },
       { slug: 'monkey-king-junior', name: 'Monkey King Junior', native_name: null, media: 'anime' },
     ),
-  );
-
-  // Alias ditulis langsung: jalur impor dataset belum membawa daftar alias
-  // (temuan terpisah, dicatat di laporan). Yang diuji di sini adalah sisi
-  // pencariannya — `character_aliases.alias_norm` harus benar-benar cocok.
-  await sql.query(
-    `insert into character_aliases (character_id, alias, script)
-     select c.id, 'The Great Sage', 'latin' from characters c where c.slug = 'sun-wukong'`,
   );
 });
 
@@ -248,5 +260,78 @@ describe('pencarian berhalaman di atas skema sungguhan', () => {
     const empty = await searchCharacterPage(sql, { query: '   ' });
     assert.equal(empty.total, 0);
     assert.deepEqual(empty.rows, []);
+  });
+
+  it('alias hasil impor tersimpan dengan script yang benar dan dapat dicari', async () => {
+    const rows = await sql.query<{ alias: string; script: string; source_id: string | null }>(
+      `select a.alias, a.script, a.source_id
+         from character_aliases a join characters c on c.id = a.character_id
+        where c.slug = 'sun-wukong' order by a.alias`,
+    );
+    assert.deepEqual(
+      rows.map((row) => [row.alias, row.script]),
+      [
+        ['The Great Sage', 'latin'],
+        ['孫行者', 'kanji'],
+      ],
+      'alias dari dataset harus tertulis, bukan hanya alias bawaan nama',
+    );
+    for (const row of rows) {
+      assert.ok(row.source_id, 'setiap alias wajib punya source_id (aturan sumber fakta)');
+    }
+
+    // Alias Kanji tidak ada di nama/native_name; satu-satunya jalan menemukannya
+    // adalah cabang alias pada RPC.
+    const kanji = await searchCharacterPage(sql, { query: '孫行者' });
+    assert.equal(kanji.rows[0]?.slug, 'sun-wukong');
+  });
+
+  it('impor ulang tidak menggandakan alias (idempoten)', async () => {
+    const before = await sql.query<{ total: string }>(`select count(*)::text as total from character_aliases`);
+    await importCharacter(
+      dataset(
+        { slug: MANGA_VERSE, name: 'Search Fixture Manga', media: 'manga' },
+        {
+          slug: 'sun-wukong',
+          name: 'Sun Wukong',
+          native_name: '孫悟空',
+          media: 'manga',
+          aliases: [
+            { alias: 'The Great Sage', script: 'latin' },
+            { alias: '孫行者', script: 'kanji' },
+          ],
+        },
+      ),
+    );
+    const after = await sql.query<{ total: string }>(`select count(*)::text as total from character_aliases`);
+    assert.equal(after[0]?.total, before[0]?.total);
+  });
+
+  it('default types hanya karakter; types=verse menambah verse tanpa duplikat', async () => {
+    const charactersOnly = await searchCharacterPage(sql, { query: 'fixture' });
+    assert.equal(charactersOnly.total, 2);
+    assert.ok(charactersOnly.rows.every((row) => row.type === 'character'));
+
+    // Nama verse ikut cocok (bobot B di search_vector), jadi permintaan
+    // lintas-tipe harus mengembalikan dua karakter **dan** dua verse.
+    const both = await searchCharacterPage(sql, {
+      query: 'fixture',
+      types: ['character', 'verse'],
+    });
+    assert.equal(both.total, 4);
+    const types = new Set(both.rows.map((row) => row.type));
+    assert.deepEqual([...types].sort(), ['character', 'verse']);
+
+    const versesOnly = await searchCharacterPage(sql, { query: 'fixture', types: ['verse'] });
+    assert.equal(versesOnly.total, 2);
+    assert.ok(versesOnly.rows.every((row) => row.type === 'verse'));
+    assert.equal(versesOnly.rows[0]?.verse_slug, versesOnly.rows[0]?.slug);
+  });
+
+  it('types duplikat tidak menggandakan baris', async () => {
+    const once = await searchCharacterPage(sql, { query: 'fixture', types: ['verse'] });
+    const twice = await searchCharacterPage(sql, { query: 'fixture', types: ['verse', 'verse'] });
+    assert.equal(twice.total, once.total);
+    assert.equal(twice.rows.length, once.rows.length);
   });
 });

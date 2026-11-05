@@ -21,18 +21,30 @@ import {
   isDatabaseUnavailable,
 } from '@/lib/db/client.ts';
 import { apiError } from '@/lib/errors.ts';
+import { searchCacheHeaders } from '@/lib/http-cache.ts';
+import { enforcePublicRateLimit } from '@/lib/security/distributed-rate-limit.ts';
 import { searchCharacterPage } from '@/features/characters/queries.ts';
 import { parseSearchQuery } from '@/features/characters/search-params.ts';
 import type { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * Kuota PRD §24: 60/menit/IP. Diperiksa **sebelum** database data disentuh,
+ * tetapi sesudah validasi parameter: permintaan yang jelas salah tetap dijawab
+ * 400, bukan menghabiskan kuota.
+ */
+const RATE_LIMIT = { scope: 'search', limit: 60, windowMs: 60_000 } as const;
+
 export async function GET(request: NextRequest) {
   const parsed = parseSearchQuery(request.nextUrl.searchParams);
   if (!parsed.ok) {
     return apiError('INVALID_INPUT', parsed.message, 400);
   }
-  const { q, verseSlug, media, page, perPage } = parsed.value;
+  const { q, verseSlug, media, page, perPage, types } = parsed.value;
+
+  const limited = await enforcePublicRateLimit(request.headers, RATE_LIMIT);
+  if (limited) return limited;
 
   try {
     const sql = getSqlClient();
@@ -42,15 +54,23 @@ export async function GET(request: NextRequest) {
       media,
       page,
       perPage,
+      types,
     });
 
-    return Response.json({
-      data: result.rows,
-      page,
-      per_page: perPage,
-      total: result.total,
-      has_more: page * perPage < result.total,
-    });
+    // Hasil anonim dan identik untuk semua pemanggil: aman di-cache bersama.
+    // Header hanya dipasang pada respons sukses — galat 400/500/503 tidak boleh
+    // tersimpan di edge, karena penyebabnya bisa sementara (DB down) dan
+    // permintaan berikutnya berhak mendapat jawaban segar.
+    return Response.json(
+      {
+        data: result.rows,
+        page,
+        per_page: perPage,
+        total: result.total,
+        has_more: page * perPage < result.total,
+      },
+      { headers: searchCacheHeaders() },
+    );
   } catch (error) {
     // Konfigurasi yang hilang: pesannya operasional (menyebut env yang kurang),
     // aman ditampilkan dan berguna bagi operator.

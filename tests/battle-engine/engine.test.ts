@@ -12,7 +12,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { computeInputHash, ENGINE_VERSION, runBattle } from '../../src/services/battle/engine.ts';
+import {
+  computeInputHash,
+  DATASET_VERSION,
+  ENGINE_VERSION,
+  runBattle,
+} from '../../src/services/battle/engine.ts';
 import type { MetricValues, SideData } from '../../src/services/battle/types.ts';
 import { DISCLAIMER } from '../../src/services/battle/types.ts';
 import {
@@ -132,6 +137,46 @@ describe('input_hash', () => {
     );
   });
 });
+
+  it('menyamakan kunci metrik yang absen dengan kunci bernilai null', () => {
+    // Regresi 2026-10-10: dataset lama tidak mengirim kunci `experience`
+    // sama sekali, sedangkan dataset sekarang mengirim `experience: null`.
+    // Keduanya berarti "tidak terdokumentasi" dan engine memperlakukannya
+    // identik — hash pun tidak boleh membedakannya, kalau tidak cache
+    // menyimpan dua hasil untuk satu pertanyaan yang sama.
+    const withKey = side({ version_id: "ver_x", metrics: { experience: null } });
+    const withoutKey = side({ version_id: "ver_x" });
+    delete (withoutKey.metrics as Record<string, unknown>).experience;
+
+    assert.equal(
+      computeInputHash(battleInput(withKey, weakerSideB()), defaultRuleSet),
+      computeInputHash(battleInput(withoutKey, weakerSideB()), defaultRuleSet),
+    );
+  });
+
+  it('membedakan nilai null dari nilai yang terdokumentasi', () => {
+    const unknown = side({ version_id: "ver_x", metrics: { range: null } });
+    const known = side({ version_id: "ver_x", metrics: { range: 4 } });
+    assert.notEqual(
+      computeInputHash(battleInput(unknown, weakerSideB()), defaultRuleSet),
+      computeInputHash(battleInput(known, weakerSideB()), defaultRuleSet),
+    );
+  });
+
+  it('memasukkan dataset_version sehingga perubahan kontrak membatalkan cache', () => {
+    const base = battleInput(strongerSideA(), weakerSideB());
+    const newer = { ...base, dataset_version: `${DATASET_VERSION}+next` };
+    assert.notEqual(
+      computeInputHash(base, defaultRuleSet),
+      computeInputHash(newer, defaultRuleSet),
+    );
+    // Pemanggil yang tidak menyebut versi memakai versi kontrak saat ini —
+    // bukan string kosong yang membuat hash bergantung pada kebetulan.
+    assert.equal(
+      computeInputHash(base, defaultRuleSet),
+      computeInputHash({ ...base, dataset_version: DATASET_VERSION }, defaultRuleSet),
+    );
+  });
 
 describe('kemurnian (bebas I/O)', () => {
   it('tidak menyentuh waktu maupun keacakan selama perhitungan', () => {

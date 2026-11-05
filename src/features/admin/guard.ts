@@ -1,31 +1,30 @@
 /**
- * Pembungkus guard + rate limit untuk rute `/api/admin/*`.
+ * Guard async untuk `/api/admin/*`.
  *
- * Tiga rute admin yang lebih dulu ada menyalin blok `reject()` yang sama.
- * Menyalinnya untuk setiap rute baru berarti setiap rute baru berpeluang
- * mengubah urutan pemeriksaan (auth dulu, baru rate limit) atau lupa salah
- * satunya. Helper ini menutup peluang itu: urutannya satu tempat, dan pesan
- * 503/401/429 yang dihasilkan identik dengan yang sudah diuji di
- * `tests/security/`.
- *
- * Zona `web-request`: memakai `apiError` (node-runtime) dan `adminGuard`
- * (node-runtime) — keduanya boleh diimpor jalur request; tidak ada ingestion.
+ * Urutan: sesi Supabase (503/401/403) → peran minimum → rate limit per user.
+ * Rate limit memakai `user_id`, bukan header yang dapat dipalsukan; sesi tanpa
+ * identitas sudah ditolak sebelum limiter dipanggil.
  */
 
 import { apiError } from '../../lib/errors.ts';
-import { adminGuard } from '../../lib/security/admin-guard.ts';
+import {
+  getAdminAuth,
+  type AdminAccessLevel,
+  type AdminIdentity,
+} from './auth.ts';
 import { FixedWindowRateLimiter } from '../../lib/security/rate-limiter.ts';
 
-const ADMIN_SECRET_ENV = 'ADMIN_INGESTION_SECRET';
-
 export interface AdminGuardOptions {
-  /** Jumlah permintaan maksimum dalam satu jendela. */
   limit: number;
-  /** Panjang jendela dalam milidetik (mis. 3_600_000 untuk batas per jam). */
   windowMs: number;
+  /** Default `viewer`; mutasi memakai `editor`, aksi admin memakai `admin`. */
+  minLevel?: AdminAccessLevel;
 }
 
-/** Limiter dibuat sekali per kombinasi (limit, jendela) agar jendelanya tidak direset tiap request. */
+export type AdminGuardResult =
+  | { ok: true; identity: AdminIdentity }
+  | { ok: false; response: Response };
+
 const limiters = new Map<string, FixedWindowRateLimiter>();
 
 function limiterFor(options: AdminGuardOptions): FixedWindowRateLimiter {
@@ -38,20 +37,30 @@ function limiterFor(options: AdminGuardOptions): FixedWindowRateLimiter {
   return limiter;
 }
 
-/** `null` bila permintaan boleh lanjut; `Response` siap kirim bila ditolak. */
-export function guardAdminRequest(request: Request, options: AdminGuardOptions): Response | null {
-  const auth = adminGuard(request, process.env, ADMIN_SECRET_ENV);
+export async function guardAdminRequest(
+  _request: Request,
+  options: AdminGuardOptions,
+): Promise<AdminGuardResult> {
+  const auth = await getAdminAuth(options.minLevel ?? 'viewer');
   if (!auth.ok) {
-    return apiError(auth.status === 503 ? 'UNAVAILABLE' : 'UNAUTHORIZED', auth.error, auth.status);
+    return {
+      ok: false,
+      response: apiError(auth.code, auth.message, auth.status, {
+        details: { reason: auth.reason },
+      }),
+    };
   }
 
-  const limit = limiterFor(options).check(auth.identity);
+  const limit = limiterFor(options).check(auth.identity.userId);
   if (!limit.allowed) {
-    return apiError('RATE_LIMITED', 'Terlalu banyak permintaan.', 429, {
-      details: { retry_after_ms: limit.retryAfterMs },
-      headers: { 'retry-after': String(Math.ceil(limit.retryAfterMs / 1000)) },
-    });
+    return {
+      ok: false,
+      response: apiError('RATE_LIMITED', 'Terlalu banyak permintaan.', 429, {
+        details: { retry_after_ms: limit.retryAfterMs },
+        headers: { 'retry-after': String(Math.ceil(limit.retryAfterMs / 1000)) },
+      }),
+    };
   }
 
-  return null;
+  return { ok: true, identity: auth.identity };
 }

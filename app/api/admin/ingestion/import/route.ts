@@ -1,14 +1,15 @@
 /**
- * `POST /api/admin/ingestion/import` — menerima URL atau scope untuk diimpor.
- * Hanya insert ke antrian (PRD AC-25: ingestion tidak di jalur request).
+ * `POST /api/admin/ingestion/import` — menerima URL atau dataset untuk diimpor.
  *
- * Keamanan (AC-26, PRD §28): guard Bearer fail-closed + rate limit 6/menit per
- * identitas (AC-26 menugaskan 60/jam untuk import). Tanpa secret → 503.
+ * Hanya staging + insert antrian (AC-25). Autentikasi sesi Supabase (editor)
+ * dan rate limit 6/menit per user. `created_by` dan aktor audit selalu berasal
+ * dari sesi, bukan body request.
  */
 
 import { apiError } from '@/lib/errors.ts';
-import { adminGuard } from '@/lib/security/admin-guard.ts';
-import { FixedWindowRateLimiter } from '@/lib/security/rate-limiter.ts';
+import { guardAdminRequest } from '@/features/admin/guard.ts';
+import { recordAdminAudit } from '@/features/admin/audit.ts';
+import { hashIp, requestIp } from '@/lib/security/ip-hash.ts';
 import { getSqlClient, isDatabaseUnavailable } from '@/lib/db/client.ts';
 import { enqueueIngestionJob } from '@/services/queue/ingestion-jobs.ts';
 import type { IngestionJobScope } from '@/services/queue/ingestion-jobs.ts';
@@ -20,23 +21,6 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-const limiter = new FixedWindowRateLimiter(6, 60_000, () => Date.now());
-
-function reject(request: Request): Response | null {
-  const auth = adminGuard(request, process.env, 'ADMIN_INGESTION_SECRET');
-  if (!auth.ok) {
-    return apiError(auth.status === 503 ? 'UNAVAILABLE' : 'UNAUTHORIZED', auth.error, auth.status);
-  }
-  const limit = limiter.check(auth.identity);
-  if (!limit.allowed) {
-    return apiError('RATE_LIMITED', 'Terlalu banyak permintaan.', 429, {
-      details: { retry_after_ms: limit.retryAfterMs },
-      headers: { 'retry-after': String(Math.ceil(limit.retryAfterMs / 1000)) },
-    });
-  }
-  return null;
-}
-
 const VALID_SCOPES: IngestionJobScope[] = [
   'incremental', 'scheduled_full', 'manual_run',
   'single_character', 'single_verse', 'reparse',
@@ -44,8 +28,12 @@ const VALID_SCOPES: IngestionJobScope[] = [
 ];
 
 export async function POST(request: Request): Promise<Response> {
-  const denied = reject(request);
-  if (denied) return denied;
+  const auth = await guardAdminRequest(request, {
+    limit: 6,
+    windowMs: 60_000,
+    minLevel: 'editor',
+  });
+  if (!auth.ok) return auth.response;
 
   let body: Record<string, unknown>;
   try {
@@ -54,16 +42,20 @@ export async function POST(request: Request): Promise<Response> {
     return apiError('INVALID_INPUT', 'Body harus berupa JSON.', 400);
   }
 
-  // Jalur impor terkelola: body memuat dataset lengkap. Penyiapan hanya
-  // men-stage + mengantrikan (lihat features/admin/import-requests.ts);
-  // parsing dan upsert tetap pekerjaan worker (AC-25). Pemeriksaan ini mendahului
-  // validasi `scope` karena pemanggil jalur ini memang tidak perlu menyebut
-  // scope — bentuk body-nya sendiri sudah menentukan job yang dibuat.
   if (body.dataset !== undefined) {
     try {
-      const staged = await stageDatasetImport(getSqlClient(), body.dataset, {
+      const sql = getSqlClient();
+      const staged = await stageDatasetImport(sql, body.dataset, {
         dryRun: body.dry_run === true,
-        createdBy: typeof body.created_by === 'string' ? body.created_by : undefined,
+        createdBy: auth.identity.userId,
+      });
+      await recordAdminAudit(sql, {
+        actorId: auth.identity.userId,
+        action: 'ingestion.import',
+        entityType: 'ingestion_job',
+        entityId: staged.job_id,
+        params: { mode: 'dataset', dry_run: body.dry_run === true },
+        ipHash: hashIp(requestIp(request.headers)),
       });
       return Response.json(
         {
@@ -96,13 +88,11 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const targetRef = typeof body.target_ref === 'string' ? body.target_ref : undefined;
+  const dryRun = typeof body.dry_run === 'boolean' ? body.dry_run : undefined;
+  const priority = typeof body.priority === 'number' ? body.priority : undefined;
 
   try {
     const sql = getSqlClient();
-
-    // Impor URL diperiksa terhadap allow-list **sebelum** masuk antrian: 409
-    // `SOURCE_DISABLED` adalah kontrak AC-19, dan admin sebaiknya tidak menunggu
-    // satu putaran worker hanya untuk diberi tahu URL-nya tidak diizinkan.
     let sourceId = typeof body.source_id === 'string' ? body.source_id : undefined;
     if (scope === 'import_url') {
       if (!targetRef) {
@@ -119,16 +109,25 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
 
-    const result = await enqueueIngestionJob(sql, {
+    const job = await enqueueIngestionJob(sql, {
       scope: scope as IngestionJobScope,
       target_ref: targetRef,
       source_id: sourceId,
-      priority: typeof body.priority === 'number' ? body.priority : undefined,
-      dry_run: typeof body.dry_run === 'boolean' ? body.dry_run : undefined,
-      created_by: typeof body.created_by === 'string' ? body.created_by : undefined,
+      priority,
+      dry_run: dryRun,
+      created_by: auth.identity.userId,
     });
 
-    return Response.json(result, { status: 201 });
+    await recordAdminAudit(sql, {
+      actorId: auth.identity.userId,
+      action: 'ingestion.import',
+      entityType: 'ingestion_job',
+      entityId: job.job_id,
+      params: { mode: 'scope', scope, target_ref: targetRef ?? null, dry_run: dryRun ?? false },
+      ipHash: hashIp(requestIp(request.headers)),
+    });
+
+    return Response.json(job, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return isDatabaseUnavailable(error)

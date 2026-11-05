@@ -1,12 +1,7 @@
 /**
  * `GET /api/admin/ingestion/jobs/:id/errors` — detail error satu job (AC-10).
  *
- * Yang dikembalikan sengaja bukan hanya pesan: `error_type`, `http_status`,
- * `retry_count`, `source_url`, dan `payload` mentahnya ikut disertakan, karena
- * gunanya adalah mereproduksi kegagalan parser offline (VA-3) dan menautkan
- * admin ke sumbernya (US-23).
- *
- * Keamanan (AC-26): guard Bearer fail-closed + 300 permintaan/jam, `no-store`.
+ * Sesi Supabase viewer + rate limit 300/jam; respons `no-store`.
  */
 
 import { apiError } from '@/lib/errors.ts';
@@ -20,8 +15,12 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const denied = guardAdminRequest(request, { limit: 300, windowMs: 3_600_000 });
-  if (denied) return denied;
+  const auth = await guardAdminRequest(request, {
+    limit: 300,
+    windowMs: 3_600_000,
+    minLevel: 'viewer',
+  });
+  if (!auth.ok) return auth.response;
 
   const { id } = await context.params;
   if (!/^[0-9a-f-]{36}$/i.test(id)) {

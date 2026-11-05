@@ -77,4 +77,6 @@ export const SMALL_TABLES = {
   user_roles: 'Satu baris per (pengguna, peran); tipis dan hanya dibaca saat otorisasi.',
   mv_verse_tier_distribution: 'Agregat distribusi tier per verse; beberapa baris per verse.',
   mv_battle_popularity: 'Agregat matchup populer; dibatasi jumlah matchup yang melewati ambang.',
+  rate_limit_windows:
+    'Satu baris per (bucket, jendela waktu); dibersihkan oportunistik dan hanya diakses lewat primary key oleh fungsi security definer.',
 };

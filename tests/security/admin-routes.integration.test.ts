@@ -1,136 +1,165 @@
 /**
- * Integration test rute admin — membuktikan kontrak keamanan pada level
- * handler Next.js, bukan hanya unit modulnya.
+ * Integration test rute admin — kontrak keamanan pada level handler Next.js.
  *
- * Yang dibuktikan di sini, dengan Request nyata dan TANPA database (route
- * wajib menolak sebelum menyentuh DB):
- *  1. Tanpa secret terkonfigurasi → 503 untuk SEMUA penelepon (fail-closed).
- *  2. Secret salah → 401.
- *  3. Secret benar → lolos guard; pada rute ingest, rute baru menyentuh DB.
- *     DB tidak dikonfigurasi → 503 berasal dari DatabaseNotConfiguredError,
- *     yang membuktikan guard LULUS sebelum penolakan DB (urutan yang benar).
- *  4. Rate limit 429 menempel pada rute saat auth lolos.
+ * Database tidak disentuh: provider sesi disuntik, dan route yang lolos guard
+ * berhenti pada `DatabaseNotConfiguredError` (503). Itu membuktikan urutan
+ * auth → peran → rate limit → DB, bukan hanya unit evaluator.
  */
 
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
-const ENV_KEY = 'ADMIN_INGESTION_SECRET';
+import {
+  setAdminAuthProviderForTests,
+  type AdminAuthSnapshot,
+} from '../../src/features/admin/auth.ts';
 
 const { POST: runPost } = await import('../../app/api/admin/ingestion/run/route.ts');
 const { POST: importPost } = await import('../../app/api/admin/ingestion/import/route.ts');
 const { GET: metricsGet } = await import('../../app/api/admin/metrics/route.ts');
 
-function jsonRequest(
-  url: string,
-  body: unknown,
-  headers: Record<string, string> = {},
-): Request {
+function jsonRequest(url: string, body: unknown): Request {
   return new Request(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
 }
 
-describe('integration — admin ingestion/run', () => {
-  beforeEach(() => {
-    delete process.env[ENV_KEY];
-    delete process.env.DATABASE_URL;
-  });
-  afterEach(() => {
-    delete process.env[ENV_KEY];
-    delete process.env.DATABASE_URL;
-  });
+function snapshot(overrides: Partial<AdminAuthSnapshot> = {}): AdminAuthSnapshot {
+  return {
+    configured: true,
+    user: { id: randomUUID(), email: 'admin@example.test', displayName: 'Admin Uji' },
+    roles: ['admin'],
+    aal: 'aal2',
+    expiresAt: 2_000_000_000,
+    now: 1_700_000_000_000,
+    ...overrides,
+  };
+}
 
-  it('503 fail-closed tanpa secret — tanpa menyentuh DB', async () => {
+function useSnapshot(value: AdminAuthSnapshot): void {
+  setAdminAuthProviderForTests(async () => value);
+}
+
+async function errorBody(response: Response) {
+  return (await response.json()) as {
+    error: { code: string; message: string; details?: { reason?: string } };
+  };
+}
+
+beforeEach(() => {
+  delete process.env.DATABASE_URL;
+  setAdminAuthProviderForTests(null);
+});
+
+afterEach(() => {
+  setAdminAuthProviderForTests(null);
+  delete process.env.DATABASE_URL;
+});
+
+describe('integration — admin auth fail-closed', () => {
+  it('503 tanpa konfigurasi Supabase Auth', async () => {
+    useSnapshot(snapshot({ configured: false, user: null, roles: [] }));
     const response = await runPost(jsonRequest('http://localhost/api/admin/ingestion/run', { scope: 'manual_run' }));
     assert.equal(response.status, 503);
-    const data = (await response.json()) as { error: { code: string; message: string } };
-    assert.equal(data.error.code, 'UNAVAILABLE');
-    assert.match(data.error.message, /belum dikonfigurasi/);
+    const body = await errorBody(response);
+    assert.equal(body.error.code, 'UNAVAILABLE');
+    assert.equal(body.error.details?.reason, 'not_configured');
   });
 
-  it('401 dengan secret salah', async () => {
-    process.env[ENV_KEY] = 'benar';
-    const response = await runPost(jsonRequest('http://localhost/api/admin/ingestion/run', { scope: 'manual_run' }, { authorization: 'Bearer salah' }));
+  it('401 tanpa sesi', async () => {
+    useSnapshot(snapshot({ user: null, roles: [] }));
+    const response = await runPost(jsonRequest('http://localhost/api/admin/ingestion/run', { scope: 'manual_run' }));
     assert.equal(response.status, 401);
+    assert.equal((await errorBody(response)).error.code, 'UNAUTHORIZED');
   });
 
-  it('guard lolos dulu, baru DB menolak (503 dari DatabaseNotConfiguredError)', async () => {
-    process.env[ENV_KEY] = 'benar';
-    const response = await runPost(
-      jsonRequest('http://localhost/api/admin/ingestion/run', { scope: 'manual_run' }, { authorization: 'Bearer benar' }),
-    );
-    assert.equal(response.status, 503);
-    const data = (await response.json()) as { error: { code: string; message: string } };
-    assert.equal(data.error.code, 'UNAVAILABLE');
-    // Pesan berasal dari DB client, bukan guard — artinya auth sudah lewat.
-    assert.doesNotMatch(data.error.message, /belum dikonfigurasi; rute admin/);
-    assert.match(data.error.message, /Database belum dikonfigurasi/);
-  });
-
-  it('429 setelah melewati batas 6 permintaan valid', async () => {
-    process.env[ENV_KEY] = 'benar';
-    let last: Response | undefined;
-    for (let i = 0; i < 7; i += 1) {
-      last = await runPost(
-        jsonRequest('http://localhost/api/admin/ingestion/run', { scope: 'manual_run' }, { authorization: 'Bearer benar' }),
-      );
-    }
-    assert.equal(last!.status, 429);
-    assert.ok((last!.headers.get('retry-after') ?? '') !== '');
-    const data = (await last!.json()) as {
-      error: { code: string; message: string; details?: { retry_after_ms?: number } };
-    };
-    assert.equal(data.error.code, 'RATE_LIMITED');
-    assert.ok((data.error.details?.retry_after_ms ?? 0) > 0);
+  it('401 untuk sesi kedaluwarsa', async () => {
+    useSnapshot(snapshot({ expiresAt: 1_700_000_000, now: 1_700_000_001_000 }));
+    const response = await runPost(jsonRequest('http://localhost/api/admin/ingestion/run', { scope: 'manual_run' }));
+    assert.equal(response.status, 401);
+    assert.equal((await errorBody(response)).error.details?.reason, 'session_expired');
   });
 });
 
-describe('integration — admin ingestion/import & admin/metrics', () => {
-  beforeEach(() => {
-    delete process.env[ENV_KEY];
-    delete process.env.DATABASE_URL;
-  });
-  afterEach(() => {
-    delete process.env[ENV_KEY];
-    delete process.env.DATABASE_URL;
+describe('integration — eskalasi peran & MFA', () => {
+  it('viewer ditolak 403 pada aksi editor', async () => {
+    useSnapshot(snapshot({ roles: ['viewer'], aal: 'aal1' }));
+    const response = await runPost(jsonRequest('http://localhost/api/admin/ingestion/run', { scope: 'manual_run' }));
+    assert.equal(response.status, 403);
+    const body = await errorBody(response);
+    assert.equal(body.error.code, 'FORBIDDEN');
+    assert.equal(body.error.details?.reason, 'forbidden');
   });
 
-  it('import: 503 fail-closed tanpa secret', async () => {
-    const response = await importPost(jsonRequest('http://localhost/api/admin/ingestion/import', { scope: 'import_url' }));
+  it('editor lolos guard lalu DB menolak 503 (urutan benar)', async () => {
+    useSnapshot(snapshot({ roles: ['editor'], aal: 'aal1' }));
+    const response = await runPost(jsonRequest('http://localhost/api/admin/ingestion/run', { scope: 'manual_run' }));
     assert.equal(response.status, 503);
+    const body = await errorBody(response);
+    assert.equal(body.error.code, 'UNAVAILABLE');
+    assert.match(body.error.message, /Database belum dikonfigurasi/);
+    assert.notEqual(body.error.details?.reason, 'not_configured');
   });
 
-  it('import: guard lolos → 503 berasal dari DB, bukan auth', async () => {
-    process.env[ENV_KEY] = 'benar';
+  it('admin AAL1 ditolak 403 mfa_required, bahkan untuk metrics viewer', async () => {
+    useSnapshot(snapshot({ roles: ['admin'], aal: 'aal1' }));
+    const response = await metricsGet(new Request('http://localhost/api/admin/metrics'));
+    assert.equal(response.status, 403);
+    const body = await errorBody(response);
+    assert.equal(body.error.code, 'FORBIDDEN');
+    assert.equal(body.error.details?.reason, 'mfa_required');
+  });
+
+  it('admin AAL2 lolos guard; DB menolak 503', async () => {
+    useSnapshot(snapshot({ roles: ['admin'], aal: 'aal2' }));
+    const response = await metricsGet(new Request('http://localhost/api/admin/metrics'));
+    assert.equal(response.status, 503);
+    const body = await errorBody(response);
+    assert.match(body.error.message, /Database belum dikonfigurasi/);
+  });
+
+  it('import juga memakai guard editor dan tidak menerima aktor dari body', async () => {
+    useSnapshot(snapshot({ roles: ['editor'], aal: 'aal1' }));
     const response = await importPost(
-      jsonRequest('http://localhost/api/admin/ingestion/import', { scope: 'import_url' }, { authorization: 'Bearer benar' }),
+      jsonRequest('http://localhost/api/admin/ingestion/import', {
+        scope: 'import_url',
+        target_ref: 'https://example.test/data.json',
+        created_by: '00000000-0000-0000-0000-000000000000',
+      }),
     );
     assert.equal(response.status, 503);
-    const data = (await response.json()) as { error: { code: string; message: string } };
-    assert.equal(data.error.code, 'UNAVAILABLE');
-    assert.match(data.error.message, /Database belum dikonfigurasi/);
+    assert.match((await errorBody(response)).error.message, /Database belum dikonfigurasi/);
+  });
+});
+
+describe('integration — rate limit per user', () => {
+  it('permintaan ke-7 dari user yang sama ditolak 429', async () => {
+    const userId = randomUUID();
+    useSnapshot(snapshot({ user: { id: userId, email: 'rl@example.test', displayName: null } }));
+
+    let last: Response | undefined;
+    for (let i = 0; i < 7; i += 1) {
+      last = await runPost(jsonRequest('http://localhost/api/admin/ingestion/run', { scope: 'manual_run' }));
+    }
+    assert.equal(last!.status, 429);
+    assert.ok((last!.headers.get('retry-after') ?? '') !== '');
+    const body = await errorBody(last!);
+    assert.equal(body.error.code, 'RATE_LIMITED');
+    assert.ok((body.error.details as { retry_after_ms?: number } | undefined)?.retry_after_ms! > 0);
   });
 
-  it('metrics: 503 tanpa secret (fail-closed), 401 dengan secret salah', async () => {
-    const unauth = await metricsGet(new Request('http://localhost/api/admin/metrics'));
-    assert.equal(unauth.status, 503); // fail-closed: tanpa secret, bahkan header pun tak relevan
+  it('user berbeda tidak terpengaruh kuota user lain', async () => {
+    const first = randomUUID();
+    useSnapshot(snapshot({ user: { id: first, email: null, displayName: null } }));
+    for (let i = 0; i < 7; i += 1) {
+      await runPost(jsonRequest('http://localhost/api/admin/ingestion/run', { scope: 'manual_run' }));
+    }
 
-    process.env[ENV_KEY] = 'benar';
-    const wrong = await metricsGet(new Request('http://localhost/api/admin/metrics', { headers: { authorization: 'Bearer salah' } }));
-    assert.equal(wrong.status, 401);
-    const data = (await wrong.json()) as { error: { code: string } };
-    assert.equal(data.error.code, 'UNAUTHORIZED');
-  });
-
-  it('metrics: guard lolos → 503 dari DB (urutan benar)', async () => {
-    process.env[ENV_KEY] = 'benar';
-    const response = await metricsGet(new Request('http://localhost/api/admin/metrics', { headers: { authorization: 'Bearer benar' } }));
+    useSnapshot(snapshot({ user: { id: randomUUID(), email: null, displayName: null } }));
+    const response = await runPost(jsonRequest('http://localhost/api/admin/ingestion/run', { scope: 'manual_run' }));
     assert.equal(response.status, 503);
-    const data = (await response.json()) as { error: { code: string; message: string } };
-    assert.equal(data.error.code, 'UNAVAILABLE');
-    assert.match(data.error.message, /Database belum dikonfigurasi/);
   });
 });

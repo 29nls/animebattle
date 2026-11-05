@@ -3,9 +3,10 @@
  * database dan tanpa Next).
  *
  * Kenapa dipisah: aturan ini menentukan apa yang **ditolak** endpoint, dan
- * penolakan yang benar adalah bagian dari kontrak — `types` yang diam-diam
- * diabaikan akan membuat pemanggil mengira ia mencari verse juga, sedangkan
- * `per_page=37` yang dijepit diam-diam membuatnya tidak tahu batas yang berlaku.
+ * penolakan yang benar adalah bagian dari kontrak — `types=character,episode`
+ * yang diam-diam diperlakukan sebagai "hanya karakter" membuat pemanggil mengira
+ * episode ikut dicari, sedangkan `per_page=37` yang dijepit diam-diam membuatnya
+ * tidak tahu batas yang berlaku.
  */
 
 import assert from 'node:assert/strict';
@@ -26,7 +27,14 @@ describe('parseSearchQuery', () => {
     const parsed = parseSearchQuery(query(''));
     assert.equal(parsed.ok, true);
     if (!parsed.ok) return;
-    assert.deepEqual(parsed.value, { q: '', verseSlug: null, media: null, page: 1, perPage: 20 });
+    assert.deepEqual(parsed.value, {
+      q: '',
+      verseSlug: null,
+      media: null,
+      page: 1,
+      perPage: 20,
+      types: ['character'],
+    });
   });
 
   it('memangkas kueri dan menormalkan media ke huruf kecil', () => {
@@ -39,6 +47,7 @@ describe('parseSearchQuery', () => {
       media: 'manga',
       page: 2,
       perPage: 100,
+      types: ['character'],
     });
   });
 
@@ -49,12 +58,29 @@ describe('parseSearchQuery', () => {
     assert.equal(parsed.value.perPage, 50);
   });
 
-  it('menolak parameter yang belum diimplementasikan dengan alasan yang jelas', () => {
-    const parsed = parseSearchQuery(query('q=goku&types=character,verse'));
+  it('menerima types yang dikenal, menormalkan huruf besar dan membuang duplikat', () => {
+    const parsed = parseSearchQuery(query('q=goku&types=Character,VERSE,verse'));
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+    assert.deepEqual(parsed.value.types, ['character', 'verse']);
+  });
+
+  it('types kosong berarti bawaan, bukan galat', () => {
+    const blank = parseSearchQuery(query('q=goku&types='));
+    assert.equal(blank.ok, true);
+    if (blank.ok) assert.deepEqual(blank.value.types, ['character']);
+
+    const spaces = parseSearchQuery(query('q=goku&types=%20,%20'));
+    assert.equal(spaces.ok, false, 'hanya pemisah tanpa nilai tetap ditolak');
+    if (!spaces.ok) assert.match(spaces.message, /types kosong/);
+  });
+
+  it('menolak nilai types tak dikenal dengan daftar pilihan', () => {
+    const parsed = parseSearchQuery(query('q=goku&types=character,episode'));
     assert.equal(parsed.ok, false);
     if (parsed.ok) return;
-    assert.match(parsed.message, /types/);
-    assert.match(parsed.message, /hanya mencari karakter/);
+    assert.match(parsed.message, /types tidak dikenal: episode/);
+    assert.match(parsed.message, /character, verse/);
   });
 
   it('menolak parameter tak dikenal, bukan mengabaikannya', () => {
@@ -62,7 +88,7 @@ describe('parseSearchQuery', () => {
     assert.equal(parsed.ok, false);
     if (parsed.ok) return;
     assert.match(parsed.message, /tidak dikenal: sort/);
-    assert.match(parsed.message, /q, verse, media, page, per_page, limit/);
+    assert.match(parsed.message, /q, verse, media, page, per_page, limit, types/);
   });
 
   it('menolak nilai di luar kontrak, bukan menjepitnya diam-diam', () => {

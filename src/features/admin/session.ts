@@ -1,58 +1,68 @@
 /**
- * Sesi halaman admin: satu tempat yang memutuskan "boleh lihat panel atau
- * tidak", dipakai layout `/admin/(dashboard)` dan halaman login.
+ * Penjaga halaman `/admin/(dashboard)`.
  *
- * Zona `web-request` (PRD §39): boleh memakai `next/headers` dan modul
- * `src/lib/security/*`; tidak boleh menyentuh ingestion.
+ * Tidak ada fallback token. Tanpa Supabase Auth panel terkunci; sesi tanpa
+ * peran atau admin tanpa MFA diarahkan ke halaman yang menjelaskan alasannya.
  */
 
-import { cookies } from 'next/headers';
+import type { Route } from 'next';
 import { redirect } from 'next/navigation';
 
 import {
-  ADMIN_SESSION_COOKIE,
-  ADMIN_SESSION_MAX_AGE_MS,
-  verifyAdminSessionToken,
-} from '../../lib/security/admin-session.ts';
+  getAdminAuth,
+  isAdminAuthConfigured,
+  type AdminAccessLevel,
+  type AdminAuthFailure,
+  type AdminAuthReason,
+  type AdminIdentity,
+} from './auth.ts';
 
-/** Secret panel; `null` berarti fitur admin sengaja mati (fail-closed). */
-export function adminSecret(): string | null {
-  const secret = process.env.ADMIN_INGESTION_SECRET;
-  if (typeof secret !== 'string' || secret.trim() === '') return null;
-  return secret;
-}
+export { isAdminAuthConfigured };
 
 export function adminPanelConfigured(): boolean {
-  return adminSecret() !== null;
+  return isAdminAuthConfigured();
 }
 
-export async function isAdminAuthenticated(): Promise<boolean> {
-  const secret = adminSecret();
-  if (secret === null) return false;
-  const token = (await cookies()).get(ADMIN_SESSION_COOKIE)?.value ?? null;
-  return verifyAdminSessionToken(token, secret, Date.now());
-}
-
-/** Dipakai layout panel: belum terautentikasi → halaman login. */
-export async function requireAdminSession(): Promise<void> {
-  if (!(await isAdminAuthenticated())) {
-    redirect('/admin/login');
+export function loginPathForReason(reason: AdminAuthReason): string {
+  switch (reason) {
+    case 'not_configured':
+      return '/admin/login?state=not_configured';
+    case 'session_expired':
+      return '/admin/login?state=expired';
+    case 'mfa_required':
+      return '/admin/login/mfa?state=required';
+    case 'forbidden':
+      return '/admin/login?state=forbidden';
+    case 'database_unavailable':
+      return '/admin/login?state=unavailable';
+    case 'unauthenticated':
+      return '/admin/login?state=login_required';
   }
 }
 
-/** Opsi cookie sesi: httpOnly, hanya dikirim ke /admin, tidak lintas situs. */
-export function adminSessionCookieOptions(): {
-  httpOnly: true;
-  sameSite: 'lax';
-  secure: boolean;
-  path: string;
-  maxAge: number;
-} {
-  return {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    path: '/admin',
-    maxAge: Math.floor(ADMIN_SESSION_MAX_AGE_MS / 1000),
-  };
+export function redirectForAuthFailure(auth: AdminAuthFailure): never {
+  redirect(loginPathForReason(auth.reason) as Route);
+}
+
+/** Dipakai tautan "Admin" di halaman publik; bukan penjaga halaman admin. */
+export async function isAdminAuthenticated(): Promise<boolean> {
+  if (!adminPanelConfigured()) return false;
+  const auth = await getAdminAuth('viewer');
+  return auth.ok;
+}
+
+/**
+ * Halaman memakai guard ini. Layout memanggilnya untuk viewer; halaman yang
+ * butuh editor/admin memanggil ulang dengan tingkat yang lebih tinggi.
+ */
+export async function requireAdminPage(
+  minimum: AdminAccessLevel = 'viewer',
+): Promise<AdminIdentity> {
+  if (!adminPanelConfigured()) {
+    redirect('/admin/login?state=not_configured' as Route);
+  }
+
+  const auth = await getAdminAuth(minimum);
+  if (!auth.ok) redirectForAuthFailure(auth);
+  return auth.identity;
 }

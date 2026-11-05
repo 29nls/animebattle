@@ -1,32 +1,32 @@
 import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 
-import { adminPanelConfigured, requireAdminSession } from '@/features/admin/session.ts';
+import { requireAdminPage } from '@/features/admin/session.ts';
 import { logoutAction } from '../login/actions';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Layout panel admin (group `(dashboard)`).
- *
- * Penjaga sesi ada di sini, bukan di tiap halaman: satu tempat yang tidak dapat
- * terlupa saat halaman baru ditambahkan. Halaman login berada di luar group ini,
- * sehingga redirect penjaga tidak membuat lingkaran.
+ * Penjaga panel admin (group `(dashboard)`). Halaman login berada di luar
+ * group ini, sehingga redirect tidak membuat lingkaran.
  */
 export default async function AdminDashboardLayout({ children }: { children: ReactNode }) {
-  // Fail-closed yang sama dengan rute API: tanpa secret, panel tidak dirender
-  // sama sekali.
-  if (!adminPanelConfigured()) redirect('/admin/login?state=not_configured');
-  await requireAdminSession();
+  const identity = await requireAdminPage('viewer');
+  const canReview = identity.effectiveRole === 'editor' || identity.effectiveRole === 'admin';
 
   return (
     <div className="flex flex-col gap-6 lg:flex-row lg:gap-8">
       <aside className="lg:w-56 shrink-0">
         <nav className="sticky top-20 rounded-2xl border border-line bg-surface-1 p-4 shadow-sm">
-          <h2 className="mb-4 text-xs font-bold uppercase tracking-widest text-ink-3">
+          <h2 className="mb-1 text-xs font-bold uppercase tracking-widest text-ink-3">
             Admin Panel
           </h2>
+          <p className="mb-4 truncate text-xs text-ink-2" title={identity.email ?? undefined}>
+            {identity.displayName ?? identity.email ?? identity.userId}
+          </p>
+          <p className="mb-4 text-[0.7rem] uppercase tracking-wider text-ink-3">
+            {identity.effectiveRole} · {identity.aal}
+          </p>
           <ul className="space-y-1 text-sm">
             <li>
               <Link
@@ -52,6 +52,16 @@ export default async function AdminDashboardLayout({ children }: { children: Rea
                 <span className="text-base">⚠️</span> Conflicts
               </Link>
             </li>
+            {canReview ? (
+              <li>
+                <Link
+                  href="/admin/audit"
+                  className="flex items-center gap-2.5 rounded-lg px-3 py-2 font-medium text-ink-1 transition-colors hover:bg-surface-2 hover:text-ink-0"
+                >
+                  <span className="text-base">🧾</span> Audit Log
+                </Link>
+              </li>
+            ) : null}
             <li className="pt-3 mt-3 border-t border-line/50">
               <Link
                 href="/"

@@ -13,7 +13,7 @@ Dipicu oleh, salah satu saja (K3/K7, [PRD §35.2](../PRD.md)):
 
 - error rate API 5xx > 0,5% selama 15 menit (K7: uptime ≥ 99,5%);
 - p95 simulasi melewati target: < 300 ms (engine) / < 1,5 s (+narrator) — K3;
-- kebocoran atau dugaan kebocoran kunci (`ADMIN_INGESTION_SECRET`, `CRON_SECRET`).
+- kebocoran atau dugaan kebocoran kredensial (`CRON_SECRET`, password akun admin, atau kunci Supabase).
 
 ## 1. Membaca keadaan dalam 30 detik
 
@@ -35,9 +35,14 @@ curl -sS -w '\n%{http_code}\n' "$SITE_URL/api/health/ready"
 #        schema_missing | connection_limit | server_unavailable | connection_lost |
 #        unclassified (lihat §4 untuk tindakan per kategori).
 
-# 3. ringkasan sistem (butuh Bearer; rate limit 30/menit)
-curl -sS -H "Authorization: Bearer $ADMIN_INGESTION_SECRET" "$SITE_URL/api/admin/metrics"
+# 3. ringkasan sistem (butuh cookie sesi Supabase; rate limit 30/menit)
+curl -sS -b "$ADMIN_COOKIE" "$SITE_URL/api/admin/metrics"
 ```
+
+`$ADMIN_COOKIE` adalah cookie sesi Supabase (biasanya bernama
+`sb-<project-ref>-auth-token`) dari browser yang sudah login dan menyelesaikan
+TOTP. Jangan menyalin nilainya ke repo; untuk CLI, ambil dari penyimpanan cookie
+browser di mesin operator.
 
 `/api/health` yang 200 sementara `/api/health/ready` 503 adalah **kombinasi
 paling umum**: proses web sehat, database mati. Panel admin pada kondisi ini
@@ -135,7 +140,7 @@ Per job, pakai rute resmi (lebih aman daripada update manual — ia memvalidasi
 status dan menolak job yang sedang berjalan):
 
 ```bash
-curl -sS -X POST -H "Authorization: Bearer $ADMIN_INGESTION_SECRET" \
+curl -sS -X POST -b "$ADMIN_COOKIE" \
   "$SITE_URL/api/admin/ingestion/jobs/<job-id>/cancel"      # → {"status":"skipped"}
 ```
 
@@ -168,44 +173,43 @@ pintu impor manual → (b) untuk mengosongkan sisa antrean.
    infra/latensi DB; merah = regresi kode → rollback kode, lihat
    [rollback.md](rollback.md) §5 dan jalur "web" di §4.
 
-### 3.4 Merotasi kunci tanpa downtime
+### 3.4 Merotasi kredensial tanpa downtime
 
-Kunci yang ada: `ADMIN_INGESTION_SECRET` (seluruh `/api/admin/*` **dan** token
-login `/admin` — sesi cookie ditandatangani dengannya, 12 jam) dan `CRON_SECRET`
-(`GET /api/cron/sync`). Keduanya dibandingkan **timing-safe** terhadap **satu**
-nilai env; tidak ada daftar kunci cadangan.
+Panel `/admin` tidak lagi memakai shared secret; yang tersisa adalah
+`CRON_SECRET` (satu-satunya Bearer, khusus `/api/cron/sync`), password akun
+admin, faktor TOTP, dan anon key Supabase. Service-role key tidak dipakai
+aplikasi dan tidak boleh ditambahkan.
 
-Urutan yang meminimalkan downtime (urutannya penting):
+Urutan untuk `CRON_SECRET`:
 
 ```bash
-# 1. siapkan kunci BARU (jangan pernah men-blank kunci lama — lihat §5)
-NEW_ADMIN=$(openssl rand -hex 32)
+# 1. siapkan nilai baru; jangan pernah men-blank nilai lama
 NEW_CRON=$(openssl rand -hex 32)
 
-# 2. perbarui konsumen yang ada di luar platform LEBIH DULU:
-#    - GitHub Actions secret CRON_SECRET (workflow scheduled-ingest)
-gh secret set CRON_SECRET --body "$NEW_CRON"   # nilai baru belum dipakai server → aman
-
-# 3. set env baru di platform (Vercel/lokal) DAN deploy dalam satu langkah:
-#    ADMIN_INGESTION_SECRET=$NEW_ADMIN, CRON_SECRET=$NEW_CRON
-#    (perubahan env tanpa deploy tidak dipakai proses yang sedang berjalan)
-
-# 4. verifikasi — semuanya harus menjawab seperti sebelum rotasi:
-curl -sS -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $NEW_ADMIN" \
-  "$SITE_URL/api/admin/metrics"          # 200
+# 2. perbarui konsumen di luar platform lebih dulu
+gh secret set CRON_SECRET --body "$NEW_CRON"
+# 3. set env platform ke nilai baru lalu deploy dalam satu langkah
+# 4. verifikasi
 curl -sS -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $NEW_CRON" \
-  "$SITE_URL/api/cron/sync"              # 200 (bukan 401/503)
-curl -sS -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $OLD_ADMIN" \
-  "$SITE_URL/api/admin/metrics"          # 401 — kunci lama sudah MATI
+  "$SITE_URL/api/cron/sync"              # 200, bukan 401/503
 ```
 
-Mengapa ini "tanpa downtime": (1)–(2) menyiapkan semua pemakai sebelum server
-berganti; (3) memperbarui server dan konsumen hampir bersamaan; tidak ada
-langkah yang pernah mengosongkan secret, sehingga guard tidak pernah masuk
-mode 503. Efek samping yang **diharapkan** saat rotasi karena kebocoran: seluruh
-sesi `/admin` yang lama ikut mati (cookie ditandatangani dengan secret lama) —
-operator cukup login ulang dengan token baru. Pada rotasi rutin, efek itu
-sama-sama tidak berbahaya.
+Untuk akun admin:
+
+1. Reset password lewat Supabase Dashboard/Auth API dan cabut sesi refresh lama
+   dengan mekanisme admin Supabase yang tersedia.
+2. Pastikan faktor TOTP berstatus `verified`; admin/owner dengan AAL1 akan
+   ditolak 403 `mfa_required`.
+3. Bila akun dicurigai, cabut perannya:
+   `delete from animebattle.user_roles where user_id = '<uuid>';`
+   lalu berikan peran ke akun pengganti. Jangan mengedit `auth.users` dari SQL
+   aplikasi.
+4. Verifikasi login baru lewat browser (`/admin/login` + TOTP). Sesi lama yang
+   masih hidup tidak otomatis menjadi AAL2; guard menolak sesi tanpa peran/AAL2.
+
+Anon key Supabase memang publik; rotasi hanya perlu bila ada alasan keamanan dan
+wajib diikuti redeploy. Tidak ada rotasi otomatis.
+
 
 ## 4. Jalur gagal
 
@@ -231,9 +235,9 @@ sama-sama tidak berbahaya.
 
 ## 5. Yang TIDAK boleh dilakukan
 
-1. **Jangan pernah men-blank secret untuk "merotasi".** `ADMIN_INGESTION_SECRET`
-   atau `CRON_SECRET` yang kosong mengubah seluruh panel admin dan cron menjadi
-   503 fail-closed — itu downtime buatan sendiri. Selalu set langsung lama → baru.
+1. **Jangan pernah men-blank konfigurasi untuk "merotasi".** `CRON_SECRET` kosong
+   membuat cron 503; URL/anon key Supabase kosong membuat panel admin 503
+   fail-closed. Selalu set langsung lama → baru.
 2. **Jangan menonaktifkan guard/fail-closed agar 5xx hilang.** 503 `UNAVAILABLE`
    pada rute admin berarti konfigurasi kurang, bukan bug; menghapus guard
    membuka rute admin ke publik.
@@ -274,9 +278,9 @@ sama-sama tidak berbahaya.
 curl -sS -o /dev/null -w '%{http_code}\n' "$SITE_URL/api/health"          # 200
 curl -sS -o /dev/null -w '%{http_code}\n' "$SITE_URL/api/health/ready"    # 200
 
-# 2. kunci baru berlaku, kunci lama mati (rotasi §3.4)
-curl -sS -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $NEW_ADMIN" \
-  "$SITE_URL/api/admin/metrics"                                           # 200
+# 2. kunci cron baru berlaku; sesi admin diuji lewat browser (/admin/login + TOTP)
+curl -sS -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $NEW_CRON" \
+  "$SITE_URL/api/cron/sync"                                               # 200
 ```
 
 ```sql

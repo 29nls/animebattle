@@ -46,9 +46,12 @@ npm run lint               # batas arsitektur + next/core-web-vitals
 npm test                   # unit test engine + security + aturan lint + guard anggaran
 ```
 
-Angka yang diharapkan (lihat README untuk detail): engine 225/225, security 48/48,
-web 24/24, ingestion 28/28, lintrules 3/3, lighthouse-config 4/4,
-`check:architecture` 38/38, `validate:battle-cases` 425/425.
+Angka yang diharapkan (lihat README untuk detail): engine 226/226, security 67/67,
+web 76/76, ingestion 31/31, db 7/7, lintrules 3/3, lighthouse-config 4/4,
+`check:architecture` 38/38, `validate:schema` 59/59, `validate:battle-cases` 425/425.
+Untuk perubahan skema, jalankan juga `npm run migrate` pada database kosong lalu
+`npm run check:schema-drift` (butuh `DATABASE_URL`); `npm run verify:postgres`
+menguji RLS JWT + `REFRESH ... CONCURRENTLY` pada Postgres nyata.
 
 ## Testing philosophy
 
@@ -85,7 +88,8 @@ web 24/24, ingestion 28/28, lintrules 3/3, lighthouse-config 4/4,
   demi menghindari worker — itu justru pelanggaran yang paling mahal.
 - TDD: tulis test yang memferifikasi kontrak sebelum memperbaiki bug; buktikan
   test merah dulu, lalu hijau. Integration test (database) memakai Runner
-  `validate:schema` — jalankan itu ketika menyentuh `docs/schema.sql` atau seed.
+  `validate:schema` dan `tests/db/` (migrasi dari nol vs `docs/schema.sql`);
+  jalankan keduanya ketika menyentuh `docs/schema.sql`, `migrations/`, atau seed.
 
 ## Test helper
 
@@ -100,8 +104,9 @@ integration test rute admin (`npm run test:security`), `tests/web/` untuk
 halaman/dataset demo + token sesi (`npm run test:web`), dan `tests/ingestion/`
 untuk pipeline + rute ingestion di atas skema nyata (`npm run test:ingestion`,
 memakai loader alias yang sama dengan suite security karena route memakai `@/`).
-`npm test` menjalankan keenam suite itu berurutan — suite baru yang tidak
+`npm test` menjalankan ketujuh suite itu berurutan — suite baru yang tidak
 terikat salah satu script akan lolos diam-diam secara lokal dan hanya gagal di CI.
+Suite `tests/db/` dijalankan oleh `npm run test:db` (termasuk di `npm test`).
 
 **Test-driven development.** Pendekatan repo ini:
 

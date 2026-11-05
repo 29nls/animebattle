@@ -31,7 +31,10 @@ import {
   type DemoBattleOptionGroup,
 } from '../demo/provider.ts';
 import { getSqlClient, isDatabaseConfigured, type SqlClient } from '../../lib/db/client.ts';
-import { BattleInputError, simulateFromSides, simulateFromVersionsWithSides } from './simulate.ts';
+import { computeInputHash } from '../../services/battle/index.ts';
+import { readCachedBattle, saveBattle } from './persistence.ts';
+import { matchupSlug } from './share.ts';
+import { BattleInputError, loadBattleSides, simulateFromSides } from './simulate.ts';
 import type {
   BattleConditions,
   BattleResult,
@@ -311,13 +314,46 @@ export async function loadBattleResult(params: {
   }
 
   try {
-    const { result, side_a, side_b } = await simulateFromVersionsWithSides(sql, {
-      side_a_version_id: versionA,
-      side_b_version_id: versionB,
-      conditions: params.conditions,
-      rule_set: params.rule_set,
-    });
-    return { status: 'ok', bundle: { result, sideA: side_a, sideB: side_b, source: 'database' } };
+    // Satu round-trip data, lalu cache, lalu engine. `input_hash` memuat isi
+    // statistik kedua sisi (bukan hanya id), jadi hash baru dapat dihitung
+    // setelah `battle_dataset` dibaca — itulah kunci yang benar: mengubah satu
+    // statistik mengubah hash, sehingga hasil lama tidak pernah disajikan untuk
+    // data baru. Yang dihemat cache adalah komputasi engine, dan yang dicatat
+    // adalah baris `battles`/`battle_results` sehingga Popular Battles terisi.
+    const { sideA, sideB } = await loadBattleSides(sql, versionA, versionB);
+    const input = { side_a: sideA, side_b: sideB, conditions: params.conditions };
+    const inputHash = computeInputHash(input, params.rule_set);
+
+    const cached = await readCachedBattle(sql, inputHash);
+    if (cached) {
+      return { status: 'ok', bundle: { result: cached.result, sideA, sideB, source: 'database' } };
+    }
+
+    const result = simulateFromSides(input, params.rule_set);
+    const slug = matchupSlug(
+      { characterSlug: sideA.character.slug, formSlug: sideA.form.slug },
+      { characterSlug: sideB.character.slug, formSlug: sideB.form.slug },
+    );
+
+    if (slug) {
+      // Kegagalan menulis cache tidak boleh menjatuhkan halaman: hasil sudah
+      // dihitung dan sah. Penyebabnya dicatat untuk operator (mis. grant
+      // `battle_results` belum diberikan pada deployment lama).
+      try {
+        await saveBattle(sql, {
+          slug,
+          sideAVersionId: versionA,
+          sideBVersionId: versionB,
+          conditions: params.conditions,
+          ruleSet: params.rule_set,
+          result,
+        });
+      } catch (error) {
+        console.error('[battle] gagal menyimpan cache hasil:', error);
+      }
+    }
+
+    return { status: 'ok', bundle: { result, sideA, sideB, source: 'database' } };
   } catch (error) {
     // Form dihapus antara resolver dan `battle_dataset`: masih kesalahan pilihan,
     // bukan gangguan database — jangan tampilkan panel "Database belum terhubung".

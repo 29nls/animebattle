@@ -6,8 +6,14 @@
   "description": "PRD, arsitektur, skema database, battle engine + case library, pipeline ingestion (antrian → worker → staging → upsert ber-atribusi) dengan panel admin, dan aplikasi Next.js dengan lint batas arsitektur untuk Anime VS Battle: katalog & pencarian hybrid berhalaman, halaman karakter/verse, simulasi versus dari data produksi, serta benchmark pencarian 10k. Adapter crawling per sumber, auth Supabase, dan UI/UX penuh belum dimulai.",
   "scripts": {
     "validate:schema": "node scripts/validate-schema.mjs",
-    "check:schema-drift": "node --env-file=.env scripts/compare-live-schema.mjs",
-    "diagnose:db": "node --env-file=.env scripts/diagnose-db-connection.mjs",
+    "migrate": "node --env-file-if-exists=.env scripts/migrate.mjs",
+    "db:status": "node --env-file-if-exists=.env scripts/migrate.mjs --status",
+    "seed:db": "node --env-file-if-exists=.env scripts/apply-seed.mjs",
+    "refresh:mv": "node --env-file-if-exists=.env scripts/refresh-mv.mjs",
+    "verify:postgres": "node --env-file-if-exists=.env scripts/verify-live-postgres.mjs",
+    "verify:restore": "node scripts/verify-restore.mjs",
+    "check:schema-drift": "node --env-file-if-exists=.env scripts/compare-live-schema.mjs",
+    "diagnose:db": "node --env-file-if-exists=.env scripts/diagnose-db-connection.mjs",
     "typecheck": "tsc --noEmit",
     "validate:battle-cases": "node scripts/run-battle-cases.mjs",
     "bench:search": "node scripts/bench-search.ts",
@@ -18,12 +24,13 @@
     "lint": "eslint .",
     "check:architecture": "node scripts/check-architecture.mjs",
     "test:lint-rules": "node --test tools/eslint-plugin-architecture/__tests__/*.test.mjs",
+    "test:db": "node --test tests/db/*.test.ts",
     "test:lighthouse-config": "node --test tests/config/*.test.mjs",
     "test:engine": "node --test tests/battle-engine/*.test.ts",
     "test:security": "node --import ./tests/security/register-alias.mjs --test tests/security/*.test.ts",
-    "test:web": "node --test tests/web/*.test.ts",
+    "test:web": "node --import ./tests/security/register-alias.mjs --test tests/web/*.test.ts",
     "test:ingestion": "node --import ./tests/security/register-alias.mjs --test tests/ingestion/*.test.ts",
-    "test": "npm run test:engine && npm run test:security && npm run test:web && npm run test:ingestion && npm run test:lint-rules && npm run test:lighthouse-config"
+    "test": "npm run test:engine && npm run test:security && npm run test:web && npm run test:ingestion && npm run test:db && npm run test:lint-rules && npm run test:lighthouse-config"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.3.0",
@@ -38,6 +45,8 @@
     "typescript-eslint": "^8.71.1"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.119.0",
     "next": "^16.4.0",
     "postgres": "^3.4.9",
     "react": "^19.3.0",

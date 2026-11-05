@@ -136,7 +136,7 @@ export interface DatabaseFailureSummary {
  * Ketiganya rahasia menurut definisinya (bearer token, kunci admin, dan bahan
  * TLS), jadi tidak ada nilai pendek yang "terlalu umum" untuk disensor.
  */
-const ALWAYS_REDACT_KEYS = ['CRON_SECRET', 'ADMIN_INGESTION_SECRET', 'DATABASE_CA_CERT'] as const;
+const ALWAYS_REDACT_KEYS = ['CRON_SECRET', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'DATABASE_CA_CERT'] as const;
 
 /**
  * Nilai `DATABASE_URL` disensor sebagai literal hanya bila cukup panjang.
@@ -156,7 +156,7 @@ const MIN_LITERAL_LENGTH = 8;
  *     Ini yang menyelamatkan bila driver mengutip connection string di pesannya.
  *  2. **Nilai literal** dari variabel rahasia yang diketahui — menangkap kasus
  *     nilai dikutip tanpa bentuk URL (mis. bearer token di pesan error HTTP).
- *     `CRON_SECRET`/`ADMIN_INGESTION_SECRET`/`DATABASE_CA_CERT` selalu disensor
+ *     `CRON_SECRET`/`NEXT_PUBLIC_SUPABASE_ANON_KEY`/`DATABASE_CA_CERT` selalu disensor
  *     bila diisi; `DATABASE_URL` sebagai literal hanya bila panjang (lihat
  *     `MIN_LITERAL_LENGTH`) supaya kata umum di pesan driver tetap terbaca.
  */

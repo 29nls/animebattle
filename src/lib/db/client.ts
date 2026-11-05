@@ -10,6 +10,13 @@
  * antarmuka ini (di repo ini: PGlite pada `scripts/validate-schema.mjs`).
  */
 
+/**
+ * Schema aplikasi. `public` dipakai bersama aplikasi lain di instance Supabase
+ * yang sama, sehingga setiap koneksi aplikasi dipatok ke schema ini lebih dulu.
+ * Nilai ini juga dipakai skrip migrasi/verifikasi dan diuji di `tests/db/`.
+ */
+export const DATABASE_SEARCH_PATH = 'animebattle, public';
+
 export type Row = Record<string, unknown>;
 
 export interface SqlClient {
@@ -356,6 +363,9 @@ export function getSqlClient(): SqlClient {
   if (!defaultClient) {
     const sql = postgres(process.env.DATABASE_URL, {
       max: 10, // batas koneksi agar tidak membanjiri pool
+      // Search path dikirim pada startup connection, bukan disetel sekali di
+      // satu koneksi pool: setiap koneksi baru harus melihat schema yang sama.
+      connection: { search_path: DATABASE_SEARCH_PATH },
       ...databaseSslOptions(),
     });
     

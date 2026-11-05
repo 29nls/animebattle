@@ -22,6 +22,7 @@ import {
   isDatabaseUnavailable,
 } from '@/lib/db/client.ts';
 import { apiError } from '@/lib/errors.ts';
+import { searchCacheHeaders } from '@/lib/http-cache.ts';
 import { searchCharacterPage } from '@/features/characters/queries.ts';
 import { parseSuggestQuery } from '@/features/characters/search-params.ts';
 import type { NextRequest } from 'next/server';
@@ -45,15 +46,18 @@ export async function GET(request: NextRequest) {
       perPage: SUGGEST_LIMIT,
     });
 
-    return Response.json({
-      data: result.rows.map((row) => ({
-        slug: row.slug,
-        name: row.name,
-        verse_name: row.verse_name,
-        tier_code: row.tier_code,
-      })),
-      total: result.total,
-    });
+    return Response.json(
+      {
+        data: result.rows.map((row) => ({
+          slug: row.slug,
+          name: row.name,
+          verse_name: row.verse_name,
+          tier_code: row.tier_code,
+        })),
+        total: result.total,
+      },
+      { headers: searchCacheHeaders() },
+    );
   } catch (error) {
     if (error instanceof DatabaseNotConfiguredError) {
       return apiError('UNAVAILABLE', error.message, 503);

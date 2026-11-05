@@ -279,7 +279,15 @@ export interface BattleInput {
   side_a: SideData;
   side_b: SideData;
   conditions: BattleConditions;
-  rule_set_version?: string;
+  /**
+   * Versi kontrak dataset yang menghasilkan `side_a`/`side_b`.
+   *
+   * Ikut masuk `input_hash` supaya hasil cache lama tidak disajikan ketika arti
+   * keluaran `battle_dataset` berubah. Pemanggil yang memuat data dari RPC
+   * membiarkannya kosong (memakai `DATASET_VERSION` engine); case library yang
+   * menyusun data sendiri dapat menyebut versinya secara eksplisit.
+   */
+  dataset_version?: string;
 }
 
 /** Kontribusi satu metrik pada skor terbobot (dapat diaudit). */

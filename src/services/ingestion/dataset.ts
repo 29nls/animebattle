@@ -131,7 +131,22 @@ export interface DatasetCharacter {
   origin: string | null;
   media_type: MediaType;
   source_url: string | null;
+  /**
+   * Alias yang ikut diimpor (mis. "The Great Sage", "孫行者"). Sebelum ini
+   * kolom `character_aliases` hanya terisi lewat SQL manual, sehingga pencarian
+   * alias tidak pernah berlaku untuk data hasil impor.
+   *
+   * Opsional: dataset lama tidak memuatnya, dan `parseDatasetEnvelope` selalu
+   * mengisi array (mungkin kosong) untuk jalur impor.
+   */
+  aliases?: DatasetAlias[];
   forms: DatasetForm[];
+}
+
+/** Satu alias beserta script penulisannya (enum `alias_script_t`). */
+export interface DatasetAlias {
+  alias: string;
+  script: AliasScript;
 }
 
 export interface DatasetVerse {
@@ -159,6 +174,9 @@ export interface DatasetEnvelope {
   verse: DatasetVerse;
   characters: DatasetCharacter[];
 }
+
+export const ALIAS_SCRIPTS = ['latin', 'kanji', 'kana', 'hangul', 'cyrillic', 'other'] as const;
+export type AliasScript = (typeof ALIAS_SCRIPTS)[number];
 
 export interface DatasetIssue {
   /** Jalur lokasi masalah, mis. `characters[2].forms[0].statistics[1].raw_text`. */
@@ -402,6 +420,8 @@ function readCharacter(collector: Collector, path: string, value: unknown): Data
     return null;
   }
 
+  const aliases = readAliases(collector, `${path}.aliases`, value.aliases);
+
   const forms: DatasetForm[] = [];
   const rawForms = value.forms;
   if (!Array.isArray(rawForms) || rawForms.length === 0) {
@@ -432,8 +452,80 @@ function readCharacter(collector: Collector, path: string, value: unknown): Data
     origin: asString(value.origin),
     media_type: mediaType as MediaType,
     source_url: asString(value.source_url),
+    aliases,
     forms,
   };
+}
+
+/**
+ * Membaca daftar alias karakter.
+ *
+ * Dua bentuk diterima karena keduanya wajar di dataset pihak ketiga:
+ *
+ *   * `"aliases": ["The Great Sage", "孫行者"]` — bentuk ringkas, script ditebak;
+ *   * `"aliases": [{ "alias": "孫行者", "script": "kanji" }]` — bentuk eksplisit.
+ *
+ * Alias kosong dilewati (bukan galat): dataset sering memuat string kosong sisa
+ * ekspor, dan satu alias kosong akan cocok dengan setiap kueri prefiks. Alias
+ * duplikat juga dilewati — `unique (character_id, alias)` di DDL akan menolaknya,
+ * dan kegagalan itu tidak informatif bagi admin.
+ */
+function readAliases(collector: Collector, path: string, value: unknown): DatasetAlias[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    collector.add(path, 'aliases harus berupa array');
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const aliases: DatasetAlias[] = [];
+  value.forEach((entry, index) => {
+    const entryPath = `${path}[${index}]`;
+    let alias: string | null = null;
+    let script: string | null = null;
+
+    if (typeof entry === 'string') {
+      alias = asString(entry);
+    } else if (isRecord(entry)) {
+      alias = asString(entry.alias);
+      script = asString(entry.script);
+    } else {
+      collector.add(entryPath, 'alias harus berupa string atau objek { alias, script }');
+      return;
+    }
+
+    if (alias === null || alias.trim() === '') {
+      collector.add(entryPath, 'alias tidak boleh kosong');
+      return;
+    }
+
+    const resolved = script === null ? guessAliasScript(alias) : script.toLowerCase();
+    if (!(ALIAS_SCRIPTS as readonly string[]).includes(resolved)) {
+      collector.add(entryPath, `script alias tidak dikenal: ${String(script)}`);
+      return;
+    }
+
+    const key = alias.trim();
+    if (seen.has(key)) return;
+    seen.add(key);
+    aliases.push({ alias: key, script: resolved as AliasScript });
+  });
+
+  return aliases;
+}
+
+/**
+ * Tebak script dari rentang Unicode. Hanya dipakai bila dataset tidak menyebut
+ * script secara eksplisit; hasilnya boleh kasar karena `script` di DDL adalah
+ * metadata tampilan, bukan kunci pencarian (`alias_norm` yang dipakai mencari).
+ */
+function guessAliasScript(alias: string): AliasScript {
+  if (/[\uac00-\ud7af\u1100-\u11ff]/.test(alias)) return 'hangul';
+  if (/[\u3040-\u309f]/.test(alias)) return 'kana';
+  if (/[\u4e00-\u9fff]/.test(alias)) return 'kanji';
+  if (/[\u0400-\u04ff]/.test(alias)) return 'cyrillic';
+  if (/[a-z]/i.test(alias)) return 'latin';
+  return 'other';
 }
 
 /**

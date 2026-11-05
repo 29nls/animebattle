@@ -1,7 +1,7 @@
 -- Refresh materialized view TANPA mengunci baca (CONCURRENTLY).
 --
 -- Kenapa file terpisah: REFRESH ... CONCURRENTLY tidak dapat dijalankan di dalam
--- transaksi, sedangkan fungsi RPC (public.refresh_materialized_views) selalu
+-- transaksi, sedangkan fungsi RPC (animebattle.refresh_materialized_views) selalu
 -- berjalan dalam transaksi. Karena itu refresh rutin dijalankan lewat file ini
 -- dari cron/psql, sementara fungsi RPC tetap tersedia sebagai fallback
 -- non-concurrent untuk pemakaian ad-hoc dari admin.

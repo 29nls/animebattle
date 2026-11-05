@@ -57,6 +57,23 @@ create table takedown_evidence_<yyyymmdd> as
 select * from characters where slug = '<slug>';
 ```
 
+### 3.0 Catat audit takedown
+
+Takedown belum punya handler UI, jadi audit-nya wajib ditulis eksplisit. Gunakan
+UUID akun admin yang benar-benar menjalankan tindakan (bukan `auth.uid()` dari SQL
+editor yang berjalan sebagai `postgres`):
+
+```sql
+insert into audit_logs (actor_id, action, entity_type, entity_id, after)
+values ('<uuid-aktor>', 'takedown', 'character', '<character-id>',
+        jsonb_build_object('params', jsonb_build_object(
+          'ticket', '<ticket-id>', 'reason', '<ringkasan>',
+          'reported_url', '<url>')));
+```
+
+Catat juga langkah §3.2/§3.3 dengan `entity_type = 'source'` dan `entity_id`
+UUID sumber. Baris audit tidak boleh dihapus.
+
 ### 3.1 Sembunyikan artwork — tanpa menghapus data karakter (LP-2)
 
 ```sql

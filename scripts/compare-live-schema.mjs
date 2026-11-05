@@ -13,7 +13,7 @@
  * baseline, ambil potret katalog yang sama dari baseline dan dari database live,
  * lalu bandingkan objek per objek.
  *
- * Yang dibandingkan (skema `public`): kolom tabel (tipe, nullability, default,
+ * Yang dibandingkan (skema `animebattle`): kolom tabel (tipe, nullability, default,
  * kolom generated/identity), tipe enum + labelnya, definisi fungsi
  * (`pg_get_functiondef`, minus anggota ekstensi), definisi view & materialized
  * view, index, trigger, constraint, **status RLS** (`enable`/`force row level
@@ -31,12 +31,13 @@
  * aplikasi lain" (tabel di `public` yang tidak ada di berkas — bukan drift berkas
  * ini, tetapi perlu diketahui karena menandakan database dipakai bersama).
  *
- * Yang **tidak** dibandingkan dengan sengaja: baris data, kepemilikan/ACL,
- * `search_path` sesi, dan schema lain (`auth`, `extensions`).
+ * ACL (grant ke anon/authenticated) ikut dibandingkan; kepemilikan objek dan
+ * `search_path` sesi, serta schema lain (`auth`, `extensions`) tidak.
  *
  * Keluar 1 bila ada objek yang hilang, berbeda, atau tambahan pada tabel
  * aplikasi — sehingga layak dijalankan sebagai gerbang sebelum/sesudah rilis.
- * Tidak ikut `npm test`/CI: ia butuh database yang benar-benar berjalan.
+ * Dijalankan di job CI `database` setelah migrasi dari nol; butuh database yang
+ * benar-benar berjalan.
  */
 import { readFileSync } from 'node:fs';
 
@@ -48,11 +49,13 @@ import postgres from 'postgres';
 
 import { databaseSslOptions } from '../src/lib/db/client.ts';
 
+const SCHEMA = 'animebattle';
+
 const SNAPSHOTS = {
   tables: `select c.relname as relation, c.relkind as kind
              from pg_class c
              join pg_namespace n on n.oid = c.relnamespace
-            where n.nspname = 'public' and c.relkind in ('r', 'p', 'm')
+            where n.nspname = '${SCHEMA}' and c.relkind in ('r', 'p', 'm')
             order by c.relname`,
   columns: `select c.relname as relation, a.attnum as ordinal, a.attname as column_name,
                    format_type(a.atttypid, a.atttypmod) as data_type,
@@ -63,7 +66,7 @@ const SNAPSHOTS = {
               join pg_class c on c.oid = a.attrelid
               join pg_namespace n on n.oid = c.relnamespace
               left join pg_attrdef d on d.adrelid = c.oid and d.adnum = a.attnum
-             where n.nspname = 'public' and c.relkind in ('r', 'p', 'm')
+             where n.nspname = '${SCHEMA}' and c.relkind in ('r', 'p', 'm')
                and a.attnum > 0 and not a.attisdropped
              order by c.relname, a.attnum`,
   enums: `select t.typname as type_name,
@@ -71,7 +74,7 @@ const SNAPSHOTS = {
             from pg_type t
             join pg_enum e on e.enumtypid = t.oid
             join pg_namespace n on n.oid = t.typnamespace
-           where n.nspname = 'public'
+           where n.nspname = '${SCHEMA}'
            group by t.typname
            order by t.typname`,
   functions: `select p.proname as function_name,
@@ -82,33 +85,33 @@ const SNAPSHOTS = {
                 from pg_proc p
                 join pg_namespace n on n.oid = p.pronamespace
                 join pg_language l on l.oid = p.prolang
-               where n.nspname = 'public'
+               where n.nspname = '${SCHEMA}'
                  and not exists (select 1 from pg_depend d
                                   where d.objid = p.oid and d.deptype = 'e')
                order by p.proname, args`,
   relations: `select c.relname as relation, c.relkind as kind, pg_get_viewdef(c.oid, true) as definition
                 from pg_class c
                 join pg_namespace n on n.oid = c.relnamespace
-               where n.nspname = 'public' and c.relkind in ('v', 'm')
+               where n.nspname = '${SCHEMA}' and c.relkind in ('v', 'm')
                order by c.relname`,
   indexes: `select c.relname as relation, i.relname as index_name, pg_get_indexdef(x.indexrelid) as definition
               from pg_index x
               join pg_class i on i.oid = x.indexrelid
               join pg_class c on c.oid = x.indrelid
               join pg_namespace n on n.oid = c.relnamespace
-             where n.nspname = 'public'
+             where n.nspname = '${SCHEMA}'
              order by c.relname, i.relname`,
   triggers: `select c.relname as relation, t.tgname as trigger_name, pg_get_triggerdef(t.oid) as definition
                from pg_trigger t
                join pg_class c on c.oid = t.tgrelid
                join pg_namespace n on n.oid = c.relnamespace
-              where n.nspname = 'public' and not t.tgisinternal
+              where n.nspname = '${SCHEMA}' and not t.tgisinternal
               order by c.relname, t.tgname`,
   constraints: `select con.conname as constraint_name, con.conrelid::regclass::text as relation,
                        con.contype as kind, pg_get_constraintdef(con.oid) as definition
                   from pg_constraint con
                   join pg_namespace n on n.oid = con.connamespace
-                 where n.nspname = 'public'
+                 where n.nspname = '${SCHEMA}'
                  order by relation, con.conname`,
   // RLS dan policy ikut dibandingkan: keduanya ditetapkan berkas DDL dan
   // berdampak pada keamanan, jadi "identik" tanpa keduanya tidak bermakna.
@@ -116,16 +119,35 @@ const SNAPSHOTS = {
                c.relforcerowsecurity as forced
           from pg_class c
           join pg_namespace n on n.oid = c.relnamespace
-         where n.nspname = 'public' and c.relkind in ('r', 'p', 'm')
+         where n.nspname = '${SCHEMA}' and c.relkind in ('r', 'p', 'm')
          order by c.relname`,
   policies: `select tablename as relation, policyname, cmd, roles::text as roles, qual, with_check
                from pg_policies
-              where schemaname = 'public'
+              where schemaname = '${SCHEMA}'
               order by tablename, policyname`,
+  // ACL ikut dibandingkan: RLS tanpa grant = 0 baris, grant tanpa RLS = bocor.
+  tablePrivileges: `select c.relname as relation,
+       has_table_privilege('anon', c.oid, 'SELECT') as anon_select,
+       has_table_privilege('anon', c.oid, 'INSERT') as anon_insert,
+       has_table_privilege('authenticated', c.oid, 'SELECT') as auth_select,
+       has_table_privilege('authenticated', c.oid, 'INSERT') as auth_insert,
+       has_table_privilege('authenticated', c.oid, 'UPDATE') as auth_update,
+       has_table_privilege('authenticated', c.oid, 'DELETE') as auth_delete
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = '${SCHEMA}' and c.relkind in ('r', 'p', 'v', 'm')
+   order by c.relname`,
+  routinePrivileges: `select p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as routine,
+       has_function_privilege('anon', p.oid, 'EXECUTE') as anon_execute,
+       has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth_execute
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = '${SCHEMA}'
+   order by routine`,
 };
 
 /** Potret yang objeknya menempel pada sebuah relasi (kunci diawali nama relasi). */
-const RELATION_SCOPED = new Set(['columns', 'indexes', 'triggers', 'constraints', 'rls', 'policies']);
+const RELATION_SCOPED = new Set(['columns', 'indexes', 'triggers', 'constraints', 'rls', 'policies', 'tablePrivileges']);
 
 const KEYS = {
   tables: (row) => row.relation,
@@ -138,6 +160,8 @@ const KEYS = {
   constraints: (row) => `${row.relation}.${row.constraint_name}`,
   rls: (row) => row.relation,
   policies: (row) => `${row.relation}.${row.policyname}`,
+  tablePrivileges: (row) => row.relation,
+  routinePrivileges: (row) => row.routine,
 };
 
 const VALUES = {
@@ -154,7 +178,28 @@ const VALUES = {
   rls: (row) => `enabled=${row.enabled} forced=${row.forced}`,
   policies: (row) =>
     `cmd=${row.cmd} roles=${collapse(row.roles)} using=${collapse(row.qual)} check=${collapse(row.with_check)}`,
+  tablePrivileges: (row) =>
+    `anon_select=${row.anon_select} anon_insert=${row.anon_insert} auth_select=${row.auth_select} auth_insert=${row.auth_insert} auth_update=${row.auth_update} auth_delete=${row.auth_delete}`,
+  routinePrivileges: (row) => `anon_execute=${row.anon_execute} auth_execute=${row.auth_execute}`,
 };
+
+const METADATA_RELATIONS = new Set(['schema_migrations']);
+
+/** Tabel buku migrasi bukan objek aplikasi; jangan dilaporkan sebagai drift. */
+function withoutMetadata(kind, rows) {
+  const relationScopedKinds = new Set([
+    'tables',
+    'columns',
+    'indexes',
+    'triggers',
+    'constraints',
+    'rls',
+    'policies',
+    'tablePrivileges',
+  ]);
+  if (!relationScopedKinds.has(kind)) return rows;
+  return rows.filter((row) => !METADATA_RELATIONS.has(row.relation));
+}
 
 function collapse(text) {
   return String(text ?? '')
@@ -198,10 +243,10 @@ const schema = readFileSync(new URL('../docs/schema.sql', import.meta.url), 'utf
 
 const baselineDb = await PGlite.create({ extensions: { pg_trgm, unaccent, pgcrypto } });
 await baselineDb.exec(schema);
-await baselineDb.exec(`set search_path = public`);
+await baselineDb.exec(`set search_path = animebattle, public`);
 
 const liveDb = postgres(process.env.DATABASE_URL, { max: 2, ...databaseSslOptions() });
-await liveDb.unsafe(`set search_path = public`);
+await liveDb.unsafe(`set search_path = animebattle, public`);
 
 const liveVersion = (await liveDb.unsafe(`select version() as version`))[0].version;
 const baselineVersion = (await baselineDb.query(`select version() as version`)).rows[0].version;
@@ -218,8 +263,8 @@ try {
   const liveByKind = new Map();
 
   for (const [kind, query] of Object.entries(SNAPSHOTS)) {
-    const baselineRows = (await baselineDb.query(query)).rows;
-    const liveRows = await liveDb.unsafe(query);
+    const baselineRows = withoutMetadata(kind, (await baselineDb.query(query)).rows);
+    const liveRows = withoutMetadata(kind, await liveDb.unsafe(query));
     baselineByKind.set(kind, baselineRows);
     liveByKind.set(kind, liveRows);
 
@@ -313,7 +358,7 @@ console.log(
 );
 if (foreign.length > 0) {
   console.log(
-    `CATATAN   : ${foreign.length} relasi/objek di schema public tidak didefinisikan docs/schema.sql.`,
+    `CATATAN   : ${foreign.length} relasi/objek ekstra di schema animebattle tidak didefinisikan docs/schema.sql.`,
   );
 }
 process.exit(drifted ? 1 : 0);

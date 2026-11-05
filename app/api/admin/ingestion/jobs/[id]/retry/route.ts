@@ -1,16 +1,14 @@
 /**
  * `POST /api/admin/ingestion/jobs/:id/retry` — mengembalikan job ke antrian.
  *
- * Hanya menyentuh baris `ingestion_jobs`; pekerjaannya tetap dilakukan worker
- * (AC-25). Job berstatus `processing` tidak dapat di-retry — tidak ada cara
- * membatalkan worker yang sedang memegangnya, dan menandainya `pending` akan
- * membuat dua worker mengerjakan job yang sama.
- *
- * Keamanan (AC-26): guard Bearer fail-closed + 120 permintaan/jam.
+ * Sesi Supabase editor + rate limit 120/jam. Aksi yang berhasil menulis
+ * `audit_logs` dengan aktor sesi.
  */
 
 import { apiError } from '@/lib/errors.ts';
 import { guardAdminRequest } from '@/features/admin/guard.ts';
+import { recordAdminAudit } from '@/features/admin/audit.ts';
+import { hashIp, requestIp } from '@/lib/security/ip-hash.ts';
 import { getSqlClient, isDatabaseUnavailable } from '@/lib/db/client.ts';
 import { retryIngestionJob } from '@/services/queue/ingestion-jobs.ts';
 
@@ -20,8 +18,12 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  const denied = guardAdminRequest(request, { limit: 120, windowMs: 3_600_000 });
-  if (denied) return denied;
+  const auth = await guardAdminRequest(request, {
+    limit: 120,
+    windowMs: 3_600_000,
+    minLevel: 'editor',
+  });
+  if (!auth.ok) return auth.response;
 
   const { id } = await context.params;
   if (!/^[0-9a-f-]{36}$/i.test(id)) {
@@ -29,7 +31,8 @@ export async function POST(
   }
 
   try {
-    const updated = await retryIngestionJob(getSqlClient(), id);
+    const sql = getSqlClient();
+    const updated = await retryIngestionJob(sql, id);
     if (!updated) {
       return apiError(
         'INVALID_INPUT',
@@ -37,6 +40,14 @@ export async function POST(
         409,
       );
     }
+    await recordAdminAudit(sql, {
+      actorId: auth.identity.userId,
+      action: 'ingestion.retry',
+      entityType: 'ingestion_job',
+      entityId: id,
+      params: { job_id: id },
+      ipHash: hashIp(requestIp(request.headers)),
+    });
     return Response.json({ job_id: id, status: 'pending' });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

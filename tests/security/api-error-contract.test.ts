@@ -154,6 +154,88 @@ describe('kontrak error route anonim', () => {
     assert.equal(body.has_more, true, '2 × 20 < 42');
   });
 
+  // Cache edge hanya untuk respons sukses: angka `s-maxage` adalah janji berapa
+  // lama data boleh basi, jadi ia harus cocok dengan yang tertulis di PRD §22
+  // (60 s) dan menyertakan `stale-while-revalidate` supaya lonjakan trafik tidak
+  // langsung menembus ke Postgres.
+  it('search & suggest: respons sukses membawa Cache-Control s-maxage + SWR', async () => {
+    setSqlClient({
+      query: async () => [{ payload: { total: 0, rows: [] } }],
+    });
+
+    const search = await searchGet(searchRequest('goku'));
+    assert.equal(search.status, 200);
+    const searchCache = search.headers.get('cache-control') ?? '';
+    assert.match(searchCache, /s-maxage=60/);
+    assert.match(searchCache, /stale-while-revalidate=300/);
+    assert.match(searchCache, /public/);
+
+    const suggest = await suggestGet(suggestRequest('q=go'));
+    assert.equal(suggest.status, 200);
+    const suggestCache = suggest.headers.get('cache-control') ?? '';
+    assert.match(suggestCache, /s-maxage=60/);
+    assert.match(suggestCache, /stale-while-revalidate=300/);
+  });
+
+  // Galat tidak boleh ikut tersimpan di edge: 503 karena database mati bersifat
+  // sementara, dan menyimpannya membuat pemulihan tidak terlihat selama TTL.
+  it('search & suggest: respons galat tidak membawa header cache', async () => {
+    setSqlClient(failingClient(connectivityError()));
+
+    const search = await searchGet(searchRequest('goku'));
+    assert.equal(search.status, 503);
+    assert.equal(search.headers.get('cache-control'), null);
+
+    const suggest = await suggestGet(suggestRequest('q=go'));
+    assert.equal(suggest.status, 503);
+    assert.equal(suggest.headers.get('cache-control'), null);
+  });
+
+  // `types` diteruskan ke RPC, bukan diabaikan di route: parameter ke-7 harus
+  // berisi daftar yang diminta, dan baris verse tetap dikembalikan apa adanya.
+  it('search: types diteruskan ke RPC dan baris verse dipertahankan', async () => {
+    const calls: Array<{ text: string; params?: readonly unknown[] }> = [];
+    setSqlClient({
+      query: async <T>(text: string, params?: readonly unknown[]): Promise<T[]> => {
+        calls.push({ text, params });
+        return [
+          {
+            payload: {
+              total: 1,
+              rows: [
+                {
+                  type: 'verse',
+                  id: '00000000-0000-0000-0000-0000000000b2',
+                  slug: 'one-punch-man',
+                  name: 'One-Punch Man',
+                  native_name: null,
+                  verse_slug: 'one-punch-man',
+                  verse_name: 'One-Punch Man',
+                  tier_code: null,
+                  data_completeness: 'partial',
+                  popularity_score: 5,
+                  score: 0.5,
+                },
+              ],
+            },
+          },
+        ] as T[];
+      },
+    });
+
+    const response = await searchGet(searchRequestRaw('q=one&types=character,verse'));
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { data: Array<{ type: string; slug: string }> };
+    assert.equal(body.data[0]?.type, 'verse');
+    assert.equal(body.data[0]?.slug, 'one-punch-man');
+
+    assert.equal(calls.length, 2, 'satu panggilan kuota + satu panggilan pencarian');
+    const searchCall = calls.find((call) => call.text.includes('search_characters_page'));
+    assert.ok(searchCall, 'RPC pencarian harus dipanggil');
+    assert.match(searchCall.text, /search_characters_page\(\$1, \$2, \$3, \$4, \$5, true, \$6\)/);
+    assert.deepEqual(searchCall.params?.[5], ['character', 'verse']);
+  });
+
   it('search: parameter di luar kontrak ditolak 400 sebelum database disentuh', async () => {
     // Klien yang mengirim parameter tak sah tidak boleh menyentuh database:
     // klien di sini akan melempar bila dipanggil, jadi 400 membuktikan urutannya.
@@ -164,7 +246,7 @@ describe('kontrak error route anonim', () => {
     });
 
     for (const [queryString, pattern] of [
-      ['q=goku&types=character,verse', /hanya mencari karakter/],
+      ['q=goku&types=character,episode', /types tidak dikenal: episode/],
       ['q=goku&sort=name', /tidak dikenal: sort/],
       ['q=goku&per_page=37', /20, 50, 100, 200/],
       ['q=goku&page=0', /page harus bilangan bulat/],

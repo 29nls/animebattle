@@ -37,6 +37,7 @@ import type { SqlClient } from '../../lib/db/client.ts';
 
 import type {
   DatasetAbility,
+  DatasetAlias,
   DatasetCharacter,
   DatasetEnvelope,
   DatasetForm,
@@ -411,6 +412,82 @@ async function upsertCharacter(
   // jejak sumbernya (idempoten lewat unique index).
   await recordCharacterSource(context, existing.id, sourceUrl);
   return { id: existing.id, sourceUrl };
+}
+
+/**
+ * Menulis alias karakter dari dataset.
+ *
+ * Kenapa tidak menghapus alias yang tidak ada di dataset: dataset boleh bersifat
+ * parsial (satu sumber hanya menyebut sebagian alias), dan alias dari sumber lain
+ * tetap sah. Yang dijaga adalah idempotensi — menjalankan dataset yang sama dua
+ * kali tidak menambah baris (`unique (character_id, alias)`).
+ *
+ * Alias yang sudah ada tetapi `script`/`source_id`-nya berbeda diperbarui hanya
+ * bila sumber baru tidak lebih lemah, memakai aturan prioritas yang sama dengan
+ * baris fakta lain. Tanpa ini, impor ulang dataset yang sama tidak akan pernah
+ * memperbaiki script yang salah tebak.
+ */
+async function upsertAliases(
+  context: UpsertContext,
+  characterId: string,
+  aliases: readonly DatasetAlias[],
+  report: UpsertReport,
+  sourceUrl: string,
+): Promise<void> {
+  if (aliases.length === 0) return;
+  const { sql, source, dryRun } = context;
+
+  const existingRows = await sql.query<{
+    id: string;
+    alias: string;
+    script: string;
+    source_priority: number | null;
+  }>(
+    `select a.id, a.alias, a.script, s.priority as source_priority
+       from character_aliases a
+       left join sources s on s.id = a.source_id
+      where a.character_id = $1`,
+    [characterId],
+  );
+  const existing = new Map(existingRows.map((row) => [row.alias, row]));
+
+  for (const entry of aliases) {
+    try {
+      const current = existing.get(entry.alias);
+      if (current === undefined) {
+        if (dryRun) continue;
+        await sql.query(
+          `insert into character_aliases (character_id, alias, script, source_id)
+           values ($1, $2, $3, $4)
+           on conflict (character_id, alias) do nothing`,
+          [characterId, entry.alias, entry.script, source.id],
+        );
+        continue;
+      }
+
+      if (current.script === entry.script) continue;
+      if (!canOverwrite(source.priority, current.source_priority)) {
+        noteSkipped(report, `alias ${entry.alias}`, current.source_priority);
+        continue;
+      }
+      if (dryRun) continue;
+      await sql.query(
+        `update character_aliases
+            set script = $2, source_id = $3
+          where id = $1`,
+        [current.id, entry.script, source.id],
+      );
+    } catch (error) {
+      report.failed += 1;
+      report.failures.push({
+        error_type: errorTypeFor(error),
+        message: error instanceof Error ? error.message : String(error),
+        source_url: sourceUrl,
+        payload: payloadSlice(entry),
+        http_status: null,
+      });
+    }
+  }
 }
 
 interface FormState {
@@ -946,6 +1023,7 @@ export async function applyDataset(
     try {
       const upserted = await upsertCharacter(context, character, verseId, report);
       if (upserted === null) continue;
+      await upsertAliases(context, upserted.id, character.aliases ?? [], report, upserted.sourceUrl);
       for (const form of character.forms) {
         await applyForm(context, upserted.id, character.media_type, form, maps, report, upserted.sourceUrl);
       }
@@ -963,7 +1041,7 @@ export async function applyDataset(
 
   if (!context.dryRun && report.created + report.updated > 0) {
     try {
-      await context.sql.query('select public.recompute_completeness()');
+      await context.sql.query('select recompute_completeness()');
     } catch (error) {
       report.notes.push(
         `recompute_completeness tidak dijalankan: ${error instanceof Error ? error.message : String(error)}`,

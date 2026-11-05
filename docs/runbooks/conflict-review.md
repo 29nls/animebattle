@@ -178,8 +178,8 @@ update character_source_conflicts
 3. **Tidak ada pemicu otomatis.** Queue tidak mengirim notifikasi; "backlog konflik
    besar" baru terlihat saat seseorang membuka halaman (K5 harus dijadwalkan
    sebagai query, belum ada).
-4. **`resolved_by` tanpa referensi `users`.** Tidak ada integritas terhadap
-   akun sungguhan sampai Supabase Auth terpasang (Sprint 4).
+4. **`resolved_by` harus UUID akun Supabase Auth yang nyata.** Jangan memakai UUID
+   karangan; resolusi konflik belum punya handler UI, jadi audit-nya juga manual.
 
 ## 7. Verifikasi setelah tindakan
 

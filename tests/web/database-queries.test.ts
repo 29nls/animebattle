@@ -44,6 +44,11 @@ import {
 } from '../../src/features/battle/queries.ts';
 import { demoBattleOptionGroups } from '../../src/features/demo/provider.ts';
 import {
+  checkDistributedRateLimit,
+  enforcePublicRateLimit,
+  rateLimitBucket,
+} from '../../src/lib/security/distributed-rate-limit.ts';
+import {
   countCharacters,
   listCharacters,
   searchCharacters,
@@ -63,6 +68,12 @@ import {
   listVerses,
 } from '../../src/features/verses/queries.ts';
 import type { BattleConditions, RuleSet } from '../../src/services/battle/types.ts';
+import {
+  countPickerForms,
+  listPickerForms,
+  loadPickerBootstrap,
+} from '../../src/features/battle/picker-queries.ts';
+import { listPopularMatchups } from '../../src/features/battle/matchup-queries.ts';
 
 const resolveDoc = (name: string): string =>
   fileURLToPath(new URL(`../../docs/${name}`, import.meta.url));
@@ -414,7 +425,7 @@ describe('jalur pertarungan di atas skema sungguhan', () => {
     // terdokumentasi); kunci yang hilang itulah akar bug NaN di atas.
     const keyed = await sql.query<{ has_experience: boolean }>(
       `select jsonb_exists(elem -> 'metrics', 'experience') as has_experience
-         from jsonb_array_elements(public.battle_dataset(array[$1]::uuid[])) as t(elem)`,
+         from jsonb_array_elements(battle_dataset(array[$1]::uuid[])) as t(elem)`,
       [versionIds.first],
     );
     assert.equal(keyed.length, 1);
@@ -574,6 +585,79 @@ describe('pemilih & halaman hasil /versus di atas skema sungguhan', () => {
     );
   });
 
+  it('loadBattleResult memakai cache pada kunjungan kedua dan menghitung ulang setelah statistik berubah', async () => {
+    await withEnvironment({ DATABASE_URL: 'postgres://fixture' }, () =>
+      withInjectedClient(async () => {
+    // Kunjungan kedua tidak boleh menambah baris `battle_results`: itulah inti
+    // cache, dan baris pertama yang membuat Popular Battles punya data.
+    const rowsBefore = await sql.query<{ n: number }>('select count(*)::int as n from battle_results');
+
+    const first = await loadBattleResult({
+      valueA: 'fixture-hero/first-form',
+      valueB: 'fixture-hero/second-form',
+      conditions: CONDITIONS,
+      rule_set: ruleSet,
+    });
+    assert.equal(first.status, 'ok');
+    if (first.status !== 'ok') throw new Error('tidak mungkin');
+
+    const rowsAfterFirst = await sql.query<{ n: number }>('select count(*)::int as n from battle_results');
+    // Test sebelumnya sudah menyimpan pasangan ini, jadi kunjungan pertama di
+    // sini boleh berupa cache hit; yang penting barisnya ada tepat satu.
+    assert.equal(rowsAfterFirst[0]!.n, Math.max(rowsBefore[0]!.n, 1), 'hasil tersimpan sekali');
+
+    const second = await loadBattleResult({
+      valueA: 'fixture-hero/first-form',
+      valueB: 'fixture-hero/second-form',
+      conditions: CONDITIONS,
+      rule_set: ruleSet,
+    });
+    assert.equal(second.status, 'ok');
+    if (second.status !== 'ok') throw new Error('tidak mungkin');
+
+    // Payload dibaca apa adanya dari cache — bukan direkonstruksi dari kolom.
+    assert.deepEqual(second.bundle.result, first.bundle.result);
+    const rowsAfterSecond = await sql.query<{ n: number }>('select count(*)::int as n from battle_results');
+    assert.equal(rowsAfterSecond[0]!.n, rowsAfterFirst[0]!.n, 'kunjungan kedua memakai cache');
+
+    // Perubahan statistik menginvalidasi cache lewat trigger (migrasi 0007),
+    // sehingga hasil berikutnya dihitung dari data baru.
+    await sql.query(
+      `update statistics set confidence = 0.81
+        where character_version_id = $1 and metric = 'attack_potency'`,
+      [versionIds.first],
+    );
+    const invalidated = await sql.query<{ n: number }>(
+      `select count(*)::int as n from battle_results where cached_until <= now()`,
+    );
+    assert.ok(invalidated[0]!.n >= 1, 'trigger menandai hasil lama kedaluwarsa');
+
+    const third = await loadBattleResult({
+      valueA: 'fixture-hero/first-form',
+      valueB: 'fixture-hero/second-form',
+      conditions: CONDITIONS,
+      rule_set: ruleSet,
+    });
+    assert.equal(third.status, 'ok');
+    if (third.status !== 'ok') throw new Error('tidak mungkin');
+    const rowsAfterThird = await sql.query<{ n: number }>('select count(*)::int as n from battle_results');
+    assert.ok(rowsAfterThird[0]!.n >= rowsAfterFirst[0]!.n, 'data baru tidak menimpa baris lama');
+    assert.equal(
+      (await sql.query<{ n: number }>('select count(*)::int as n from battle_results where cached_until > now()'))[0]!.n,
+      1,
+      'tepat satu hasil yang berlaku setelah hitung ulang',
+    );
+
+    // Kembalikan fixture supaya test berikutnya tidak mewarisi perubahan ini.
+    await sql.query(
+      `update statistics set confidence = 0.8
+        where character_version_id = $1 and metric = 'attack_potency'`,
+      [versionIds.first],
+    );
+      }),
+    );
+  });
+
   it('loadBattleResult menandai pilihan tidak sah tanpa menyentuh database', async () => {
     // Tanpa DATABASE_URL dan tanpa ALLOW_DEMO_DATA: `getSqlClient()` akan
     // melempar bila urutan pemeriksaannya salah, jadi tidak melempar di sini
@@ -607,6 +691,81 @@ describe('pemilih & halaman hasil /versus di atas skema sungguhan', () => {
     });
   });
 
+  it('rate limit terdistribusi menolak permintaan ke-31 pada jendela yang sama', async () => {
+    // AC-26: 30 permintaan pertama lolos, ke-31 mendapat 429. Hitungannya ada di
+    // tabel, bukan Map proses — inilah yang membuat batas berlaku lintas instance.
+    const bucket = rateLimitBucket(new Headers({ 'x-forwarded-for': '203.0.113.9' }), 'uji-ac26', 1_700_000_000_000);
+    const options = { scope: 'uji-ac26', limit: 30, windowMs: 60_000, nowMs: 1_700_000_000_000 };
+
+    for (let i = 1; i <= 30; i += 1) {
+      const result = await checkDistributedRateLimit(sql, bucket, options);
+      assert.equal(result.allowed, true, `permintaan ke-${i} harus lolos`);
+      if (result.allowed) assert.equal(result.remaining, 30 - i);
+    }
+
+    const blocked = await checkDistributedRateLimit(sql, bucket, options);
+    assert.equal(blocked.allowed, false);
+    if (!blocked.allowed) assert.ok(blocked.retryAfterMs > 0 && blocked.retryAfterMs <= 60_000);
+
+    // Jendela berikutnya mengosongkan hitungan tanpa perlu pembersihan manual.
+    const next = await checkDistributedRateLimit(sql, bucket, { ...options, nowMs: 1_700_000_060_000 });
+    assert.equal(next.allowed, true);
+  });
+
+  it('bucket memisahkan endpoint dan tidak menyimpan IP mentah', async () => {
+    const headers = new Headers({ 'x-forwarded-for': '203.0.113.9' });
+    const now = 1_700_000_000_000;
+    const search = rateLimitBucket(headers, 'search', now);
+    const battle = rateLimitBucket(headers, 'battle-simulate', now);
+
+    assert.notEqual(search, battle, 'kuota pencarian tidak boleh memakan kuota simulasi');
+    assert.doesNotMatch(search, /203\.0\.113\.9/, 'IP mentah tidak masuk bucket');
+    assert.equal(search, rateLimitBucket(headers, 'search', now), 'hash harian deterministik');
+    // Tanpa header IP (pengembangan lokal) semua permintaan berbagi satu bucket
+    // `unknown`; membuat bucket acak akan menghapus batasnya sama sekali.
+    assert.equal(
+      rateLimitBucket(new Headers(), 'search', now),
+      rateLimitBucket(new Headers(), 'search', now),
+    );
+  });
+
+  it('enforcePublicRateLimit mengembalikan 429 ber-header retry-after, dan fail-open saat limiter rusak', async () => {
+    const headers = new Headers({ 'x-forwarded-for': '198.51.100.7' });
+    const options = { scope: 'uji-429', limit: 1, windowMs: 60_000, nowMs: 1_700_000_000_000 };
+
+    await withInjectedClient(async () => {
+      assert.equal(await enforcePublicRateLimit(headers, options), null);
+      const limited = await enforcePublicRateLimit(headers, options);
+      assert.ok(limited, 'permintaan kedua harus ditolak');
+      assert.equal(limited.status, 429);
+      // Jendela tetap, jadi sisa waktu bergantung pada posisi `nowMs` di dalam
+      // jendela — yang dikunci adalah bentuknya: detik bulat, 1..60.
+      const retryAfter = Number(limited.headers.get('retry-after'));
+      assert.ok(Number.isInteger(retryAfter) && retryAfter >= 1 && retryAfter <= 60);
+      const body = (await limited.json()) as {
+        error: { code: string; details: { retry_after_ms: number } };
+      };
+      assert.equal(body.error.code, 'RATE_LIMITED');
+      assert.ok(body.error.details.retry_after_ms > 0);
+    });
+
+    // Limiter yang tidak tersedia tidak boleh menjatuhkan endpoint: permintaan
+    // diteruskan, dan galatnya hanya masuk log (jalur data akan menjawab 503).
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      setSqlClient({
+        query: async () => {
+          throw new Error('relation "rate_limit_windows" does not exist');
+        },
+      });
+      assert.equal(await enforcePublicRateLimit(headers, options), null);
+    } finally {
+      console.error = originalError;
+      setSqlClient(null);
+    }
+  });
+
   it('loadBattleResult memakai dataset demo hanya bila database belum dikonfigurasi', async () => {
     const groups = demoBattleOptionGroups();
     const valueA = groups[0]!.options[0]!.value;
@@ -634,5 +793,110 @@ describe('pemilih & halaman hasil /versus di atas skema sungguhan', () => {
         (error) => error instanceof DatabaseNotConfiguredError,
       );
     });
+  });
+});
+
+describe('combobox /versus dan Popular Battles di atas skema sungguhan', () => {
+  it('listPickerForms mengembalikan form satu karakter saja, urut form_order', async () => {
+    const result = await listPickerForms(sql, 'fixture-hero');
+    assert.ok(result);
+    assert.equal(result.characterName, 'Fixture Hero');
+    assert.deepEqual(
+      result.options.map((option) => option.value),
+      ['fixture-hero/first-form', 'fixture-hero/second-form'],
+    );
+    assert.equal(result.options[0]!.tier_code, '5-B');
+    // Label tidak mengulang nama karakter: nilai `value` sudah membawa konteks
+    // itu, dan mengulangnya membuat daftar form terbaca dua kali.
+    assert.equal(result.options[0]!.label, 'Fixture Hero (First Form) — First arc (5-B)');
+  });
+
+  it('listPickerForms menjawab null untuk karakter yang tidak ada', async () => {
+    assert.equal(await listPickerForms(sql, 'tidak-ada'), null);
+  });
+
+  it('countPickerForms menghitung form aktif, bukan baris karakter', async () => {
+    assert.equal(await countPickerForms(sql), 2);
+  });
+
+  it('loadPickerBootstrap tidak mengangkut katalog dan melabeli dua sisi dari URL', async () => {
+    await withEnvironment({ DATABASE_URL: 'postgres://fixture.test/db' }, async () => {
+      setSqlClient(sql);
+      try {
+        const bootstrap = await loadPickerBootstrap(
+          'fixture-hero/first-form',
+          'fixture-hero/second-form',
+        );
+        assert.equal(bootstrap.source, 'database');
+        assert.equal(bootstrap.totalForms, 2);
+        // Jalur database sengaja tidak mengirim grup: combobox memakai API.
+        assert.deepEqual(bootstrap.groups, []);
+        assert.deepEqual(bootstrap.initialA, {
+          value: 'fixture-hero/first-form',
+          label: 'Fixture Hero — Fixture Hero (First Form) — First arc (5-B)',
+        });
+        assert.ok(bootstrap.initialB);
+      } finally {
+        setSqlClient(null);
+      }
+    });
+  });
+
+  it('loadPickerBootstrap membiarkan pilihan tak dikenal kosong, bukan menebak', async () => {
+    await withEnvironment({ DATABASE_URL: 'postgres://fixture.test/db' }, async () => {
+      setSqlClient(sql);
+      try {
+        const bootstrap = await loadPickerBootstrap('fixture-hero/tidak-ada', '');
+        assert.equal(bootstrap.initialA, null);
+        assert.equal(bootstrap.initialB, null);
+      } finally {
+        setSqlClient(null);
+      }
+    });
+  });
+
+  it('listPopularMatchups hanya menautkan slug yang dapat diurai', async () => {
+    // View dihitung dari hasil tersimpan; dua baris buatan ini mewakili slug
+    // lama yang tidak lagi berbentuk kanonik.
+    // Kondisi sendiri dibuat di sini: `battles` unik per (sisi A, sisi B, kondisi),
+    // dan simulasi sebelumnya sudah memakai pasangan yang sama.
+    const conditions = await sql.query<{ id: string }>(
+      `insert into battle_conditions (mode, conditions_hash) values ('standard', 'popularity-fixture')
+       returning id`,
+    );
+    const conditionsId = conditions[0]?.id;
+    assert.ok(conditionsId);
+
+    await sql.query(
+      `insert into battles (slug, side_a_version_id, side_b_version_id, conditions_id)
+       values ('fixture-hero/first-form-vs-fixture-hero/second-form', $1, $2, $3),
+              ('bukan-slug', $2, $1, $3)`,
+      [versionIds.first, versionIds.second, conditionsId],
+    );
+    await sql.query(
+      // Versi rule set dipinjam dari hasil simulasi yang sudah ada: kolomnya
+      // ber-FK dan test ini tidak sedang menguji aturan engine.
+      `insert into battle_results
+         (battle_id, winner, win_probability_a, win_probability_b, confidence,
+          difficulty, battle_length, primary_reason, input_hash, engine_version,
+          rule_set_version, rule_set_id, computed_at)
+       select b.id, 'a', 0.6, 0.4, 0.8, 'mid', 'medium', 'fixture',
+              'popularity-' || b.slug || '-' || b.id, 'engine@1', r.rule_set_version, r.rule_set_id, now()
+         from battles b
+         cross join (select rule_set_version, rule_set_id from battle_results limit 1) r
+        where b.slug in ('fixture-hero/first-form-vs-fixture-hero/second-form', 'bukan-slug')`,
+    );
+    await sql.query(`refresh materialized view mv_battle_popularity`);
+
+    const popular = await listPopularMatchups(sql, 10);
+    assert.deepEqual(
+      popular.map((row) => row.slug),
+      ['fixture-hero/first-form-vs-fixture-hero/second-form'],
+    );
+    // Simulasi cache dari test sebelumnya memakai pasangan yang sama, jadi yang
+    // diuji di sini adalah agregasinya (>= 1) dan penyaringan slug, bukan angka
+    // yang bergantung urutan test.
+    assert.ok(popular[0]!.simulations >= 1);
+    assert.ok(popular.every((row) => row.slug !== 'bukan-slug'));
   });
 });

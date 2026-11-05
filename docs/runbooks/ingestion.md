@@ -24,7 +24,7 @@ Dipicu oleh, salah satu saja:
 ## 1. Membaca keadaan dalam 30 detik
 
 ```bash
-npm run test:ingestion        # kontrak pipeline di atas skema nyata (28 uji)
+npm run test:ingestion        # kontrak pipeline di atas skema nyata (31 uji)
 node worker/ingest.ts         # kerjakan satu job (friendlier untuk manual)
 ```
 
@@ -57,11 +57,17 @@ Kolom `retry_count/max_retries` menjelaskan sudah berapa kali dicoba. Kolom
 
 ## 3. Tindakan yang aman
 
+Rute `/api/admin/*` memakai **cookie sesi Supabase Auth** (peran minimal editor;
+admin/owner wajib `aal2`), bukan Bearer `ADMIN_INGESTION_SECRET`. Login di
+`/admin/login`, selesaikan TOTP bila diminta, lalu salin cookie sesi dari browser
+ke `$ADMIN_COOKIE` (jangan menaruh nilainya di repo). Contoh curl di bawah memakai
+cookie itu.
+
 **Retry** (tombol di baris job, atau API):
 
 ```bash
 curl -X POST "$SITE/api/admin/ingestion/jobs/<job-id>/retry" \
-     -H "authorization: Bearer $ADMIN_INGESTION_SECRET"
+     -b "$ADMIN_COOKIE"
 ```
 
 - Aman untuk kegagalan sementara. Pipeline **idempoten**: mengulang tidak
@@ -75,7 +81,7 @@ curl -X POST "$SITE/api/admin/ingestion/jobs/<job-id>/retry" \
 
 ```bash
 curl -X POST "$SITE/api/admin/ingestion/import" \
-     -H "authorization: Bearer $ADMIN_INGESTION_SECRET" \
+     -b "$ADMIN_COOKIE" \
      -H 'content-type: application/json' \
      -d '{"scope":"reparse","target_ref":"<raw-page-id>"}'
 ```
@@ -196,9 +202,9 @@ yang dirujuk, rank-nya `null`, dan engine berhenti di Layer 0 dengan
 ## 8. Verifikasi setelah tindakan
 
 ```bash
-curl "$SITE/api/admin/ingestion/jobs?status=failed" -H "authorization: Bearer $ADMIN_INGESTION_SECRET"
-curl "$SITE/api/admin/ingestion/jobs/<job-id>/errors" -H "authorization: Bearer $ADMIN_INGESTION_SECRET"
-curl "$SITE/api/admin/metrics" -H "authorization: Bearer $ADMIN_INGESTION_SECRET"
+curl "$SITE/api/admin/ingestion/jobs?status=failed" -b "$ADMIN_COOKIE"
+curl "$SITE/api/admin/ingestion/jobs/<job-id>/errors" -b "$ADMIN_COOKIE"
+curl "$SITE/api/admin/metrics" -b "$ADMIN_COOKIE"
 ```
 
 Berhasil bila: job berpindah status sesuai tindakan (`pending` setelah retry,

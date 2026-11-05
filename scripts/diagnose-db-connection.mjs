@@ -62,7 +62,7 @@ const NEXT_STEPS = {
   auth: 'Kredensial ditolak: password/user di DATABASE_URL salah atau sudah dirotasi.',
   database_missing: 'Database pada URL tidak ada — periksa nama database di DATABASE_URL.',
   schema_missing:
-    'Skema aplikasi belum diterapkan di database tujuan (atau URL menunjuk project lain): terapkan docs/schema.sql lalu docs/seed.sql.',
+    'Skema aplikasi belum diterapkan di database tujuan (atau URL menunjuk project lain): jalankan `npm run migrate` lalu `npm run seed:db`. Schema harus bernama animebattle, bukan public.',
   connection_limit:
     'Batas koneksi tercapai: kurangi `max` koneksi per instance atau gunakan pooler.',
   server_unavailable: 'Server menutup koneksi/sedang memulihkan diri: coba lagi setelah beberapa detik.',
@@ -126,6 +126,7 @@ let exitCode = 0;
 try {
   const started = Date.now();
   const rows = await sql.unsafe('select 1 as ok');
+  await sql.unsafe("set search_path = animebattle, public");
   const elapsed = Date.now() - started;
   if (rows[0]?.ok !== 1) {
     console.log('\nRespons tak terduga dari `select 1`:', rows);
@@ -139,7 +140,7 @@ try {
 
     const present = await sql.unsafe(
       `select table_name from information_schema.tables
-        where table_schema = 'public' and table_name = any($1::text[])`,
+        where table_schema = 'animebattle' and table_name = any($1::text[])`,
       [REQUIRED_TABLES],
     );
     const found = new Set(present.map((row) => row.table_name));

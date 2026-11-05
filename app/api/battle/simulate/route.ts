@@ -13,7 +13,9 @@
  *    supaya staging yang keliru menyetel satu variabel pun tidak membuka jalur
  *    ini untuk publik.
  *
- * Rate limit (AC-26) belum dipasang; lihat catatan di Sprint 4.
+ * Rate limit: 30/menit/IP (PRD §24, AC-26) lewat tabel `rate_limit_windows` —
+ * lihat `src/lib/security/distributed-rate-limit.ts` untuk alasan tidak memakai
+ * Map in-process.
  */
 
 import { parseBattleConditions } from '@/features/battle/conditions.ts';
@@ -21,9 +23,13 @@ import { defaultRuleSet } from '@/features/battle/rule-set.ts';
 import { simulateFromSides, simulateFromVersions } from '@/features/battle/simulate.ts';
 import { DatabaseNotConfiguredError, getSqlClient, isDatabaseUnavailable } from '@/lib/db/client.ts';
 import { apiError } from '@/lib/errors.ts';
+import { enforcePublicRateLimit } from '@/lib/security/distributed-rate-limit.ts';
 import type { BattleInput } from '@/services/battle/types.ts';
 
 export const dynamic = 'force-dynamic';
+
+/** Kuota PRD §24: 30/menit/IP, dihitung terpisah dari pencarian. */
+const RATE_LIMIT = { scope: 'battle-simulate', limit: 30, windowMs: 60_000 } as const;
 
 // Rule set default dan normalisasi kondisi dipindah ke `src/features/battle/`
 // karena dipakai juga oleh halaman `/versus/result`. Route ini tinggal memakai
@@ -70,6 +76,11 @@ export async function POST(request: Request): Promise<Response> {
   if (typeof a !== 'string' || typeof b !== 'string') {
     return apiError('INVALID_INPUT', 'Butuh side_a_version_id dan side_b_version_id (string UUID).', 400);
   }
+
+  // Kuota diperiksa setelah bentuk body sah: permintaan cacat tidak boleh
+  // menghabiskan jatah pengguna yang mengirim body benar.
+  const limited = await enforcePublicRateLimit(request.headers, RATE_LIMIT);
+  if (limited) return limited;
 
   // Divalidasi SEBELUM menyentuh database. Sebelumnya pemeriksaan ini ada di
   // dalam `simulateFromVersions`, tetapi klien database sudah diambil lebih dulu

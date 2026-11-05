@@ -19,7 +19,7 @@
 
 import { getSqlClient } from '@/lib/db/client.ts';
 import { apiError } from '@/lib/errors.ts';
-import { secretsMatch } from '@/lib/security/admin-guard.ts';
+import { secretsMatch } from '@/lib/security/secrets.ts';
 import { claimNextPendingJob, markJobCompleted, markJobFailed } from '@/services/queue/job-lifecycle.ts';
 import {
   describeJobFailure,

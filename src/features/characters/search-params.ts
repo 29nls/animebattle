@@ -8,9 +8,10 @@
  * Tiga keputusan yang disengaja, semuanya tentang berkata jujur kepada pemanggil:
  *
  *  1. **Parameter tak dikenal ditolak 400, bukan diabaikan.** Permintaan
- *     `?types=character,verse` yang diam-diam diabaikan membuat klien mengira
- *     ia mencari verse juga, padahal tidak. Endpoint ini hari ini hanya mencari
- *     karakter, dan itu dikatakan terus terang.
+ *     `?sort=name` yang diam-diam diabaikan membuat klien mengira urutannya
+ *     berubah, padahal tidak. Sama untuk `types` yang berisi nilai tak dikenal:
+ *     `types=character,episode` harus ditolak, bukan diperlakukan sebagai
+ *     "hanya karakter" — kalau tidak, klien mengira episode ikut dicari.
  *  2. **Nilai di luar daftar yang diizinkan ditolak**, bukan dijepit diam-diam:
  *     `per_page=37` yang berubah sendiri menjadi 20 membuat pemanggil tidak tahu
  *     batas mana yang berlaku. Daftar 20/50/100/200 adalah kontrak PRD §18.
@@ -20,10 +21,22 @@
  */
 
 /** Nama parameter yang diterima; dipakai juga di pesan galat agar dapat ditindaklanjuti. */
-export const ACCEPTED_SEARCH_PARAMS = ['q', 'verse', 'media', 'page', 'per_page', 'limit'] as const;
+export const ACCEPTED_SEARCH_PARAMS = ['q', 'verse', 'media', 'page', 'per_page', 'limit', 'types'] as const;
 
 /** Ukuran halaman yang sah — sama dengan batas yang dipaksakan fungsi RPC. */
 export const PER_PAGE_OPTIONS = [20, 50, 100, 200] as const;
+
+/**
+ * Tipe entitas yang dapat dicari. Daftar ini juga menjadi daftar nilai sah
+ * parameter `types`; fungsi RPC memakai string yang sama untuk memilih cabang.
+ * Menambah tipe di sini tanpa menambah cabang di `search_characters_page` hanya
+ * menghasilkan hasil kosong, jadi keduanya harus berubah bersama.
+ */
+export const SEARCH_TYPES = ['character', 'verse'] as const;
+export type SearchType = (typeof SEARCH_TYPES)[number];
+
+/** Tipe bawaan: perilaku lama (hanya karakter) tetap berlaku untuk klien lama. */
+export const DEFAULT_SEARCH_TYPES: readonly SearchType[] = ['character'];
 
 /** Nilai `media` yang sah; sama dengan enum `media_type_t` di DDL. */
 export const MEDIA_VALUES = ['manga', 'anime', 'game', 'novel', 'comic', 'movie', 'mixed', 'other'] as const;
@@ -35,11 +48,7 @@ export const MAX_QUERY_LENGTH = 200;
 export const MAX_PAGE = 10_000;
 
 /** Parameter yang disebut kontrak API tetapi belum diimplementasikan. */
-const UNIMPLEMENTED_PARAMS: Record<string, string> = {
-  types:
-    'Pencarian lintas tipe (types) belum diimplementasikan: endpoint ini hanya mencari karakter. ' +
-    'Hapus parameter types, atau gunakan /verses untuk menjelajahi verse.',
-};
+const UNIMPLEMENTED_PARAMS: Record<string, string> = {};
 
 export interface SearchQuery {
   /** Kueri setelah dipangkas; boleh kosong (hasil kosong, bukan seluruh katalog). */
@@ -49,6 +58,8 @@ export interface SearchQuery {
   /** Dimulai dari 1. */
   page: number;
   perPage: number;
+  /** Tipe entitas yang dicari; minimal satu, tanpa duplikat. */
+  types: SearchType[];
 }
 
 export type ParseResult<T> = { ok: true; value: T } | { ok: false; message: string };
@@ -120,7 +131,31 @@ export function parseSearchQuery(params: URLSearchParams): ParseResult<SearchQue
     page = parsed;
   }
 
-  return { ok: true, value: { q: rawQuery, verseSlug, media, page, perPage } };
+  // `types` dipisah koma, mis. `types=character,verse`. Nilai kosong berarti
+  // "pakai bawaan" supaya `?types=` dari form yang belum diisi tidak menjadi
+  // galat; nilai yang tidak dikenal tetap ditolak dengan daftar pilihan.
+  const rawTypes = params.get('types');
+  let types: SearchType[] = [...DEFAULT_SEARCH_TYPES];
+  if (rawTypes !== null && rawTypes.trim() !== '') {
+    const requested = rawTypes
+      .split(',')
+      .map((entry) => entry.trim().toLowerCase())
+      .filter((entry) => entry !== '');
+    if (requested.length === 0) {
+      return fail(`Parameter types kosong. Diterima: ${SEARCH_TYPES.join(', ')}.`);
+    }
+    const unknown = requested.filter((entry) => !(SEARCH_TYPES as readonly string[]).includes(entry));
+    if (unknown.length > 0) {
+      return fail(
+        `Parameter types tidak dikenal: ${unknown.join(', ')}. Diterima: ${SEARCH_TYPES.join(', ')}.`,
+      );
+    }
+    // Duplikat dibuang, urutan dipertahankan: `types=verse,verse` bukan alasan
+    // menggandakan baris di RPC, dan urutan tidak memengaruhi hasil.
+    types = [...new Set(requested)] as SearchType[];
+  }
+
+  return { ok: true, value: { q: rawQuery, verseSlug, media, page, perPage, types } };
 }
 
 /** Parameter `/api/search/suggest`: hanya `q`, dan wajib berisi sesuatu. */

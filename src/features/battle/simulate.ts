@@ -85,7 +85,7 @@ export async function loadBattleSides(
   // terisi (2026-10-10).
   const rows = await sql.query<{ side: BattleDatasetRow }>(
     `select elem as side
-       from jsonb_array_elements(public.battle_dataset(array[$1, $2]::uuid[])) as t(elem)`,
+       from jsonb_array_elements(battle_dataset(array[$1, $2]::uuid[])) as t(elem)`,
     [versionA, versionB],
   );
 

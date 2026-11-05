@@ -37,12 +37,55 @@ import type {
 
 export const ENGINE_VERSION = 'battle-engine@1.0.0';
 
+/**
+ * Versi kontrak dataset (`battle_dataset` → `SideData`).
+ *
+ * Kenapa ikut di-hash padahal seluruh isi baris juga di-hash: kontrak RPC dapat
+ * berubah tanpa satu pun nilai baris berubah — mis. arti sebuah field
+ * didefinisikan ulang. Tanpa versi kontrak, hasil lama akan disajikan dari cache
+ * seolah masih dihitung dengan aturan yang sama. Naikkan angka ini setiap kali
+ * bentuk atau arti keluaran `battle_dataset` berubah.
+ */
+export const DATASET_VERSION = 'battle-dataset@1';
+
+/**
+ * Semua kunci metrik yang mungkin, termasuk yang boleh bernilai `null`.
+ *
+ * Hash tidak boleh membedakan "kunci tidak dikirim" dari "kunci dikirim bernilai
+ * null": keduanya sama-sama berarti angka yang tidak terdokumentasi, dan engine
+ * memperlakukannya identik. Sebelum normalisasi ini, dataset lama tanpa kunci
+ * `experience` menghasilkan hash berbeda dari dataset baru yang mengirim
+ * `experience: null` — dua entri cache untuk satu pertanyaan yang sama.
+ */
+const METRIC_KEYS = [
+  'tier',
+  'attack_potency',
+  'durability',
+  'striking_strength',
+  'lifting_strength',
+  'speed',
+  'reaction_speed',
+  'combat_speed',
+  'range',
+  'stamina',
+  'intelligence',
+  'battle_iq',
+  'experience',
+] as const satisfies readonly (keyof SideData['metrics'])[];
+
+/** Salinan metrik dengan setiap kunci hadir; yang absen menjadi `null`. */
+function normalizedMetrics(metrics: SideData['metrics']): Record<string, number | null> {
+  const out: Record<string, number | null> = {};
+  for (const key of METRIC_KEYS) out[key] = metrics[key] ?? null;
+  return out;
+}
+
 /** Input yang dipakai untuk hash: hanya hal-hal yang mempengaruhi hasil. */
 function hashPayload(input: BattleInput, ruleSet: RuleSet): unknown {
   const side = (data: SideData): unknown => ({
     version_id: data.version_id,
     tier: data.tier,
-    metrics: data.metrics,
+    metrics: normalizedMetrics(data.metrics),
     nonphysical_metrics: [...data.nonphysical_metrics].sort(),
     statistics: [...data.statistics]
       .map((s) => `${s.metric}|${s.raw_text}|${s.qualifier}|${s.status}|${s.confidence}`)
@@ -58,6 +101,7 @@ function hashPayload(input: BattleInput, ruleSet: RuleSet): unknown {
   return {
     engine_version: ENGINE_VERSION,
     rule_set_version: ruleSet.version,
+    dataset_version: input.dataset_version ?? DATASET_VERSION,
     conditions: input.conditions,
     side_a: side(input.side_a),
     side_b: side(input.side_b),

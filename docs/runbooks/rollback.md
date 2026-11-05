@@ -72,11 +72,10 @@ select action, entity_type, entity_id, before, after, created_at
  order by created_at desc;
 ```
 
-**Keadaan jujur:** belum ada kode yang menulis `audit_logs` (tabel + RLS + index
-sudah ada; tidak ada satu pun penulis — lihat §7). Karena itu jalur §3.2 dari
-riwayat `statistics` adalah jalur utama hari ini, dan menulis baris `audit_logs`
-manual saat melakukan rollback adalah cara menjaga jejak agar jalur §3.1 ikut
-terisi.
+**Keadaan jujur:** import/run/retry/cancel sekarang otomatis menulis `audit_logs`,
+tetapi `after` hanya memuat parameter aksi (bukan citra baris `before/after`), jadi
+jalur §3.1 belum menjadi undo otomatis. Takedown/merge masih prosedural dan harus
+menulis audit manual. Riwayat `statistics` (§3.2) tetap jalur utama rollback data.
 
 ### 3.2 Rollback per-entitas: `superseded` → `current`
 
@@ -141,7 +140,7 @@ values ('rollback_statistics', 'statistics', '<stat-id>',
 
 | Langkah | Bila gagal | Yang dikerjakan |
 |---|---|---|
-| §3.1 mengenai 0 baris / `audit_logs` kosong | Memang belum ada penulisnya (§8) — jalur ini menunggu kode | Bukan kegagalan data; lanjutkan dengan §3.2 dari riwayat `statistics`. Jangan mengarang baris `audit_logs` untuk menutupinya |
+| §3.1 mengenai 0 baris / `audit_logs` kosong | Aksi itu belum diinstrumentasi atau bukan aksi admin | Lanjutkan dengan §3.2 dari riwayat `statistics`; jangan mengarang baris `audit_logs` |
 | §3.1 jalan tapi nilai tetap salah | `before` tidak memuat kolom yang dipilih (citra parsial) | `select before from audit_logs where entity_id = '<stat-id>';` — periksa field yang tersedia; sisanya pulihkan dari riwayat `statistics` (§3.2) |
 | §3.2 menaikkan baris yang **salah** | **Tidak ada error** — trigger `trg_statistics_supersede` menurunkan `current` yang benar diam-diam | §6 query 2: bila `raw_text` yang `current` bukan yang diharapkan, ulangi §3.2 dengan id yang benar (idempoten) |
 | Transaksi §3.2/§3.3 gagal di tengah | Koneksi putus / peran bukan pemilik tabel (RLS aktif) | Rollback terjadi otomatis — tidak ada kondisi setengah-jalan. Ulangi blok yang sama dengan peran yang benar |
@@ -214,20 +213,20 @@ perubahan data.
    dan halaman kehilangan angka sama sekali.
 4. **Jangan memulai ulang full sync saat insiden masih berlangsung.** Sync baru
    menulis di atas data yang belum diverifikasi; pertama pulihkan, baru sinkron.
-5. **Jangan menganggap `audit_logs` berisi riwayat hari ini.** Tabelnya ada,
-   penulisnya belum — klaim sebaliknya membuat prosedur §3.1 terlihat otomatis
-   padahal belum.
+5. **Jangan menganggap `audit_logs` adalah undo otomatis.** Baris import/run/retry/
+   cancel memuat parameter aksi, bukan citra baris lengkap; takedown/merge masih
+   manual. Klaim sebaliknya membuat prosedur §3.1 terlihat otomatis padahal belum.
 
 ## 8. Batas yang diketahui (jujur)
 
-1. **`audit_logs` belum ditulis oleh kode mana pun.** §3.1 adalah mekanisme yang
-   sudah teruji sintaksnya dan siap dipakai begitu penulisnya ada; jalur operasional
-   hari ini adalah riwayat `statistics` (§3.2) + salinan manual.
+1. **`audit_logs` sudah ditulis untuk import/run/retry/cancel**, tetapi belum
+   memuat citra `before/after` yang cukup untuk undo generik. Jalur operasional hari
+   ini tetap riwayat `statistics` (§3.2) + salinan manual.
 2. **Pipeline tidak memakai transaksi per job** (lihat [ingestion.md](ingestion.md)
    §5): kegagalan di tengah meninggalkan sebagian baris, sehingga rollback memang
    harus per-entitas — tidak ada "batas run" otomatis untuk dibatalkan.
 3. **Retensi data mentah 90 hari.** Setelah itu perbandingan "apa yang berubah"
-   hanya bisa dari `audit_logs` (yang belum terisi) atau backup.
+   hanya bisa dari `audit_logs` (terbatas pada aksi yang diinstrumentasi) atau backup.
 4. **Tidak ada otomasi.** Tidak ada tombol undo di panel; setiap langkah di sini
    SQL manual yang diverifikasi di §6.
 

@@ -13,6 +13,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +29,10 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 // tetap diselesaikan loader.
 import { setSqlClient } from '../../src/lib/db/client.ts';
 import type { SqlClient } from '../../src/lib/db/client.ts';
+import {
+  setAdminAuthProviderForTests,
+  type AdminAuthSnapshot,
+} from '../../src/features/admin/auth.ts';
 import { POST as importPost } from '../../app/api/admin/ingestion/import/route.ts';
 import { GET as jobsGet } from '../../app/api/admin/ingestion/jobs/route.ts';
 import { GET as errorsGet } from '../../app/api/admin/ingestion/jobs/[id]/errors/route.ts';
@@ -39,8 +44,17 @@ import { GET as cronGet } from '../../app/api/cron/sync/route.ts';
 const resolveDoc = (name: string): string =>
   fileURLToPath(new URL(`../../docs/${name}`, import.meta.url));
 
-const ADMIN_SECRET = 'secret-admin-uji';
 const CRON_SECRET = 'secret-cron-uji';
+const ADMIN_ID = randomUUID();
+
+const adminSnapshot: AdminAuthSnapshot = {
+  configured: true,
+  user: { id: ADMIN_ID, email: 'admin@example.test', displayName: 'Admin Uji' },
+  roles: ['admin'],
+  aal: 'aal2',
+  expiresAt: 2_000_000_000,
+  now: 1_700_000_000_000,
+};
 
 const db = await PGlite.create({ extensions: { pg_trgm, unaccent, pgcrypto } });
 
@@ -54,13 +68,14 @@ before(async () => {
     },
   };
   setSqlClient(client);
-  process.env.ADMIN_INGESTION_SECRET = ADMIN_SECRET;
+  await db.query(`insert into users (id, display_name) values ($1, $2)`, [ADMIN_ID, 'Admin Uji']);
+  setAdminAuthProviderForTests(async () => adminSnapshot);
   process.env.CRON_SECRET = CRON_SECRET;
 });
 
 after(() => {
   setSqlClient(null);
-  delete process.env.ADMIN_INGESTION_SECRET;
+  setAdminAuthProviderForTests(null);
   delete process.env.CRON_SECRET;
 });
 
@@ -72,8 +87,10 @@ function jsonRequest(url: string, body: unknown, headers: Record<string, string>
   });
 }
 
+// Rute admin memakai provider sesi yang disuntik di `before`; tidak ada lagi
+// header Bearer. Header kosong dipertahankan agar pemanggilan tetap terbaca.
 function adminHeaders(): Record<string, string> {
-  return { authorization: `Bearer ${ADMIN_SECRET}` };
+  return {};
 }
 
 function sampleDataset(characterSlug: string): Record<string, unknown> {
@@ -116,9 +133,15 @@ async function jobStatus(jobId: string): Promise<string> {
 }
 
 describe('rute admin → cron → panel (integrasi penuh)', () => {
-  it('fail-closed dulu: tanpa secret, semua rute admin menolak 503', async () => {
-    const saved = process.env.ADMIN_INGESTION_SECRET;
-    delete process.env.ADMIN_INGESTION_SECRET;
+  it('fail-closed dulu: tanpa konfigurasi Auth, semua rute admin menolak 503', async () => {
+    setAdminAuthProviderForTests(async () => ({
+      configured: false,
+      user: null,
+      roles: [],
+      aal: 'aal1',
+      expiresAt: null,
+      now: 1_700_000_000_000,
+    }));
     try {
       const jobs = await jobsGet(new Request('http://localhost/api/admin/ingestion/jobs'));
       assert.equal(jobs.status, 503);
@@ -127,7 +150,7 @@ describe('rute admin → cron → panel (integrasi penuh)', () => {
       const metrics = await metricsGet(new Request('http://localhost/api/admin/metrics'));
       assert.equal(metrics.status, 503);
     } finally {
-      process.env.ADMIN_INGESTION_SECRET = saved;
+      setAdminAuthProviderForTests(async () => adminSnapshot);
     }
   });
 
@@ -147,6 +170,14 @@ describe('rute admin → cron → panel (integrasi penuh)', () => {
       [body.raw_page_id],
     );
     assert.equal(staged.rows[0]!.n, 1);
+
+    const audit = await db.query<{ actor_id: string; action: string }>(
+      `select actor_id, action from audit_logs where entity_id = $1`,
+      [body.job_id],
+    );
+    assert.equal(audit.rows.length, 1, 'import harus menulis audit');
+    assert.equal(audit.rows[0]!.actor_id, ADMIN_ID);
+    assert.equal(audit.rows[0]!.action, 'ingestion.import');
   });
 
   it('impor URL di luar allow-list ditolak 409 SOURCE_DISABLED sebelum masuk antrian (AC-19)', async () => {
@@ -243,6 +274,11 @@ describe('rute admin → cron → panel (integrasi penuh)', () => {
     );
     assert.equal(retry.status, 200);
     assert.equal(await jobStatus(brokenJob.job_id), 'pending');
+    const retryAudit = await db.query<{ n: number }>(
+      `select count(*)::int as n from audit_logs where entity_id = $1 and action = 'ingestion.retry'`,
+      [brokenJob.job_id],
+    );
+    assert.equal(retryAudit.rows[0]!.n, 1);
 
     const cancel = await cancelPost(
       new Request(`http://localhost/api/admin/ingestion/jobs/${brokenJob.job_id}/cancel`, {
@@ -253,6 +289,11 @@ describe('rute admin → cron → panel (integrasi penuh)', () => {
     );
     assert.equal(cancel.status, 200);
     assert.equal(await jobStatus(brokenJob.job_id), 'skipped');
+    const cancelAudit = await db.query<{ n: number }>(
+      `select count(*)::int as n from audit_logs where entity_id = $1 and action = 'ingestion.cancel'`,
+      [brokenJob.job_id],
+    );
+    assert.equal(cancelAudit.rows[0]!.n, 1);
   });
 
   it('metrics mengembalikan hitungan nyata dari database', async () => {

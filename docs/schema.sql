@@ -14,6 +14,20 @@
 begin;
 
 -- ---------------------------------------------------------------------------
+-- Isolasi: seluruh objek aplikasi hidup di schema animebattle.
+-- public dipakai bersama aplikasi lain di instance Supabase yang sama, jadi
+-- tabel/fungsi/tipe aplikasi ini TIDAK boleh dibuat di sana. Search path sesi
+-- aplikasi dipatok ke animebattle, public (src/lib/db/client.ts), dan role
+-- anon/authenticated hanya diberi hak di schema ini (lihat bagian 18).
+-- ---------------------------------------------------------------------------
+create schema if not exists animebattle;
+
+-- Ekstensi tetap di public: pg_trgm/unaccent/pgcrypto adalah objek bersama,
+-- bukan milik aplikasi. Search path dipulihkan ke animebattle setelah blok ini.
+set search_path = public;
+
+
+-- ---------------------------------------------------------------------------
 -- 0. Ekstensi
 -- ---------------------------------------------------------------------------
 -- pg_trgm  : fuzzy / typo-tolerant search ("gokou" -> "goku")
@@ -41,6 +55,9 @@ begin
   end if;
 end $$;
 
+-- Mulai dari sini, nama tanpa schema menunjuk ke animebattle.
+set search_path = animebattle, public;
+
 -- ---------------------------------------------------------------------------
 -- 1. Fungsi helper
 -- ---------------------------------------------------------------------------
@@ -49,7 +66,7 @@ end $$;
 -- sehingga HARUS didefinisikan sebelum tabel itu dibuat.
 -- Mengembalikan -1 bila bentuknya tidak valid (bukan objek / ada nilai non-numerik),
 -- agar pelanggaran bobot muncul sebagai constraint violation yang jelas (BC-4).
-create or replace function public.rule_set_weight_sum(w jsonb)
+create or replace function rule_set_weight_sum(w jsonb)
 returns integer
 language sql
 immutable
@@ -70,7 +87,7 @@ $$;
 -- atau generated column. Wrapper ini menandainya IMMUTABLE.
 -- RISIKO: dictionary unaccent harus stabil. Karena itu dilarang mengubah
 -- isi file unaccent.rules pada instance produksi tanpa REINDEX.
-create or replace function public.f_unaccent(txt text)
+create or replace function animebattle.f_unaccent(txt text)
 returns text
 language sql
 immutable
@@ -80,7 +97,7 @@ as $$ select public.unaccent('public.unaccent'::regdictionary, txt) $$;
 
 -- Normalisasi nama untuk fingerprint & pencarian:
 -- NFKC -> lowercase -> hapus tanda baca -> collapse spasi
-create or replace function public.f_normalize_name(txt text)
+create or replace function animebattle.f_normalize_name(txt text)
 returns text
 language sql
 immutable
@@ -88,13 +105,13 @@ parallel safe
 as $$
   select trim(regexp_replace(
            regexp_replace(
-             lower(public.f_unaccent(coalesce(txt, ''))),
+             lower(animebattle.f_unaccent(coalesce(txt, ''))),
              '[^[:alnum:][:space:]]', '', 'g'),
            '\s+', ' ', 'g'))
 $$;
 
 -- updated_at otomatis
-create or replace function public.set_updated_at()
+create or replace function set_updated_at()
 returns trigger
 language plpgsql
 as $$
@@ -157,7 +174,7 @@ create type winner_t             as enum ('a', 'b', 'draw', 'insufficient_data')
 create type difficulty_t         as enum ('low', 'mid', 'high', 'extreme');
 create type battle_length_t      as enum ('short', 'medium', 'long');
 
-create type user_role_t          as enum ('viewer', 'curator', 'admin', 'owner');
+create type user_role_t          as enum ('viewer', 'editor', 'curator', 'admin', 'owner');
 create type report_status_t      as enum ('new', 'reviewing', 'accepted', 'rejected');
 
 -- ---------------------------------------------------------------------------
@@ -195,7 +212,7 @@ create table sources (
 create index idx_sources_legal on sources (legal_status) where is_active;
 
 create trigger trg_sources_updated before update on sources
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 -- ---------------------------------------------------------------------------
 -- 4. Ladder nilai: metrik, skala, tier
@@ -213,7 +230,7 @@ create table stat_scale_metrics (
   updated_at         timestamptz not null default now()
 );
 create trigger trg_ssm_updated before update on stat_scale_metrics
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 -- Skala ordinal per metrik. rank = urutan komparatif; log_value = kuantifikasi bila
 -- dapat dinyatakan (mis. log10 joule untuk AP). is_physical=false menandai rezim
@@ -238,7 +255,7 @@ create table stat_scales (
 );
 create index idx_stat_scales_metric_rank on stat_scales (metric_id, rank);
 create trigger trg_stat_scales_updated before update on stat_scales
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 -- Tier ladder. Seluruhnya data sehingga dapat diubah admin tanpa deploy (§12).
 create table tiers (
@@ -258,7 +275,7 @@ create table tiers (
     check (is_rankable = (numerical_rank is not null))
 );
 create trigger trg_tiers_updated before update on tiers
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 -- ---------------------------------------------------------------------------
 -- 5. Domain: verse, karakter, form
@@ -281,13 +298,20 @@ create table verses (
 create index idx_verses_popularity on verses (popularity_score desc);
 create index idx_verses_media on verses (origin_media);
 create trigger trg_verses_updated before update on verses
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 create table characters (
   id                    uuid primary key default gen_random_uuid(),
   slug                  text not null unique,
   name                  text not null,
   native_name           text,
+  -- Bentuk ternormalisasi DISIMPAN, bukan dihitung saat query. `f_normalize_name`
+  -- memanggil unaccent + dua regexp_replace; sebagai ekspresi index, fungsi itu
+  -- dievaluasi ulang untuk SETIAP baris yang lolos index (recheck), dan pada
+  -- 10.000 baris itu saja memakan ~1,4 detik. Sebagai generated column, biayanya
+  -- dibayar sekali saat tulis dan recheck hanya membandingkan teks.
+  name_norm             text generated always as (animebattle.f_normalize_name(name)) stored,
+  native_norm           text generated always as (animebattle.f_normalize_name(coalesce(native_name, ''))) stored,
   description           text,
   origin                text,
   verse_id              uuid not null references verses(id) on delete restrict,
@@ -317,21 +341,28 @@ create table characters (
     check (image_url is null or (image_license is not null and image_source is not null))
 );
 create index idx_characters_verse on characters (verse_id);
-create index idx_characters_name_trgm on characters using gin (public.f_normalize_name(name) gin_trgm_ops);
-create index idx_characters_native_trgm on characters using gin (coalesce(native_name, '') gin_trgm_ops);
+create index idx_characters_name_trgm on characters using gin (name_norm gin_trgm_ops);
+-- Index native WAJIB memakai kolom yang sama dengan predikat RPC. Versi lama
+-- meng-index `coalesce` mentah, sehingga `f_normalize_name(native) % ...` tidak
+-- pernah dapat memakainya.
+create index idx_characters_native_trgm on characters using gin (native_norm gin_trgm_ops);
+-- Btree untuk cabang exact/prefix. Tanpa ini, LIKE 'xx%' berakhir sebagai scan
+-- seluruh tabel; trigram tidak menolong untuk prefiks di bawah 3 huruf.
+create index idx_characters_name_norm on characters (name_norm text_pattern_ops) include (id);
+create index idx_characters_native_norm on characters (native_norm text_pattern_ops) include (id);
 create index idx_characters_fp on characters (fp_key) where fp_key is not null;
 create index idx_characters_popularity on characters (popularity_score desc);
 create index idx_characters_updated on characters (updated_at desc);
 create index idx_characters_imported on characters (imported_at desc nulls last);
 create index idx_characters_completeness on characters (data_completeness);
 create trigger trg_characters_updated before update on characters
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 create table character_aliases (
   id            uuid primary key default gen_random_uuid(),
   character_id  uuid not null references characters(id) on delete cascade,
   alias         text not null,
-  alias_norm    text generated always as (public.f_normalize_name(alias)) stored,
+  alias_norm    text generated always as (animebattle.f_normalize_name(alias)) stored,
   script        alias_script_t not null default 'latin',
   is_primary    boolean not null default false,
   source_id     uuid references sources(id) on delete restrict,
@@ -340,6 +371,7 @@ create table character_aliases (
 );
 create index idx_aliases_trgm on character_aliases using gin (alias gin_trgm_ops);
 create index idx_aliases_trgm_norm on character_aliases using gin (alias_norm gin_trgm_ops);
+create index idx_aliases_norm on character_aliases (alias_norm text_pattern_ops) include (character_id);
 create index idx_aliases_character on character_aliases (character_id);
 create index idx_aliases_script on character_aliases (script);
 
@@ -392,7 +424,7 @@ create index idx_versions_completeness on character_versions (data_completeness)
 create index idx_versions_variant on character_versions (variant_of) where variant_of is not null;
 create index idx_versions_updated on character_versions (updated_at desc);
 create trigger trg_versions_updated before update on character_versions
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 -- Atribut perilaku karakter; dipakai mode `in_character` (§16.4)
 create table character_traits (
@@ -418,7 +450,7 @@ create table equipment (
 );
 create index idx_equipment_version on equipment (character_version_id);
 create trigger trg_equipment_updated before update on equipment
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 -- ---------------------------------------------------------------------------
 -- 6. Statistik (kebenaran per sumber, multi-baris)
@@ -451,7 +483,7 @@ create index idx_statistics_lookup on statistics (character_version_id, metric, 
 create index idx_statistics_scale on statistics (scale_id);
 create index idx_statistics_source on statistics (source_id);
 create trigger trg_statistics_updated before update on statistics
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 -- ---------------------------------------------------------------------------
 -- 7. Ability & resistensi
@@ -473,7 +505,7 @@ create table ability_categories (
 );
 create index idx_ability_categories_parent on ability_categories (parent_category_id);
 create trigger trg_ability_categories_updated before update on ability_categories
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 create table abilities (
   id                   uuid primary key default gen_random_uuid(),
@@ -499,7 +531,7 @@ create table abilities (
 create index idx_abilities_category on abilities (category_id);
 create index idx_abilities_offensive on abilities (is_offensive) where is_offensive;
 create trigger trg_abilities_updated before update on abilities
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 alter table equipment
   add constraint equipment_grants_ability_fk
@@ -525,7 +557,7 @@ create table character_abilities (
 create index idx_char_abilities_version on character_abilities (character_version_id);
 create index idx_char_abilities_ability on character_abilities (ability_id);
 create trigger trg_char_abilities_updated before update on character_abilities
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 create table resistance_types (
   id          uuid primary key default gen_random_uuid(),
@@ -538,7 +570,7 @@ create table resistance_types (
   unique (category_id)
 );
 create trigger trg_resistance_types_updated before update on resistance_types
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 create table character_resistances (
   id                   uuid primary key default gen_random_uuid(),
@@ -572,7 +604,7 @@ create table character_resistances (
 create index idx_char_resist_version on character_resistances (character_version_id);
 create index idx_char_resist_type on character_resistances (resistance_type_id);
 create trigger trg_char_resist_updated before update on character_resistances
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 -- Rule engine: ability x resistance -> efektivitas. Semua baris dapat diedit admin.
 create table hax_interactions (
@@ -599,7 +631,7 @@ create unique index uq_hax_interactions
   );
 create index idx_hax_lookup on hax_interactions (ability_category_id, resistance_type_id);
 create trigger trg_hax_updated before update on hax_interactions
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 -- ---------------------------------------------------------------------------
 -- 8. Feats, sumber per karakter, konflik
@@ -621,7 +653,7 @@ create table feats (
 create index idx_feats_version on feats (character_version_id, feat_type);
 create index idx_feats_significance on feats (significance);
 create trigger trg_feats_updated before update on feats
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 create table character_sources (
   id           uuid primary key default gen_random_uuid(),
@@ -723,7 +755,7 @@ create index idx_jobs_dispatch on ingestion_jobs (status, next_attempt_at)
 create index idx_jobs_source on ingestion_jobs (source_id, created_at desc);
 create index idx_jobs_status on ingestion_jobs (status, created_at desc);
 create trigger trg_jobs_updated before update on ingestion_jobs
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 create table ingestion_errors (
   id            uuid primary key default gen_random_uuid(),
@@ -793,11 +825,11 @@ create table battle_rule_sets (
   updated_at     timestamptz not null default now(),
   -- Σ bobot harus 100 (BC-4)
   constraint battle_rule_sets_weights_sum
-    check (public.rule_set_weight_sum(weights) = 100)
+    check (rule_set_weight_sum(weights) = 100)
 );
 create unique index uq_rule_set_active on battle_rule_sets (active) where active;
 create trigger trg_rule_sets_updated before update on battle_rule_sets
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 create table battle_conditions (
   id                         uuid primary key default gen_random_uuid(),
@@ -830,7 +862,7 @@ create table battles (
 create index idx_battles_slug on battles (slug);
 create index idx_battles_recent on battles (created_at desc);
 create trigger trg_battles_updated before update on battles
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 create table battle_results (
   id                   uuid primary key default gen_random_uuid(),
@@ -858,6 +890,11 @@ create table battle_results (
   rule_set_id          uuid not null references battle_rule_sets(id) on delete restrict,
   computed_at          timestamptz not null default now(),
   cached_until         timestamptz not null default (now() + interval '7 days'),
+  -- Keluaran engine utuh (`BattleResult`). Lihat migrasi 0005: kolom di atas
+  -- tidak memuat weighted_score, dominance, coverage, ability_outcomes, dan
+  -- disclaimer, jadi merekonstruksi hasil dari kolom akan mengarang angka nol.
+  -- NULL = baris lama sebelum 0005; pembaca wajib menganggapnya cache miss.
+  result_payload       jsonb,
   constraint battle_results_probabilities_sum
     check (abs(win_probability_a + win_probability_b - 1) < 0.0005)
 );
@@ -865,6 +902,8 @@ create index idx_battle_results_battle on battle_results (battle_id);
 create index idx_battle_results_recent on battle_results (computed_at desc);
 create index idx_battle_results_winner on battle_results (winner);
 create index idx_battle_results_cache on battle_results (input_hash, cached_until);
+comment on column battle_results.result_payload is
+  'Keluaran engine utuh (BattleResult). NULL = baris lama sebelum 0005; pembaca wajib menganggapnya cache miss.';
 
 -- Output AI dipisahkan dari tabel fakta (§34)
 create table battle_narratives (
@@ -891,7 +930,7 @@ create table users (
   updated_at   timestamptz not null default now()
 );
 create trigger trg_users_updated before update on users
-  for each row execute function public.set_updated_at();
+  for each row execute function set_updated_at();
 
 create table user_roles (
   id         uuid primary key default gen_random_uuid(),
@@ -960,34 +999,63 @@ create table data_reports (
 create index idx_reports_status on data_reports (status, created_at desc);
 create index idx_reports_character on data_reports (character_id);
 
+-- Rate limit terdistribusi (AC-26). `FixedWindowRateLimiter` di
+-- src/lib/security/rate-limiter.ts menyimpan hitungan di Map proses, sehingga
+-- batas 30/menit berubah menjadi 30 × jumlah instance di deployment
+-- multi-instance. Tabel ini memindahkan hitungan ke satu tempat yang dilihat
+-- semua instance; bucket sudah di-hash di aplikasi, jadi IP mentah tidak masuk.
+create table rate_limit_windows (
+  bucket       text        not null,
+  window_start timestamptz not null,
+  hits         integer     not null default 0 check (hits >= 0),
+  primary key (bucket, window_start)
+);
+create index idx_rate_limit_windows_start on rate_limit_windows (window_start);
+
 -- ============================================================================
 -- 12. Fungsi validasi & trigger integritas
 -- ============================================================================
 
 -- Cek role untuk RLS. SECURITY DEFINER agar tidak terjadi rekursi kebijakan.
-create or replace function public.is_admin()
+create or replace function is_admin()
 returns boolean
 language sql
 security definer
-set search_path = public
+set search_path = animebattle, public
 stable
 as $$
   select exists (
-    select 1 from public.user_roles
+    select 1 from user_roles
     where user_id = auth.uid()
-      and role in ('admin', 'owner', 'curator')
+      and role in ('admin', 'owner')
   )
 $$;
 
-create or replace function public.is_curator()
+-- Editor (dan curator legacy) boleh menulis data kurasi, tetapi bukan
+-- sumber/role/audit. Admin/owner tetap tercakup.
+create or replace function is_editor()
 returns boolean
 language sql
 security definer
-set search_path = public
+set search_path = animebattle, public
 stable
 as $$
   select exists (
-    select 1 from public.user_roles
+    select 1 from user_roles
+    where user_id = auth.uid()
+      and role::text in ('editor', 'curator', 'admin', 'owner')
+  )
+$$;
+
+create or replace function is_curator()
+returns boolean
+language sql
+security definer
+set search_path = animebattle, public
+stable
+as $$
+  select exists (
+    select 1 from user_roles
     where user_id = auth.uid()
       and role in ('curator', 'admin', 'owner')
   )
@@ -995,7 +1063,7 @@ $$;
 
 -- VA-1 / AC-09: tabel fakta tidak boleh menerima baris tanpa source_id.
 -- Generik: hanya memeriksa baris yang memang punya kolom source_id.
-create or replace function public.guard_fact_source()
+create or replace function guard_fact_source()
 returns trigger
 language plpgsql
 as $$
@@ -1010,22 +1078,22 @@ end;
 $$;
 
 create trigger trg_guard_source_statistics before insert or update on statistics
-  for each row execute function public.guard_fact_source();
+  for each row execute function guard_fact_source();
 create trigger trg_guard_source_abilities before insert or update on character_abilities
-  for each row execute function public.guard_fact_source();
+  for each row execute function guard_fact_source();
 create trigger trg_guard_source_resistances before insert or update on character_resistances
-  for each row execute function public.guard_fact_source();
+  for each row execute function guard_fact_source();
 create trigger trg_guard_source_feats before insert or update on feats
-  for each row execute function public.guard_fact_source();
+  for each row execute function guard_fact_source();
 create trigger trg_guard_source_abilities_catalog before insert or update on abilities
-  for each row execute function public.guard_fact_source();
+  for each row execute function guard_fact_source();
 create trigger trg_guard_source_verses before insert or update on verses
-  for each row execute function public.guard_fact_source();
+  for each row execute function guard_fact_source();
 
 -- Idempotensi & jejak atomik untuk tabel fakta:
 -- saat nilai baru masuk untuk (form, metrik, sumber) yang sama, baris lama
 -- ditandai 'superseded' — TIDAK ditimpa dan tidak dihapus (D6, AC-17).
-create or replace function public.supersede_previous_stat()
+create or replace function supersede_previous_stat()
 returns trigger
 language plpgsql
 as $$
@@ -1043,11 +1111,11 @@ begin
 end;
 $$;
 create trigger trg_statistics_supersede before insert or update on statistics
-  for each row execute function public.supersede_previous_stat();
+  for each row execute function supersede_previous_stat();
 
 -- Sinkronisasi cache stat di character_versions dari statistics (D7).
 -- Sumber kebenaran = statistics; kolom ini hanya cache untuk filter/sort.
-create or replace function public.sync_version_stat_cache()
+create or replace function sync_version_stat_cache()
 returns trigger
 language plpgsql
 as $$
@@ -1098,10 +1166,10 @@ end;
 $$;
 create trigger trg_statistics_sync_cache
   after insert or update or delete on statistics
-  for each row execute function public.sync_version_stat_cache();
+  for each row execute function sync_version_stat_cache();
 
 -- Fingerprint duplikat (§21.2). Dipisahkan dari slug agar dapat dihitung ulang.
-create or replace function public.set_character_fingerprint()
+create or replace function set_character_fingerprint()
 returns trigger
 language plpgsql
 as $$
@@ -1111,18 +1179,18 @@ begin
   select slug into v_verse_slug from verses where id = new.verse_id;
   new.fp_key := encode(
     digest(
-      public.f_normalize_name(new.name) || '|' || coalesce(v_verse_slug, '-'),
+      animebattle.f_normalize_name(new.name) || '|' || coalesce(v_verse_slug, '-'),
       'sha1'),
     'hex');
   return new;
 end;
 $$;
 create trigger trg_characters_fingerprint before insert or update of name, verse_id on characters
-  for each row execute function public.set_character_fingerprint();
+  for each row execute function set_character_fingerprint();
 
 -- search_vector: TIDAK dapat dijadikan generated column karena perlu
 -- agregasi alias (subquery). Karena itu dikelola trigger.
-create or replace function public.refresh_character_search_vector()
+create or replace function refresh_character_search_vector()
 returns trigger
 language plpgsql
 as $$
@@ -1153,11 +1221,11 @@ begin
    where cv.character_id = v_character_id;
 
   update characters c set search_vector =
-      setweight(to_tsvector('simple', public.f_unaccent(coalesce(c.name, ''))), 'A') ||
-      setweight(to_tsvector('simple', public.f_unaccent(coalesce(c.native_name, ''))), 'A') ||
+      setweight(to_tsvector('simple', animebattle.f_unaccent(coalesce(c.name, ''))), 'A') ||
+      setweight(to_tsvector('simple', animebattle.f_unaccent(coalesce(c.native_name, ''))), 'A') ||
       setweight(to_tsvector('simple', coalesce(v_alias_text, '')), 'A') ||
-      setweight(to_tsvector('simple', public.f_unaccent(coalesce(v_verse_name, ''))), 'B') ||
-      setweight(to_tsvector('simple', public.f_unaccent(coalesce(c.classification, ''))), 'C') ||
+      setweight(to_tsvector('simple', animebattle.f_unaccent(coalesce(v_verse_name, ''))), 'B') ||
+      setweight(to_tsvector('simple', animebattle.f_unaccent(coalesce(c.classification, ''))), 'C') ||
       setweight(to_tsvector('simple', coalesce(v_ability_text, '')), 'D')
   where c.id = v_character_id;
 
@@ -1173,11 +1241,11 @@ create index idx_characters_search on characters using gin (search_vector);
 
 create trigger trg_characters_search_vector
   after insert or update of name, native_name, classification, verse_id on characters
-  for each row execute function public.refresh_character_search_vector();
+  for each row execute function refresh_character_search_vector();
 
 create trigger trg_aliases_search_vector
   after insert or update or delete on character_aliases
-  for each row execute function public.refresh_character_search_vector();
+  for each row execute function refresh_character_search_vector();
 
 -- ============================================================================
 -- 14. Materialized views
@@ -1231,18 +1299,20 @@ select c.id,
   from characters c
   join verses v on v.id = c.verse_id;
 create unique index uq_mv_character_search on mv_character_search (id);
-create index idx_mv_character_search_trgm on mv_character_search using gin (public.f_normalize_name(name) gin_trgm_ops);
+create index idx_mv_character_search_trgm on mv_character_search using gin (animebattle.f_normalize_name(name) gin_trgm_ops);
+-- Btree ternormalisasi untuk lookup cepat bila MV dipakai sebagai sumber utama.
+create index idx_mv_character_search_norm on mv_character_search (animebattle.f_normalize_name(name) text_pattern_ops);
 
 -- REFRESH ... CONCURRENTLY tidak dapat dijalankan di dalam transaksi, sedangkan
 -- setiap fungsi di PostgREST/RPC berjalan dalam transaksi. Karena itu fungsi ini
 -- memakai refresh non-concurrent (mengunci baca singkat). Untuk refresh tanpa
 -- downtime, jalankan `scripts/refresh-mv.sql` lewat cron/psql di luar transaksi
 -- (versi CONCURRENTLY memerlukan unique index — sudah disediakan di atas).
-create or replace function public.refresh_materialized_views()
+create or replace function refresh_materialized_views()
 returns void
 language plpgsql
 security definer
-set search_path = public
+set search_path = animebattle, public
 as $$
 begin
   refresh materialized view mv_verse_tier_distribution;
@@ -1257,7 +1327,7 @@ $$;
 
 -- Search hybrid: FTS + trigram + alias + boost popularitas (§26.1).
 -- Input tidak pernah dirangkai menjadi SQL; hanya parameter.
-create or replace function public.search_characters(
+create or replace function search_characters(
   q text,
   lim integer default 20,
   only_public boolean default true
@@ -1279,8 +1349,8 @@ as $$
     -- unaccent: tanpa itu kueri berhuruf besar atau bertanda baca ("Sai",
     -- "speed-o") tidak pernah cocok di cabang trigram & prefiks, padahal FTS
     -- tetap cocok — perbedaan yang tak terlihat sampai diuji dengan huruf besar.
-    select public.f_normalize_name(coalesce(q, '')) as raw,
-           plainto_tsquery('simple', public.f_unaccent(coalesce(q, ''))) as ts
+    select animebattle.f_normalize_name(coalesce(q, '')) as raw,
+           plainto_tsquery('simple', animebattle.f_unaccent(coalesce(q, ''))) as ts
   )
   select c.id,
          c.slug,
@@ -1293,10 +1363,10 @@ as $$
          (
            0.60 * ts_rank_cd(c.search_vector, n.ts)
          + 0.25 * greatest(
-             similarity(public.f_normalize_name(c.name), n.raw),
+             similarity(animebattle.f_normalize_name(c.name), n.raw),
              coalesce((select max(similarity(a.alias_norm, n.raw))
                          from character_aliases a where a.character_id = c.id), 0))
-         + 0.10 * (case when public.f_normalize_name(c.name) like n.raw || '%' then 1 else 0 end)
+         + 0.10 * (case when animebattle.f_normalize_name(c.name) like n.raw || '%' then 1 else 0 end)
          + 0.05 * least(c.popularity_score::real / 1000.0, 1.0)
          )::real as score
     from characters c
@@ -1305,7 +1375,7 @@ as $$
    where (not only_public or c.verification_status in ('verified', 'imported', 'partially_verified'))
      and (
           c.search_vector @@ n.ts
-       or public.f_normalize_name(c.name) % n.raw                       -- pg_trgm similarity
+       or animebattle.f_normalize_name(c.name) % n.raw                       -- pg_trgm similarity
        or exists (select 1 from character_aliases a
                    where a.character_id = c.id and a.alias_norm % n.raw)
      )
@@ -1334,75 +1404,231 @@ $$;
 --     supaya nilai tak dikenal tidak memicu error cast; route yang memvalidasi.
 -- Urutan hasil deterministik (skor → popularitas → nama), sehingga `offset`
 -- antar-request tidak mengulang atau melewatkan baris.
-create or replace function public.search_characters_page(
+create or replace function search_characters_page(
   q text,
   verse_slug text default null,
   media text default null,
   lim integer default 20,
   off integer default 0,
-  only_public boolean default true
+  only_public boolean default true,
+  types text[] default array['character']::text[]
 )
 returns jsonb
 language sql
 stable
+set search_path = animebattle, public
 as $$
   with needle as (
-    -- Sama seperti `search_characters`: needle dinormalisasi agar cabang trigram,
-    -- prefiks, dan alias memakai bentuk yang sebanding dengan kolomnya.
-    select public.f_normalize_name(coalesce(q, '')) as raw,
-           plainto_tsquery('simple', public.f_unaccent(coalesce(q, ''))) as ts
+    -- Normalisasi yang sama dengan kolom yang dibandingkan (lihat
+    -- f_normalize_name). Kueri kosong tidak masuk ke cabang prefiks, yang
+    -- tanpa penjaga ini akan cocok dengan seluruh katalog.
+    select animebattle.f_normalize_name(coalesce(q, '')) as raw,
+           plainto_tsquery('simple', animebattle.f_unaccent(coalesce(q, ''))) as ts
+     where animebattle.f_normalize_name(coalesce(q, '')) <> ''
   ),
-  matched as (
-    select c.id,
+  wanted as (
+    select coalesce(types, array['character']::text[]) as kinds
+  ),
+  -- Cabang dipisah supaya masing-masing dapat memakai index-nya sendiri:
+  -- btree ternormalisasi untuk exact/prefix, GIN trigram untuk typo, dan GIN
+  -- search_vector untuk FTS. Satu OR gabungan membuat planner memilih scan
+  -- seluruh tabel lalu menghitung similarity untuk setiap baris.
+  character_matches as (
+    select c.id, 3 as match_kind
+      from characters c cross join needle n cross join wanted w
+     where 'character' = any(w.kinds)
+       and c.name_norm = n.raw
+    union all
+    select c.id, 3
+      from characters c cross join needle n cross join wanted w
+     where 'character' = any(w.kinds)
+       and c.native_norm = n.raw
+    union all
+    select a.character_id, 3
+      from character_aliases a cross join needle n cross join wanted w
+     where 'character' = any(w.kinds)
+       and a.alias_norm = n.raw
+    union all
+    select c.id, 2
+      from characters c cross join needle n cross join wanted w
+     where 'character' = any(w.kinds)
+       and c.name_norm >= n.raw
+       and c.name_norm < n.raw || chr(1114111)
+    union all
+    select c.id, 2
+      from characters c cross join needle n cross join wanted w
+     where 'character' = any(w.kinds)
+       and c.native_norm >= n.raw
+       and c.native_norm < n.raw || chr(1114111)
+    union all
+    select a.character_id, 2
+      from character_aliases a cross join needle n cross join wanted w
+     where 'character' = any(w.kinds)
+       and a.alias_norm >= n.raw
+       and a.alias_norm < n.raw || chr(1114111)
+    union all
+    select c.id, 1
+      from characters c cross join needle n cross join wanted w
+     where 'character' = any(w.kinds)
+       and char_length(n.raw) >= 3
+       -- Baris yang sudah cocok prefiks tidak perlu dikirim ulang: pada kueri
+       -- luas ketiga cabang mencocokkan 10.000 baris yang sama dan GROUP BY
+       -- menyortir 29.994 baris. Filter ini memangkasnya ke 10.000.
+       and c.name_norm not like n.raw || '%'
+       and c.name_norm % n.raw
+    union all
+    select c.id, 1
+      from characters c cross join needle n cross join wanted w
+     where 'character' = any(w.kinds)
+       and char_length(n.raw) >= 3
+       and c.native_norm % n.raw
+    union all
+    select a.character_id, 1
+      from character_aliases a cross join needle n cross join wanted w
+     where 'character' = any(w.kinds)
+       and char_length(n.raw) >= 3
+       and a.alias_norm % n.raw
+    union all
+    select c.id, 1
+      from characters c cross join needle n cross join wanted w
+     where 'character' = any(w.kinds)
+       and c.name_norm not like n.raw || '%'
+       and c.search_vector @@ n.ts
+  ),
+  character_ids as (
+    select id, max(match_kind) as match_kind
+      from character_matches
+     group by id
+  ),
+  -- `verses` sengaja tetap memakai fungsi, bukan kolom tersimpan: tabelnya
+  -- puluhan baris, jadi biaya normalisasi per baris tidak terukur. Kolom
+  -- tersimpan hanya dibayar di `characters`, tempat 10.000 baris membuat
+  -- evaluasi ulang menjadi 1,4 detik.
+  verse_matches as (
+    select v.id, 3 as match_kind
+      from verses v cross join needle n cross join wanted w
+     where 'verse' = any(w.kinds)
+       and animebattle.f_normalize_name(v.name) = n.raw
+    union all
+    select v.id, 2
+      from verses v cross join needle n cross join wanted w
+     where 'verse' = any(w.kinds)
+       and animebattle.f_normalize_name(v.name) like n.raw || '%'
+    union all
+    select v.id, 1
+      from verses v cross join needle n cross join wanted w
+     where 'verse' = any(w.kinds)
+       and char_length(n.raw) >= 3
+       and animebattle.f_normalize_name(v.name) % n.raw
+  ),
+  verse_ids as (
+    select id, max(match_kind) as match_kind
+      from verse_matches
+     group by id
+  ),
+  character_rows as (
+    select 'character'::text as entity_type,
+           ci.id,
+           ci.match_kind,
            c.slug,
            c.name,
+           c.name_norm,
            c.native_name,
            c.data_completeness,
            c.popularity_score,
+           c.search_vector,
            v.slug as verse_slug,
-           v.name as verse_name,
-           (select t.tier_code
-              from character_versions cv join tiers t on t.id = cv.tier_id
-             where cv.character_id = c.id and cv.is_default and cv.deleted_at is null
-             limit 1) as tier_code,
-           (
-             0.60 * ts_rank_cd(c.search_vector, n.ts)
-           + 0.25 * greatest(
-               similarity(public.f_normalize_name(c.name), n.raw),
-               coalesce((select max(similarity(a.alias_norm, n.raw))
-                           from character_aliases a where a.character_id = c.id), 0))
-           + 0.10 * (case when public.f_normalize_name(c.name) like n.raw || '%' then 1 else 0 end)
-           + 0.05 * least(c.popularity_score::real / 1000.0, 1.0)
-           )::real as score
-      from characters c
+           v.name as verse_name
+      from character_ids ci
+      join characters c on c.id = ci.id
       join verses v on v.id = c.verse_id
-      cross join needle n
      where (not only_public or c.verification_status in ('verified', 'imported', 'partially_verified'))
        and (verse_slug is null or v.slug = verse_slug)
        and (media is null or c.media_type::text = media)
-       and (
-            c.search_vector @@ n.ts
-         or public.f_normalize_name(c.name) % n.raw
-         -- Prefiks pendek ("sa" → Saitama) tidak lolos FTSmaupun ambang trigram,
-         -- dan justru itulah kueri pertama yang diketik pengguna pada autocomplete.
-         -- Tanpa cabang ini, /api/search/suggest tidak pernah mengembalikan apa pun
-         -- untuk satu-dua huruf (terverifikasi 2026-10-11 pada data produksi).
-         or public.f_normalize_name(c.name) like n.raw || '%'
-         or exists (select 1 from character_aliases a
-                     where a.character_id = c.id
-                       and (a.alias_norm % n.raw or a.alias_norm like n.raw || '%'))
-       )
+  ),
+  verse_rows as (
+    select 'verse',
+           vi.id,
+           vi.match_kind,
+           v.slug,
+           v.name,
+           animebattle.f_normalize_name(v.name),
+           null::text,
+           v.data_completeness,
+           v.popularity_score,
+           null::tsvector,
+           v.slug,
+           v.name
+      from verse_ids vi
+      join verses v on v.id = vi.id
+     where (verse_slug is null or v.slug = verse_slug)
+       and (media is null or v.origin_media::text = media)
+  ),
+  candidates as (
+    select * from character_rows
+    union all
+    select * from verse_rows
+  ),
+  -- Batasi kandidat SEBELUM menghitung skor. 500 cukup untuk halaman normal;
+  -- halaman yang lebih dalam menaikkan batas ini agar offset tidak kehilangan
+  -- baris, dan total tetap dihitung dari seluruh kandidat (bukan dari halaman).
+  candidate_ids as (
+    select *
+      from candidates
+     order by match_kind desc, popularity_score desc, name asc, entity_type, id
+     limit greatest(coalesce(off, 0) + least(coalesce(lim, 20), 200) + 480, 500)
+  ),
+  ranked as (
+    select cd.*,
+           (
+             case when cd.entity_type = 'character' then
+               0.60 * ts_rank_cd(cd.search_vector, n.ts)
+             + 0.25 * greatest(
+                 similarity(cd.name_norm, n.raw),
+                 coalesce((select max(similarity(a.alias_norm, n.raw))
+                             from character_aliases a where a.character_id = cd.id), 0))
+             + 0.10 * (case when cd.name_norm like n.raw || '%' then 1 else 0 end)
+             else
+               0.60 * (case when cd.name_norm = n.raw then 1 else 0 end)
+             + 0.25 * similarity(cd.name_norm, n.raw)
+             + 0.10 * (case when cd.name_norm like n.raw || '%' then 1 else 0 end)
+             end
+           + 0.05 * least(cd.popularity_score::real / 1000.0, 1.0)
+           )::real as score
+      from candidate_ids cd cross join needle n
   ),
   page as (
-    select * from matched
-     order by score desc, popularity_score desc, name asc
+    select * from ranked
+     order by score desc, popularity_score desc, name asc, entity_type, id
      limit least(coalesce(lim, 20), 200)
     offset greatest(coalesce(off, 0), 0)
   )
   select jsonb_build_object(
-    'total', (select count(*) from matched),
-    'rows', coalesce((select jsonb_agg(to_jsonb(p) order by p.score desc, p.popularity_score desc, p.name asc)
-                        from page p), '[]'::jsonb)
+    'total', (select count(*) from candidates),
+    'rows', coalesce((
+      select jsonb_agg(
+               jsonb_build_object(
+                 'type', p.entity_type,
+                 'id', p.id,
+                 'slug', p.slug,
+                 'name', p.name,
+                 'native_name', p.native_name,
+                 'verse_slug', p.verse_slug,
+                 'verse_name', p.verse_name,
+                 'tier_code', case when p.entity_type = 'character' then (
+                    select t.tier_code
+                      from character_versions cv join tiers t on t.id = cv.tier_id
+                     where cv.character_id = p.id and cv.is_default and cv.deleted_at is null
+                     limit 1
+                 ) else null end,
+                 'data_completeness', p.data_completeness,
+                 'popularity_score', p.popularity_score,
+                 'score', p.score
+               )
+               order by p.score desc, p.popularity_score desc, p.name asc, p.entity_type, p.id
+             )
+        from page p
+      ), '[]'::jsonb)
   )
 $$;
 
@@ -1412,7 +1638,7 @@ $$;
 -- Khususnya: setiap ability membawa `category_slug` + `category_is_negation`, dan
 -- setiap resistensi membawa `category_slug` (kategori ability yang ditahan) karena
 -- rule engine mencocokkan aturan berdasarkan pasangan SLUG KATEGORI, bukan id.
-create or replace function public.battle_dataset(version_ids uuid[])
+create or replace function battle_dataset(version_ids uuid[])
 returns jsonb
 language sql
 stable
@@ -1516,7 +1742,7 @@ as $$
 $$;
 
 -- Cache battle: cari hasil valid berdasarkan input_hash
-create or replace function public.battle_cache_get(p_hash text)
+create or replace function battle_cache_get(p_hash text)
 returns setof battle_results
 language sql
 stable
@@ -1525,6 +1751,136 @@ as $$
    where input_hash = p_hash
      and cached_until > now()
    limit 1
+$$;
+
+-- Rate limit terdistribusi (AC-26): satu langkah atomik yang menaikkan hitungan
+-- Invalidasi cache saat data form berubah (migrasi 0007). `cached_until` saja
+-- berarti koreksi statistik baru terlihat setelah 7 hari; baris lama ditandai
+-- kedaluwarsa (tidak dihapus) supaya tetap dapat diaudit.
+create or replace function invalidate_battle_cache_for_version(p_version_id uuid)
+returns integer
+language plpgsql
+security definer
+set search_path = animebattle, public
+as $$
+declare
+  v_count integer;
+begin
+  update battle_results r
+     set cached_until = now()
+   where r.cached_until > now()
+     and exists (
+       select 1
+         from battles b
+        where b.id = r.battle_id
+          and (b.side_a_version_id = p_version_id or b.side_b_version_id = p_version_id)
+     );
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+create or replace function trg_invalidate_battle_cache()
+returns trigger
+language plpgsql
+security definer
+set search_path = animebattle, public
+as $$
+begin
+  if tg_op = 'DELETE' then
+    perform invalidate_battle_cache_for_version(old.character_version_id);
+    return old;
+  end if;
+  perform invalidate_battle_cache_for_version(new.character_version_id);
+  return new;
+end;
+$$;
+
+create or replace function trg_invalidate_battle_cache_version()
+returns trigger
+language plpgsql
+security definer
+set search_path = animebattle, public
+as $$
+begin
+  perform invalidate_battle_cache_for_version(new.id);
+  return new;
+end;
+$$;
+
+create trigger trg_statistics_invalidate_cache
+  after insert or update or delete on statistics
+  for each row execute function trg_invalidate_battle_cache();
+
+create trigger trg_char_abilities_invalidate_cache
+  after insert or update or delete on character_abilities
+  for each row execute function trg_invalidate_battle_cache();
+
+create trigger trg_char_resist_invalidate_cache
+  after insert or update or delete on character_resistances
+  for each row execute function trg_invalidate_battle_cache();
+
+create trigger trg_char_traits_invalidate_cache
+  after insert or update or delete on character_traits
+  for each row execute function trg_invalidate_battle_cache();
+
+create trigger trg_versions_invalidate_cache
+  after update on character_versions
+  for each row execute function trg_invalidate_battle_cache_version();
+
+-- Rate limit terdistribusi (AC-26): satu langkah atomik yang menaikkan hitungan
+-- jendela lalu melaporkan sisa kuota. `on conflict do update` membuat dua
+-- permintaan bersamaan tidak dapat sama-sama membaca hitungan lama — bentuk race
+-- yang membuat batas bocor. Waktu datang sebagai parameter supaya perilakunya
+-- dapat diuji tanpa menunggu jam dinding.
+--
+-- Jendela tetap (sejajar `FixedWindowRateLimiter`): jendela tidak bergeser
+-- mengikuti permintaan pertama, sehingga batasnya dapat diprediksi.
+create or replace function rate_limit_hit(
+  p_bucket text,
+  p_window_ms integer,
+  p_limit integer,
+  p_now timestamptz default now()
+)
+returns table (allowed boolean, remaining integer, retry_after_ms integer)
+language plpgsql
+security definer
+set search_path = animebattle, public
+as $$
+declare
+  v_start timestamptz;
+  v_hits integer;
+  v_reset timestamptz;
+begin
+  if p_window_ms <= 0 or p_limit <= 0 then
+    raise exception 'rate_limit_hit: p_window_ms dan p_limit harus > 0';
+  end if;
+
+  v_start := to_timestamp(
+    floor(extract(epoch from p_now) * 1000 / p_window_ms) * p_window_ms / 1000.0
+  );
+  v_reset := v_start + make_interval(secs => p_window_ms / 1000.0);
+
+  insert into rate_limit_windows (bucket, window_start, hits)
+  values (p_bucket, v_start, 1)
+  on conflict (bucket, window_start)
+    do update set hits = rate_limit_windows.hits + 1
+  returning rate_limit_windows.hits into v_hits;
+
+  -- Pembersihan oportunistik (1% permintaan): tabel tidak tumbuh tanpa batas
+  -- tanpa perlu job cron terpisah untuk tujuan ini.
+  if random() < 0.01 then
+    delete from rate_limit_windows where window_start < p_now - interval '1 day';
+  end if;
+
+  return query
+    select v_hits <= p_limit,
+           greatest(p_limit - v_hits, 0),
+           case
+             when v_hits <= p_limit then 0
+             else greatest(1, ceil(extract(epoch from (v_reset - p_now)) * 1000)::integer)
+           end;
+end;
 $$;
 
 -- ============================================================================
@@ -1567,6 +1923,7 @@ alter table favorites                   enable row level security;
 alter table analytics_events            enable row level security;
 alter table audit_logs                  enable row level security;
 alter table data_reports                enable row level security;
+alter table rate_limit_windows          enable row level security;
 
 -- Data publik: dapat dibaca anon (halaman situs). Mutasi hanya via service role/admin.
 do $$
@@ -1585,7 +1942,7 @@ begin
       'create policy %I on %I for select to anon, authenticated using (true)',
       'pol_' || t || '_read', t);
     execute format(
-      'create policy %I on %I for all to authenticated using (public.is_admin()) with check (public.is_admin())',
+      'create policy %I on %I for all to authenticated using (is_admin()) with check (is_admin())',
       'pol_' || t || '_admin', t);
   end loop;
 end $$;
@@ -1603,37 +1960,48 @@ declare
 begin
   foreach t in array admin_only loop
     execute format(
-      'create policy %I on %I for all to authenticated using (public.is_admin()) with check (public.is_admin())',
+      'create policy %I on %I for all to authenticated using (is_admin()) with check (is_admin())',
       'pol_' || t || '_admin', t);
   end loop;
   foreach t in array curator_tables loop
     execute format(
-      'create policy %I on %I for select to authenticated using (public.is_curator())',
+      'create policy %I on %I for select to authenticated using (is_curator())',
       'pol_' || t || '_curator_read', t);
   end loop;
 end $$;
+
+-- Audit boleh dibaca editor/curator untuk penelusuran pekerjaan kurasi;
+-- menulis/menghapus tetap hanya admin (policy all di atas).
+create policy pol_audit_logs_editor_read on audit_logs
+  for select to authenticated using (is_editor());
 
 -- Battle narasi (AI) dapat dibaca publik, hanya admin yang menulis
 create policy pol_battle_narratives_read on battle_narratives
   for select to anon, authenticated using (true);
 create policy pol_battle_narratives_admin on battle_narratives
-  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+  for all to authenticated using (is_admin()) with check (is_admin());
+
+-- Rate limit: tidak ada policy untuk anon/authenticated selain admin. Tabel ini
+-- hanya disentuh lewat fungsi security definer `rate_limit_hit`, jadi tanpa
+-- policy RLS menolak semua baris bagi role lain — fail-closed.
+create policy pol_rate_limit_windows_admin on rate_limit_windows
+  for all to authenticated using (is_admin()) with check (is_admin());
 
 -- Analytics & laporan: insert publik dibatasi (lebih ketat lagi di route handler),
 -- baca hanya admin
 create policy pol_analytics_insert on analytics_events
   for insert to anon, authenticated with check (true);
 create policy pol_analytics_admin on analytics_events
-  for select to authenticated using (public.is_admin());
+  for select to authenticated using (is_admin());
 
 create policy pol_reports_insert on data_reports
   for insert to anon, authenticated with check (true);
 create policy pol_reports_admin on data_reports
-  for all to authenticated using (public.is_admin()) with check (public.is_admin());
+  for all to authenticated using (is_admin()) with check (is_admin());
 
 -- Users: hanya dirinya sendiri (atau admin)
 create policy pol_users_self on users
-  for select to authenticated using (id = auth.uid() or public.is_admin());
+  for select to authenticated using (id = auth.uid() or is_admin());
 create policy pol_users_update_self on users
   for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
 
@@ -1649,11 +2017,11 @@ create policy pol_favorites_own on favorites
 -- ============================================================================
 
 -- Rekonsiliasi cache stat vs sumber kebenaran; laporkan drift.
-create or replace function public.reconcile_stat_cache()
+create or replace function reconcile_stat_cache()
 returns table (character_version_id uuid, metric stat_metric_t, cache_scale_id uuid, truth_scale_id uuid)
 language sql
 security definer
-set search_path = public
+set search_path = animebattle, public
 as $$
   with truth as (          -- nilai "menang" per (form, metrik) menurut confidence
     select distinct on (s.character_version_id, s.metric)
@@ -1682,11 +2050,11 @@ as $$
 $$;
 
 -- Hitung data_completeness untuk karakter & form (thin content -> noindex)
-create or replace function public.recompute_completeness()
+create or replace function recompute_completeness()
 returns void
 language plpgsql
 security definer
-set search_path = public
+set search_path = animebattle, public
 as $$
 begin
   with counts as (
@@ -1726,11 +2094,11 @@ end;
 $$;
 
 -- Pembersihan staging & event lama (privasi + ukuran)
-create or replace function public.purge_expired_staging()
+create or replace function purge_expired_staging()
 returns void
 language plpgsql
 security definer
-set search_path = public
+set search_path = animebattle, public
 as $$
 begin
   delete from ingestion_raw_pages where expires_at < now();
@@ -1742,6 +2110,92 @@ begin
      and br.computed_at < now() - interval '365 days';
 end;
 $$;
+
+
+-- Semua fungsi aplikasi dipatok ke search_path-nya sendiri. Ini menjaga RPC
+-- tetap benar meski dipanggil lewat PostgREST/psql yang search_path-nya lain,
+-- dan membuat SECURITY DEFINER tidak bergantung pada search_path pemanggil.
+do $$
+declare
+  f record;
+begin
+  for f in
+    select p.oid::regprocedure as signature
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'animebattle'
+  loop
+    execute format('alter function %s set search_path = animebattle, public', f.signature);
+  end loop;
+end $$;
+
+
+-- ============================================================================
+-- 18. Isolasi & hak akses schema
+-- ============================================================================
+-- RLS menentukan BARIS; grant menentukan apakah role boleh menyentuh objeknya
+-- sama sekali. Keduanya diperlukan: RLS tanpa grant = permission denied, grant
+-- tanpa RLS = seluruh baris terbaca.
+grant usage on schema animebattle to anon, authenticated;
+
+-- authenticated: akses SQL-level ke seluruh tabel aplikasi; policy RLS per
+-- tabel yang memutuskan baris mana yang boleh dibaca/ditulis. Tanpa grant ini,
+-- policy admin/curator tidak pernah tercapai. Daftar eksplisit (bukan
+-- "all tables") supaya schema_migrations tidak ikut terbuka.
+do $$
+declare
+  t text;
+  app_tables text[] := array[
+    'sources','stat_scale_metrics','stat_scales','tiers','verses','characters',
+    'character_aliases','character_versions','character_traits','equipment',
+    'statistics','ability_categories','abilities','character_abilities',
+    'resistance_types','character_resistances','hax_interactions','feats',
+    'character_sources','character_source_conflicts','merge_candidates',
+    'slug_redirects','ingestion_jobs','ingestion_errors','ingestion_raw_pages',
+    'source_snapshots','battle_rule_sets','battle_conditions','battles',
+    'battle_results','battle_narratives','users','user_roles','favorites',
+    'analytics_events','audit_logs','data_reports','rate_limit_windows'
+  ];
+begin
+  foreach t in array app_tables loop
+    execute format('grant select, insert, update, delete on table animebattle.%I to authenticated', t);
+  end loop;
+end $$;
+
+-- anon: hanya data publik (daftar yang sama dengan policy SELECT di bagian 16)
+-- dan dua tabel yang memang menerima insert anonim.
+grant select on table
+  animebattle.verses, animebattle.characters, animebattle.character_aliases,
+  animebattle.character_versions, animebattle.character_traits, animebattle.equipment,
+  animebattle.statistics, animebattle.ability_categories, animebattle.abilities,
+  animebattle.character_abilities, animebattle.resistance_types,
+  animebattle.character_resistances, animebattle.hax_interactions, animebattle.feats,
+  animebattle.tiers, animebattle.stat_scales, animebattle.stat_scale_metrics,
+  animebattle.slug_redirects, animebattle.battles, animebattle.battle_results,
+  animebattle.battle_conditions, animebattle.battle_rule_sets,
+  animebattle.battle_narratives
+  to anon;
+grant insert on table animebattle.analytics_events, animebattle.data_reports to anon;
+grant select on table
+  animebattle.mv_battle_popularity, animebattle.mv_verse_tier_distribution,
+  animebattle.mv_character_search
+  to anon, authenticated;
+
+-- Fungsi: cabut EXECUTE default PUBLIC (Postgres memberikannya ke semua role),
+-- lalu berikan hanya RPC baca yang memang publik. Fungsi pemeliharaan
+-- (purge/recompute/reconcile/refresh) sengaja TIDAK diberikan ke anon/authenticated.
+revoke execute on all functions in schema animebattle from public;
+grant execute on function animebattle.f_unaccent(text) to anon, authenticated;
+grant execute on function animebattle.f_normalize_name(text) to anon, authenticated;
+grant execute on function animebattle.rule_set_weight_sum(jsonb) to anon, authenticated;
+grant execute on function animebattle.search_characters(text, integer, boolean) to anon, authenticated;
+grant execute on function animebattle.search_characters_page(text, text, text, integer, integer, boolean, text[]) to anon, authenticated;
+grant execute on function animebattle.battle_dataset(uuid[]) to anon, authenticated;
+grant execute on function animebattle.battle_cache_get(text) to anon, authenticated;
+grant execute on function animebattle.rate_limit_hit(text, integer, integer, timestamptz) to anon, authenticated;
+grant execute on function animebattle.is_admin() to authenticated;
+grant execute on function animebattle.is_editor() to authenticated;
+grant execute on function animebattle.is_curator() to authenticated;
 
 commit;
 

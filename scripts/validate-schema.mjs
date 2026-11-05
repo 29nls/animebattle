@@ -77,12 +77,61 @@ if (seedSql) {
 // ------------------------------------------------------- struktur & konfigurasi
 const tableCount = await db.query(
   `select count(*)::int as n from information_schema.tables
-    where table_schema = 'public' and table_type = 'BASE TABLE'`);
-const EXPECTED_TABLES = 37;  // dijaga agar sesuai klaim docs/PRD.md §22
+    where table_schema = 'animebattle' and table_type = 'BASE TABLE'`);
+const EXPECTED_TABLES = 38;  // dijaga agar sesuai klaim docs/PRD.md §22
 if (tableCount.rows[0].n === EXPECTED_TABLES) {
   ok('jumlah tabel', `${tableCount.rows[0].n} tabel dasar (sesuai PRD §22)`);
 } else {
   bad('jumlah tabel', `${tableCount.rows[0].n} tabel, PRD §22 mengklaim ${EXPECTED_TABLES}`);
+}
+
+const publicTables = await db.query(
+  "select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE'",
+);
+const appSchema = await db.query(
+  "select count(*)::int as n from pg_namespace where nspname = 'animebattle'",
+);
+if (appSchema.rows[0].n === 1 && publicTables.rows[0].n === 0) {
+  ok('isolasi schema: objek aplikasi hanya di animebattle', 'schema public tanpa tabel aplikasi');
+} else {
+  bad(
+    'isolasi schema: objek aplikasi hanya di animebattle',
+    'schema animebattle=' + appSchema.rows[0].n + ', tabel aplikasi di public=' + publicTables.rows[0].n,
+  );
+}
+
+const policyCoverage = await db.query(
+  "select count(distinct tablename)::int as n from pg_policies where schemaname = 'animebattle'",
+);
+if (policyCoverage.rows[0].n === EXPECTED_TABLES) {
+  ok('setiap tabel punya policy RLS', policyCoverage.rows[0].n + ' tabel');
+} else {
+  bad(
+    'setiap tabel punya policy RLS',
+    policyCoverage.rows[0].n + ' tabel ber-policy, seharusnya ' + EXPECTED_TABLES,
+  );
+}
+
+const privileges = await db.query(
+  "select has_schema_privilege('anon', 'animebattle', 'USAGE') as anon_schema," +
+    " has_table_privilege('anon', 'animebattle.characters', 'SELECT') as anon_reads_characters," +
+    " has_table_privilege('anon', 'animebattle.sources', 'SELECT') as anon_reads_sources," +
+    " has_table_privilege('authenticated', 'animebattle.favorites', 'SELECT') as auth_reads_favorites," +
+    " has_function_privilege('authenticated', 'animebattle.search_characters(text,integer,boolean)', 'EXECUTE') as auth_search," +
+    " has_function_privilege('authenticated', 'animebattle.purge_expired_staging()', 'EXECUTE') as auth_purge",
+);
+const p = privileges.rows[0];
+if (
+  p.anon_schema &&
+  p.anon_reads_characters &&
+  !p.anon_reads_sources &&
+  p.auth_reads_favorites &&
+  p.auth_search &&
+  !p.auth_purge
+) {
+  ok('grant/revoke schema: anon baca publik, fungsi pemeliharaan tertutup');
+} else {
+  bad('grant/revoke schema: anon baca publik, fungsi pemeliharaan tertutup', JSON.stringify(p));
 }
 
 const EXPECTED_MVS = ['mv_battle_popularity', 'mv_verse_tier_distribution', 'mv_character_search'];
@@ -92,7 +141,7 @@ const mvRows = await db.query(
      from pg_matviews m
      join pg_class c on c.relname = m.matviewname
      join pg_namespace n on n.oid = c.relnamespace and n.nspname = m.schemaname
-    where m.schemaname = 'public'
+    where m.schemaname = 'animebattle'
     order by 1`);
 const mvNames = mvRows.rows.map((r) => r.matviewname);
 if (mvNames.length === 3 && EXPECTED_MVS.every((n) => mvNames.includes(n))) {
@@ -122,7 +171,7 @@ if (refreshed.length > 0 && unknownMv.length === 0) {
 const rlsOff = await db.query(
   `select c.relname from pg_class c
      join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = 'public' and c.relkind = 'r' and c.relrowsecurity = false
+    where n.nspname = 'animebattle' and c.relkind = 'r' and c.relrowsecurity = false
     order by 1`);
 if (rlsOff.rows.length === 0) ok('RLS aktif di semua tabel');
 else bad('RLS aktif di semua tabel', `tanpa RLS: ${rlsOff.rows.map((r) => r.relname).join(', ')}`);
@@ -131,7 +180,7 @@ const tiers = await db.query(`select count(*)::int as n, max(numerical_rank)::in
 ok('seed tiers', `${tiers.rows[0].n} tier, rank tertinggi ${tiers.rows[0].mx}`);
 
 const wsum = await db.query(
-  `select version, public.rule_set_weight_sum(weights) as total from battle_rule_sets where active`);
+  `select version, animebattle.rule_set_weight_sum(weights) as total from battle_rule_sets where active`);
 if (wsum.rows.length === 1 && wsum.rows[0].total === 100) {
   ok('rule set aktif Σbobot = 100', `versi ${wsum.rows[0].version}`);
 } else {
@@ -231,10 +280,10 @@ if (dbRuleMismatch.length === 0) {
 }
 
 const badSum = await db.query(`
-  select public.rule_set_weight_sum(null::jsonb)                                      as n,
-         public.rule_set_weight_sum('[]'::jsonb)                                       as arr,
-         public.rule_set_weight_sum('{"a": "x"}'::jsonb)                               as str,
-         public.rule_set_weight_sum('{"a": 40, "b": 60}'::jsonb)                       as good`);
+  select animebattle.rule_set_weight_sum(null::jsonb)                                      as n,
+         animebattle.rule_set_weight_sum('[]'::jsonb)                                       as arr,
+         animebattle.rule_set_weight_sum('{"a": "x"}'::jsonb)                               as str,
+         animebattle.rule_set_weight_sum('{"a": 40, "b": 60}'::jsonb)                       as good`);
 const bs = badSum.rows[0];
 if (bs.n === -1 && bs.arr === -1 && bs.str === -1 && bs.good === 100) {
   ok('rule_set_weight_sum: bentuk tidak valid -> -1, valid -> total');
@@ -439,7 +488,7 @@ await expectError(
 
 // ------------------------------------------------------------------- pencarian
 async function search(q) {
-  const r = await db.query(`select slug, name, score from public.search_characters($1, 10)`, [q]);
+  const r = await db.query(`select slug, name, score from animebattle.search_characters($1, 10)`, [q]);
   return r.rows;
 }
 const exact = await search('Testarion');
@@ -460,7 +509,7 @@ if (sv.rows[0].has_sv) ok('search_vector terisi oleh trigger');
 else bad('search_vector terisi oleh trigger');
 
 // ------------------------------------------------------------ dataset & battle
-const ds = await db.query(`select public.battle_dataset(array[$1, $2]::uuid[]) as d`, [vBase, vPeak]);
+const ds = await db.query(`select animebattle.battle_dataset(array[$1, $2]::uuid[]) as d`, [vBase, vPeak]);
 const payload = ds.rows[0].d;
 const byId = new Map((payload ?? []).map((e) => [e.version_id, e]));
 const sideA = byId.get(vBase);
@@ -534,7 +583,7 @@ await expectError(
   'input_hash',
 );
 
-const cacheHit = await db.query(`select count(*)::int as n from public.battle_cache_get('sha256:testhash')`);
+const cacheHit = await db.query(`select count(*)::int as n from animebattle.battle_cache_get('sha256:testhash')`);
 if (cacheHit.rows[0].n === 1) ok('RPC battle_cache_get menemukan hasil tersimpan');
 else bad('RPC battle_cache_get', JSON.stringify(cacheHit.rows));
 
@@ -574,7 +623,7 @@ await expectError(
 
 // -------------------------------------------------------------- MV & pemelihara
 try {
-  await db.query(`select public.refresh_materialized_views()`);
+  await db.query(`select animebattle.refresh_materialized_views()`);
   const mvPop = await db.query(`select count(*)::int as n from mv_battle_popularity`);
   const mvTier = await db.query(`select count(*)::int as n from mv_verse_tier_distribution`);
   ok('refresh_materialized_views + isi MV', `popularity=${mvPop.rows[0].n}, tierDist=${mvTier.rows[0].n}`);
@@ -583,7 +632,7 @@ try {
 }
 
 try {
-  await db.query(`select public.recompute_completeness()`);
+  await db.query(`select animebattle.recompute_completeness()`);
   const comp = await db.query(`select data_completeness from character_versions where id = $1`, [vBase]);
   ok('recompute_completeness', `form base = ${comp.rows[0].data_completeness}`);
 } catch (err) {
@@ -591,14 +640,14 @@ try {
 }
 
 try {
-  const drift = await db.query(`select count(*)::int as n from public.reconcile_stat_cache()`);
+  const drift = await db.query(`select count(*)::int as n from animebattle.reconcile_stat_cache()`);
   ok('reconcile_stat_cache dapat dijalankan', `drift=${drift.rows[0].n}`);
 } catch (err) {
   bad('reconcile_stat_cache', String(err.message).split('\n')[0]);
 }
 
 try {
-  await db.query(`select public.purge_expired_staging()`);
+  await db.query(`select animebattle.purge_expired_staging()`);
   ok('purge_expired_staging dapat dijalankan');
 } catch (err) {
   bad('purge_expired_staging', String(err.message).split('\n')[0]);

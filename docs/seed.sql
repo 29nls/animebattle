@@ -12,6 +12,9 @@
 
 begin;
 
+-- Semua objek aplikasi ada di schema animebattle.
+set search_path = animebattle, public;
+
 -- ---------------------------------------------------------------------------
 -- 1. Sumber internal (tempat atribusi record editorial/admin)
 -- ---------------------------------------------------------------------------
@@ -574,5 +577,5 @@ commit;
 --   select count(*) from ability_categories;                   -- ~57
 --   select count(*) from resistance_types;                     -- = kategori resistible
 --   select count(*) from hax_interactions;                     -- ~29
---   select public.rule_set_weight_sum(weights) from battle_rule_sets where active;  -- 100
+--   select animebattle.rule_set_weight_sum(weights) from battle_rule_sets where active;  -- 100
 -- ============================================================================

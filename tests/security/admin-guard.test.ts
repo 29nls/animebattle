@@ -1,90 +1,176 @@
 /**
- * Unit test guard keamanan rute admin (AC-26, PRD §28).
+ * Unit test otorisasi admin Supabase (AC-26, PRD §28).
  *
  * Kontrak yang dikunci:
- *  1. Guard **fail-closed**: tanpa konfigurasi → semua permintaan ditolak 503.
- *  2. Secret salah/kosong → 401; secret benar → lolos dengan principal.
- *  3. Perbandingan secret tahan timing attack (timingSafeEqual, bukan `===`).
- *  4. Rate limiter: jendela tetap, menolak 429 pada permintaan ke-N+1,
- *     pemisahan kunci per-principal, reset pada jendela berikutnya.
- *  5. Limiter murni: waktu disuntikkan (injectable clock), tanpa Date.now internal.
+ *  1. Fail-closed: konfigurasi Auth hilang → 503.
+ *  2. Sesi tidak ada/kedaluwarsa → 401.
+ *  3. Peran viewer < editor < admin/owner; curator legacy = editor.
+ *  4. Admin/owner wajib AAL2; AAL1 → 403 mfa_required.
+ *  5. Provider dapat disuntik sehingga handler tidak memerlukan Supabase nyata.
+ *  6. Rate limiter tetap murni dan memisahkan kunci per user.
+ *  7. Perbandingan CRON_SECRET tetap timing-safe.
  */
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { adminGuard, secretsMatch, AdminGuardConfigError } from '../../src/lib/security/admin-guard.ts';
+import {
+  evaluateAdminAccess,
+  getAdminAuth,
+  isAdminAuthConfigured,
+  normalizeRoles,
+  setAdminAuthProviderForTests,
+  type AdminAuthSnapshot,
+} from '../../src/features/admin/auth.ts';
 import { FixedWindowRateLimiter } from '../../src/lib/security/rate-limiter.ts';
+import { secretsMatch } from '../../src/lib/security/secrets.ts';
 
-const ENV_KEY = 'ADMIN_INGESTION_SECRET';
-
-/** Susun header request seperti route akan melakukannya. */
-function requestWith(header: Record<string, string>): { headers: { get(name: string): string | null } } {
-  return { headers: { get: (name) => header[name.toLowerCase()] ?? null } };
+function snapshot(overrides: Partial<AdminAuthSnapshot> = {}): AdminAuthSnapshot {
+  return {
+    configured: true,
+    user: { id: 'user-uji', email: 'admin@example.test', displayName: 'Admin Uji' },
+    roles: ['admin'],
+    aal: 'aal2',
+    expiresAt: 2_000_000_000,
+    now: 1_700_000_000_000,
+    ...overrides,
+  };
 }
 
-describe('adminGuard — fail-closed', () => {
-  it('menolak 503 bila secret belum dikonfigurasi (tidak ada fallback terbuka)', () => {
-    const env = { [ENV_KEY]: '' };
-    const result = adminGuard(requestWith({ authorization: 'Bearer apa pun' }), env, ENV_KEY);
+describe('evaluateAdminAccess — fail-closed & sesi', () => {
+  it('503 bila Supabase Auth belum dikonfigurasi, bahkan dengan user palsu', () => {
+    const result = evaluateAdminAccess(snapshot({ configured: false }));
     assert.equal(result.ok, false);
-    assert.equal(result.status, 503);
+    if (!result.ok) {
+      assert.equal(result.status, 503);
+      assert.equal(result.code, 'UNAVAILABLE');
+      assert.equal(result.reason, 'not_configured');
+    }
   });
 
-  it('melempar AdminGuardConfigError bila dipanggil tanpa nama env (kesalahan pemanggil, bukan request)', () => {
-    assert.throws(() => adminGuard(requestWith({}), {}, ''), AdminGuardConfigError);
+  it('401 bila tidak ada sesi', () => {
+    const result = evaluateAdminAccess(snapshot({ user: null, roles: [] }));
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.status, 401);
+      assert.equal(result.reason, 'unauthenticated');
+    }
+  });
+
+  it('401 bila sesi kedaluwarsa (detik Unix)', () => {
+    const result = evaluateAdminAccess(
+      snapshot({ expiresAt: 1_700_000_000, now: 1_700_000_001_000 }),
+    );
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.status, 401);
+      assert.equal(result.reason, 'session_expired');
+    }
+  });
+
+  it('menerima sesi yang belum kedaluwarsa', () => {
+    const result = evaluateAdminAccess(
+      snapshot({ expiresAt: 1_700_000_100, now: 1_700_000_000_000 }),
+    );
+    assert.equal(result.ok, true);
   });
 });
 
-describe('adminGuard — autentikasi', () => {
-  const env = { [ENV_KEY]: 'r4hasia-admin' };
-
-  it('menolak 401 tanpa header Authorization', () => {
-    const result = adminGuard(requestWith({}), env, ENV_KEY);
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 401);
+describe('evaluateAdminAccess — eskalasi peran', () => {
+  it('viewer boleh baca, tetapi tidak boleh aksi editor', () => {
+    const viewer = snapshot({ roles: ['viewer'], aal: 'aal1' });
+    assert.equal(evaluateAdminAccess(viewer, 'viewer').ok, true);
+    const escalated = evaluateAdminAccess(viewer, 'editor');
+    assert.equal(escalated.ok, false);
+    if (!escalated.ok) assert.equal(escalated.reason, 'forbidden');
   });
 
-  it('menolak 401 dengan skema selain Bearer', () => {
-    const result = adminGuard(requestWith({ authorization: 'Basic r4hasia-admin' }), env, ENV_KEY);
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 401);
+  it('editor boleh aksi editor, tetapi tidak boleh aksi admin', () => {
+    const editor = snapshot({ roles: ['editor'], aal: 'aal1' });
+    assert.equal(evaluateAdminAccess(editor, 'editor').ok, true);
+    const escalated = evaluateAdminAccess(editor, 'admin');
+    assert.equal(escalated.ok, false);
+    if (!escalated.ok) assert.equal(escalated.reason, 'forbidden');
   });
 
-  it('menolak 401 dengan secret salah', () => {
-    const result = adminGuard(requestWith({ authorization: 'Bearer salah' }), env, ENV_KEY);
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 401);
-  });
-
-  it('menerima secret benar dan mengembalikan principal', () => {
-    const result = adminGuard(requestWith({ authorization: 'Bearer r4hasia-admin' }), env, ENV_KEY);
+  it('curator legacy diperlakukan sebagai editor', () => {
+    const result = evaluateAdminAccess(snapshot({ roles: ['curator'], aal: 'aal1' }), 'editor');
     assert.equal(result.ok, true);
-    if (result.ok) assert.equal(result.principal, 'bearer-admin');
+    if (result.ok) assert.equal(result.identity.effectiveRole, 'editor');
   });
 
-  it('memakai timingSafeEqual, bukan perbandingan string biasa', () => {
-    const source = secretsMatch.toString();
-    assert.ok(source.includes('timingSafeEqual'), 'pembanding wajib memakai timingSafeEqual');
-    assert.ok(!/\bprovided\s*===\s*configured\b/.test(source), 'perbandingan `===` langsung dilarang');
+  it('owner adalah admin', () => {
+    const result = evaluateAdminAccess(snapshot({ roles: ['owner'] }), 'admin');
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.identity.effectiveRole, 'admin');
   });
 
-  it('secretsMatch benar secara perilaku (cocok/mismatch/kosong)', () => {
-    assert.equal(secretsMatch('rahasia', 'rahasia'), true);
-    assert.equal(secretsMatch('rahasia', 'salah'), false);
-    assert.equal(secretsMatch('', 'rahasia'), false);
-    assert.equal(secretsMatch('rahasia', ''), false);
+  it('peran tak dikenal/duplikat dinormalisasi; tanpa peran → 403', () => {
+    assert.deepEqual(normalizeRoles(['viewer', 'viewer', 'hacker']), ['viewer']);
+    const result = evaluateAdminAccess(snapshot({ roles: ['hacker'] }));
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.reason, 'forbidden');
+  });
+});
+
+describe('evaluateAdminAccess — MFA admin', () => {
+  it('admin AAL1 ditolak 403 mfa_required, bahkan untuk baca', () => {
+    const result = evaluateAdminAccess(snapshot({ roles: ['admin'], aal: 'aal1' }), 'viewer');
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.status, 403);
+      assert.equal(result.reason, 'mfa_required');
+    }
   });
 
-  it('menerima X-Forwarded-For sebagai identitas untuk limiter', () => {
-    const env2 = { [ENV_KEY]: 'tok' };
-    const result = adminGuard(
-      requestWith({ authorization: 'Bearer tok', 'x-forwarded-for': '203.0.113.9' }),
-      env2,
-      ENV_KEY,
+  it('admin AAL2 diterima', () => {
+    const result = evaluateAdminAccess(snapshot({ roles: ['admin'], aal: 'aal2' }), 'admin');
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.identity.aal, 'aal2');
+  });
+
+  it('editor tidak wajib MFA', () => {
+    const result = evaluateAdminAccess(snapshot({ roles: ['editor'], aal: 'aal1' }), 'editor');
+    assert.equal(result.ok, true);
+  });
+});
+
+describe('getAdminAuth — provider injection', () => {
+  it('memakai snapshot yang disuntik tanpa env Supabase', async () => {
+    setAdminAuthProviderForTests(async () => snapshot({ roles: ['viewer'], aal: 'aal1' }));
+    try {
+      const result = await getAdminAuth('viewer');
+      assert.equal(result.ok, true);
+    } finally {
+      setAdminAuthProviderForTests(null);
+    }
+  });
+
+  it('fail-closed tanpa provider dan tanpa konfigurasi', async () => {
+    setAdminAuthProviderForTests(null);
+    const previousUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const previousKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    try {
+      const result = await getAdminAuth();
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.status, 503);
+    } finally {
+      if (previousUrl !== undefined) process.env.NEXT_PUBLIC_SUPABASE_URL = previousUrl;
+      if (previousKey !== undefined) process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = previousKey;
+    }
+  });
+
+  it('isAdminAuthConfigured mengharuskan URL dan anon key', () => {
+    assert.equal(isAdminAuthConfigured({ NEXT_PUBLIC_SUPABASE_URL: 'https://x.test' }), false);
+    assert.equal(
+      isAdminAuthConfigured({
+        NEXT_PUBLIC_SUPABASE_URL: 'https://x.test',
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon',
+      }),
+      true,
     );
-    assert.equal(result.ok, true);
-    if (result.ok) assert.equal(result.identity, '203.0.113.9');
   });
 });
 
@@ -102,38 +188,45 @@ describe('FixedWindowRateLimiter', () => {
     };
   }
 
-  it('mengizinkan sampai batas, lalu menolak 429 dengan retry_after_ms', () => {
+  it('mengizinkan sampai batas, lalu menolak dengan retry_after_ms', () => {
     const { limiter } = limiterAt(1_000);
-    for (let i = 0; i < LIMIT; i += 1) {
-      const r = limiter.check('klien-1');
-      assert.equal(r.allowed, true, `permintaan ke-${i + 1} harus lolos`);
-    }
-    const blocked = limiter.check('klien-1');
+    for (let i = 0; i < LIMIT; i += 1) assert.equal(limiter.check('user-1').allowed, true);
+    const blocked = limiter.check('user-1');
     assert.equal(blocked.allowed, false);
-    if (!blocked.allowed) {
-      assert.ok(blocked.retryAfterMs > 0 && blocked.retryAfterMs <= WINDOW_MS);
-    }
+    if (!blocked.allowed) assert.ok(blocked.retryAfterMs > 0 && blocked.retryAfterMs <= WINDOW_MS);
   });
 
-  it('memisahkan kunci: kunci lain tidak terganggu blok', () => {
+  it('memisahkan kunci per user', () => {
     const { limiter } = limiterAt(1_000);
-    for (let i = 0; i < LIMIT; i += 1) limiter.check('klien-1');
-    assert.equal(limiter.check('klien-1').allowed, false);
-    assert.equal(limiter.check('klien-2').allowed, true);
+    for (let i = 0; i < LIMIT; i += 1) limiter.check('user-1');
+    assert.equal(limiter.check('user-1').allowed, false);
+    assert.equal(limiter.check('user-2').allowed, true);
   });
 
-  it('reset pada jendela berikutnya (jendela tetap, bukan sliding)', () => {
+  it('reset pada jendela berikutnya', () => {
     const { limiter, tick } = limiterAt(1_000);
-    for (let i = 0; i < LIMIT; i += 1) limiter.check('klien-1');
-    assert.equal(limiter.check('klien-1').allowed, false);
+    for (let i = 0; i < LIMIT; i += 1) limiter.check('user-1');
+    assert.equal(limiter.check('user-1').allowed, false);
     tick(WINDOW_MS + 1);
-    assert.equal(limiter.check('klien-1').allowed, true);
+    assert.equal(limiter.check('user-1').allowed, true);
   });
 
-  it('murni terhadap waktu sistem: jam disuntikkan, tanpa Date.now internal', () => {
-    const source = FixedWindowRateLimiter.toString();
-    assert.ok(!source.includes('Date.now'), 'limiter wajib menerima jam dari luar');
-    const { limiter } = limiterAt(5_000);
-    assert.equal(limiter.check('x').allowed, true);
+  it('murni terhadap waktu sistem', () => {
+    assert.ok(!FixedWindowRateLimiter.toString().includes('Date.now'));
+  });
+});
+
+describe('secretsMatch — CRON_SECRET tetap timing-safe', () => {
+  it('cocok/mismatch/kosong', () => {
+    assert.equal(secretsMatch('rahasia', 'rahasia'), true);
+    assert.equal(secretsMatch('rahasia', 'salah'), false);
+    assert.equal(secretsMatch('', 'rahasia'), false);
+    assert.equal(secretsMatch('rahasia', ''), false);
+  });
+
+  it('memakai timingSafeEqual, bukan perbandingan string biasa', () => {
+    const source = secretsMatch.toString();
+    assert.ok(source.includes('timingSafeEqual'));
+    assert.ok(!/\bprovided\s*===\s*configured\b/.test(source));
   });
 });

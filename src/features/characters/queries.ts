@@ -17,6 +17,7 @@
 
 import { demoCharacterListItems, demoEnabled } from '../demo/provider.ts';
 import { getSqlClient, isDatabaseConfigured, type SqlClient } from '../../lib/db/client.ts';
+import type { SearchType } from './search-params.ts';
 
 /**
  * Kolom yang dibutuhkan kartu daftar. Sengaja bukan `*`: menambah kolom ke sini
@@ -117,13 +118,18 @@ export async function searchCharacters(
   if (q === '') return [];
 
   return sql.query<CharacterSearchHit>(
-    `select * from public.search_characters($1, $2, true)`,
+    `select * from search_characters($1, $2, true)`,
     [q, normalizePageSize(limit)],
   );
 }
 
 /** Satu baris hasil pencarian berhalaman (kolom eksplisit dari fungsi RPC). */
 export interface CharacterSearchRow {
+  /**
+   * Jenis entitas baris. RPC kini dapat mengembalikan karakter **dan** verse,
+   * jadi pemanggil tidak boleh menganggap `id`/`slug` selalu milik karakter.
+   */
+  type: 'character' | 'verse';
   id: string;
   slug: string;
   name: string;
@@ -149,6 +155,11 @@ export interface SearchCharacterPageParams {
   /** Dimulai dari 1. */
   page?: number;
   perPage?: number;
+  /**
+   * Tipe entitas yang dicari. Bawaan `['character']` mempertahankan perilaku
+   * lama; `['character', 'verse']` mengaktifkan pencarian lintas tipe.
+   */
+  types?: readonly SearchType[];
 }
 
 /**
@@ -193,8 +204,15 @@ export async function searchCharacterPage(
   const offset = (page - 1) * perPage;
 
   const result = await sql.query<{ payload: unknown }>(
-    `select public.search_characters_page($1, $2, $3, $4, $5, true) as payload`,
-    [q, params.verseSlug ?? null, params.media ?? null, perPage, offset],
+    `select search_characters_page($1, $2, $3, $4, $5, true, $6) as payload`,
+    [
+      q,
+      params.verseSlug ?? null,
+      params.media ?? null,
+      perPage,
+      offset,
+      params.types && params.types.length > 0 ? [...params.types] : ['character'],
+    ],
   );
 
   const payload = parseJsonPayload<{ total?: unknown; rows?: unknown }>(result[0]?.payload, {});

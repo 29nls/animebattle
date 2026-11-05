@@ -1,0 +1,62 @@
+# Refresh Materialized Views — Anime VS Battle
+#
+# Menjalankan `scripts/refresh-mv.sql` setiap jam dengan CONCURRENTLY, sehingga
+# halaman yang membaca MV tidak terkunci saat refresh. Jalur yang sama diuji
+# `scripts/verify-live-postgres.mjs` di job `database` (ci.yml).
+#
+# Rahasia yang dibutuhkan: DATABASE_URL (Supabase connection string). Bila belum
+# disetel, job DILEWATI dengan pesan jelas — bukan sukses palsu. Jangan pernah
+# mencetak nilai secret ke log.
+name: Refresh Materialized Views
+
+on:
+  schedule:
+    - cron: '7 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: refresh-views
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    name: REFRESH MATERIALIZED VIEW CONCURRENTLY
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Periksa konfigurasi (fail-closed)
+        run: |
+          if [ -z "${{ secrets.DATABASE_URL }}" ]; then
+            echo "::notice::DATABASE_URL belum disetel di repo secrets; refresh MV dilewati."
+            echo "SKIP=true" >> "$GITHUB_ENV"
+          else
+            echo "SKIP=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Checkout
+        if: env.SKIP == 'false'
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        if: env.SKIP == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependensi (npm ci)
+        if: env.SKIP == 'false'
+        run: npm ci
+
+      - name: Refresh MV (CONCURRENTLY, di luar transaksi)
+        if: env.SKIP == 'false'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: npm run refresh:mv
+
+      - name: Dilewati (secret belum disetel)
+        if: env.SKIP == 'true'
+        run: echo "Tidak ada yang dilakukan. Setel DATABASE_URL di repo secrets untuk mengaktifkan."

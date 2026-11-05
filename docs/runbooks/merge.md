@@ -348,10 +348,11 @@ jalur pemulihan terakhir adalah restore backup database, lihat
 2. **Belum ada detektor duplikat yang mengisi `merge_candidates`** — tabelnya
    kosong sampai fingerprint §21.2 dijalankan pada data produksi (dan auto-merge
    ≥ 0,90 diuji end-to-end).
-3. **`audit_logs` belum ditulis oleh kode mana pun** (lihat [rollback.md](rollback.md) §8).
-   Langkah 8 di atas adalah tulisan manual yang menjembatani celah itu.
-4. **Tidak ada `users` nyata** sebelum Supabase Auth, jadi `resolved_by` diisi uuid
-   operator, bukan akun terotentikasi.
+3. **Audit otomatis belum mencakup merge.** Import/run/retry/cancel sudah menulis
+   `audit_logs`; merge masih SQL, jadi langkah 8 wajib memakai UUID aktor sesi nyata
+   (lihat [rollback.md](rollback.md) §8).
+4. **`users` kini diisi dari Supabase Auth**; `resolved_by` harus UUID akun yang
+   benar-benar melakukan merge, bukan UUID karangan.
 
 ## 8. Verifikasi setelah tindakan
 

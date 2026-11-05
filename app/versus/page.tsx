@@ -1,10 +1,14 @@
 import type { Metadata } from 'next';
 
-import { loadBattleOptions, type BattleOptionGroup } from '@/features/battle/queries.ts';
+import { loadPickerBootstrap } from '@/features/battle/picker-queries.ts';
+import { listPopularMatchups, type PopularMatchup } from '@/features/battle/matchup-queries.ts';
 import { attemptLoad } from '@/features/data-source.ts';
 import { isAdminAuthenticated } from '@/features/admin/session.ts';
 import { DatabaseUnavailable } from '@/components/database-unavailable.tsx';
+import { FighterPicker } from '@/components/fighter-picker.tsx';
 import { DEMO_LABEL, DEMO_NOTICE } from '@/features/demo/provider.ts';
+import { getSqlClient, isDatabaseConfigured } from '@/lib/db/client.ts';
+import { parseMatchupSlug } from '@/features/battle/share.ts';
 
 export const metadata: Metadata = {
   title: 'Battle Builder',
@@ -16,23 +20,25 @@ export const metadata: Metadata = {
 export const dynamic = 'force-dynamic';
 
 /**
- * Nilai awal `<select>`: permintaan dari URL bila sah, kalau tidak opsi pertama
- * yang tidak sama dengan sisi lain.
- *
- * Tautan masuk yang ada (`/character/[slug]`, `/compare`) mengirim `a=slug/form`,
- * jadi nilainya harus ada di daftar opsi — URL lama atau salah ketik tidak boleh
- * membuat form gagal disubmit.
+ * "Popular Battles" bersifat pelengkap: kegagalan membacanya tidak boleh
+ * menjatuhkan builder. Daftar kosong ditampilkan sebagai tidak ada blok sama
+ * sekali, bukan sebagai pesan galat yang menakutkan pengunjung.
  */
-function initialSelection(
-  requested: string,
-  groups: BattleOptionGroup[],
-  exclude: string,
-): string | undefined {
-  const options = groups.flatMap((group) => group.options);
-  return (
-    options.find((option) => option.value === requested)?.value ??
-    options.find((option) => option.value !== exclude)?.value
-  );
+async function popularMatchups(): Promise<PopularMatchup[]> {
+  if (!isDatabaseConfigured()) return [];
+  try {
+    return await listPopularMatchups(getSqlClient(), 8);
+  } catch (error) {
+    console.error('[versus] matchup populer tidak dapat dibaca:', error);
+    return [];
+  }
+}
+
+function matchupTitle(slug: string): string {
+  const parsed = parseMatchupSlug(slug);
+  if (!parsed) return slug;
+  const pretty = (value: string) => value.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  return `${pretty(parsed.sideA.characterSlug)} vs ${pretty(parsed.sideB.characterSlug)}`;
 }
 
 export default async function VersusPage({
@@ -44,11 +50,9 @@ export default async function VersusPage({
   const requestedA = (params.a ?? params.form_a ?? '').trim();
   const requestedB = (params.b ?? params.form_b ?? '').trim();
 
-  // Pemilih & form dibaca dari database (`character_versions` lewat
-  // `loadBattleOptions`); dataset demo hanya dipakai bila database belum
-  // dikonfigurasi dan ALLOW_DEMO_DATA=1. Galatnya lewat `attemptLoad`: halaman
-  // tetap 200 dengan panel jujur, bukan 500.
-  const outcome = await attemptLoad(() => loadBattleOptions());
+  // Hanya jumlah form dan label dua sisi yang diminta URL — bukan seluruh
+  // katalog. Combobox mengambil sisanya sendiri; lihat `FighterPicker`.
+  const outcome = await attemptLoad(() => loadPickerBootstrap(requestedA, requestedB));
 
   if (outcome.status === 'failed') {
     return (
@@ -61,21 +65,27 @@ export default async function VersusPage({
     );
   }
 
-  const { groups, source } = outcome.data;
+  const { source, totalForms, groups, initialA, initialB } = outcome.data;
   const demoSource = source === 'demo';
-  const hasOptions = groups.some((group) => group.options.length > 0);
-  const sideA = initialSelection(requestedA, groups, '');
-  const sideB = initialSelection(requestedB, groups, sideA ?? '');
+  const demoOptions = demoSource
+    ? groups.flatMap((group) =>
+        group.options.map((option) => ({
+          value: option.value,
+          label: `${group.label} — ${option.label}`,
+        })),
+      )
+    : null;
+
+  const popular = await popularMatchups();
 
   return (
     <div className="animate-fade-in">
-      {/* ─── Header ─── */}
       <div className="mb-8 text-center sm:text-left">
         <h1 className="text-3xl font-black tracking-tight text-ink-0 sm:text-4xl">
           Battle <span className="text-gradient-vs">Builder</span>
         </h1>
         <p className="mt-2 text-sm text-ink-2 max-w-2xl mx-auto sm:mx-0">
-          Konfigurasi kondisi pertarungan dan jalankan engine. Statistik tidak dilekatkan 
+          Konfigurasi kondisi pertarungan dan jalankan engine. Statistik tidak dilekatkan
           pada karakter secara umum, melainkan pada wujud (form/era) spesifik.
         </p>
       </div>
@@ -86,7 +96,7 @@ export default async function VersusPage({
         </div>
       )}
 
-      {!hasOptions ? (
+      {totalForms === 0 ? (
         <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-dashed border-line-strong bg-surface-1/50 p-8 text-center">
           <div className="h-12 w-12 text-4xl mb-4 opacity-50">⚔️</div>
           <h2 className="text-lg font-medium text-ink-0">Belum ada form karakter</h2>
@@ -97,45 +107,20 @@ export default async function VersusPage({
         </div>
       ) : (
         <>
-          {/* ─── Builder Form ─── */}
           <form action="/versus/result" method="GET" className="space-y-8">
-            {/* Character Selection Grid */}
             <div className="relative grid gap-4 sm:grid-cols-[1fr_auto_1fr] lg:gap-8 items-stretch">
-              
-              {/* Decorative connection line for desktop */}
               <div className="hidden sm:block absolute top-1/2 left-0 right-0 h-px bg-gradient-to-r from-line via-line-strong to-line -translate-y-1/2 -z-10" />
 
-              {/* Character A Panel */}
               <div className="glass-strong rounded-2xl border border-line-strong p-5 shadow-card transition-all hover:border-accent-a/50">
                 <div className="flex items-center gap-3 mb-4">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-a/10 text-accent-a font-bold">A</div>
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-a/10 text-accent-a font-bold">
+                    A
+                  </div>
                   <h2 className="text-lg font-bold text-ink-0">Fighter A</h2>
                 </div>
-                
-                <div className="space-y-4">
-                  <div>
-                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3">Character &amp; Form</label>
-                    <select
-                      name="form_a"
-                      className="input-field"
-                      required
-                      defaultValue={sideA}
-                    >
-                      {groups.map((group) => (
-                        <optgroup key={group.label} label={group.label}>
-                          {group.options.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                <FighterPicker name="form_a" side="A" initial={initialA} demoOptions={demoOptions} />
               </div>
 
-              {/* VS Badge */}
               <div className="flex justify-center items-center py-4 sm:py-0">
                 <div className="relative">
                   <div className="absolute inset-0 rounded-full bg-gradient-to-br from-accent-a to-accent-b blur-md animate-pulse-glow" />
@@ -145,38 +130,17 @@ export default async function VersusPage({
                 </div>
               </div>
 
-              {/* Character B Panel */}
               <div className="glass-strong rounded-2xl border border-line-strong p-5 shadow-card transition-all hover:border-accent-b/50">
                 <div className="flex items-center gap-3 mb-4">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-b/10 text-accent-b font-bold">B</div>
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-b/10 text-accent-b font-bold">
+                    B
+                  </div>
                   <h2 className="text-lg font-bold text-ink-0">Fighter B</h2>
                 </div>
-                
-                <div className="space-y-4">
-                  <div>
-                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-ink-3">Character &amp; Form</label>
-                    <select
-                      name="form_b"
-                      className="input-field"
-                      required
-                      defaultValue={sideB}
-                    >
-                      {groups.map((group) => (
-                        <optgroup key={group.label} label={group.label}>
-                          {group.options.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                <FighterPicker name="form_b" side="B" initial={initialB} demoOptions={demoOptions} />
               </div>
             </div>
 
-            {/* ─── Battle Conditions ─── */}
             <div className="rounded-2xl border border-line bg-surface-1 p-6">
               <div className="flex items-center gap-2 mb-6">
                 <svg className="h-5 w-5 text-ink-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -196,7 +160,7 @@ export default async function VersusPage({
                     <option value="random_encounter">Random Encounter</option>
                   </select>
                 </div>
-                
+
                 <div>
                   <label className="mb-1.5 block text-xs font-medium text-ink-2">Win Condition</label>
                   <select name="win_condition" className="input-field text-sm">
@@ -229,19 +193,20 @@ export default async function VersusPage({
                 <div className="sm:col-span-2 lg:col-span-1">
                   <label className="mb-1.5 block text-xs font-medium text-ink-2">Modifiers</label>
                   <label className="flex items-center gap-3 rounded-lg border border-line bg-surface-0/50 px-4 py-2.5 cursor-pointer hover:border-line-strong transition-colors">
-                    <input type="checkbox" name="speed_equalized" className="h-4 w-4 rounded border-line bg-surface-2 text-accent-b focus:ring-accent-b focus:ring-offset-surface-1" />
+                    <input
+                      type="checkbox"
+                      name="speed_equalized"
+                      value="1"
+                      className="h-4 w-4 rounded border-line bg-surface-2 text-accent-b focus:ring-accent-b focus:ring-offset-surface-1"
+                    />
                     <span className="text-sm text-ink-1">Speed Equalized</span>
                   </label>
                 </div>
               </div>
             </div>
 
-            {/* ─── Submit Action ─── */}
             <div className="flex justify-center pt-4">
-              <button
-                type="submit"
-                className="btn-battle text-lg px-8 py-4 flex items-center gap-3 animate-vs-pulse"
-              >
+              <button type="submit" className="btn-battle text-lg px-8 py-4 flex items-center gap-3 animate-vs-pulse">
                 Run Simulation
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -249,6 +214,31 @@ export default async function VersusPage({
               </button>
             </div>
           </form>
+
+          {popular.length > 0 && (
+            <section className="mt-12" aria-labelledby="popular-battles">
+              <h2 id="popular-battles" className="text-lg font-bold text-ink-0">
+                Popular Battles
+              </h2>
+              <p className="mt-1 text-sm text-ink-2">
+                Pertarungan yang paling sering disimulasikan. Angkanya dihitung dari hasil yang
+                tersimpan, bukan dari daftar pilihan editor.
+              </p>
+              <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+                {popular.map((matchup) => (
+                  <li key={matchup.slug}>
+                    <a
+                      href={`/versus/${matchup.slug}`}
+                      className="flex items-center justify-between rounded-xl border border-line bg-surface-1 px-4 py-3 text-sm text-ink-1 transition-colors hover:border-line-strong hover:text-ink-0"
+                    >
+                      <span className="font-medium">{matchupTitle(matchup.slug)}</span>
+                      <span className="text-xs text-ink-3">{matchup.simulations} simulasi</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </>
       )}
     </div>

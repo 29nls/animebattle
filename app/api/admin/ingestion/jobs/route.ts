@@ -1,11 +1,7 @@
 /**
  * `GET /api/admin/ingestion/jobs` — daftar job + atribusi sumber (PRD §24).
  *
- * Kontrak: `?status=pending|processing|completed|partial|failed|skipped`
- * (opsional), `?limit=` (1..200, default 50), `?offset=` (default 0).
- * Respons `no-store` karena isi antrian berubah tiap kali worker selesai.
- *
- * Keamanan (AC-26, PRD §28): guard Bearer fail-closed + 300 permintaan/jam.
+ * Sesi Supabase viewer/editor/admin + rate limit 300/jam per user.
  */
 
 import { apiError } from '@/lib/errors.ts';
@@ -18,8 +14,12 @@ export const dynamic = 'force-dynamic';
 const STATUSES = ['pending', 'processing', 'completed', 'partial', 'failed', 'skipped'] as const;
 
 export async function GET(request: Request): Promise<Response> {
-  const denied = guardAdminRequest(request, { limit: 300, windowMs: 3_600_000 });
-  if (denied) return denied;
+  const auth = await guardAdminRequest(request, {
+    limit: 300,
+    windowMs: 3_600_000,
+    minLevel: 'viewer',
+  });
+  if (!auth.ok) return auth.response;
 
   const url = new URL(request.url);
   const status = url.searchParams.get('status');
