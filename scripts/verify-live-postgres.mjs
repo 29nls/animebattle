@@ -88,7 +88,8 @@ try {
 
   const tables = await sql.unsafe(
     `select count(*)::int as n from information_schema.tables
-      where table_schema = 'animebattle' and table_type = 'BASE TABLE'`,
+      where table_schema = 'animebattle' and table_type = 'BASE TABLE'
+        and table_name <> 'schema_migrations'`,
   );
   check('schema animebattle berisi 39 tabel', tables[0].n === 39, `${tables[0].n} tabel`);
 
