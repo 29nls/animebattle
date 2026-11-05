@@ -174,7 +174,9 @@ create type winner_t             as enum ('a', 'b', 'draw', 'insufficient_data')
 create type difficulty_t         as enum ('low', 'mid', 'high', 'extreme');
 create type battle_length_t      as enum ('short', 'medium', 'long');
 
-create type user_role_t          as enum ('viewer', 'editor', 'curator', 'admin', 'owner');
+-- Urutan mengikuti migrasi: 0001 membuat empat label, 0003 menambahkan
+-- 'editor' di akhir. Urutan label tidak memengaruhi perbandingan nilai.
+create type user_role_t          as enum ('viewer', 'curator', 'admin', 'owner', 'editor');
 create type report_status_t      as enum ('new', 'reviewing', 'accepted', 'rejected');
 
 -- ---------------------------------------------------------------------------
@@ -1043,7 +1045,7 @@ create index idx_rate_limit_windows_start on rate_limit_windows (window_start);
 -- ============================================================================
 
 -- Cek role untuk RLS. SECURITY DEFINER agar tidak terjadi rekursi kebijakan.
-create or replace function is_admin()
+create or replace function animebattle.is_admin()
 returns boolean
 language sql
 security definer
@@ -1051,7 +1053,7 @@ set search_path = animebattle, public
 stable
 as $$
   select exists (
-    select 1 from user_roles
+    select 1 from animebattle.user_roles
     where user_id = auth.uid()
       and role in ('admin', 'owner')
   )
@@ -1059,7 +1061,7 @@ $$;
 
 -- Editor (dan curator legacy) boleh menulis data kurasi, tetapi bukan
 -- sumber/role/audit. Admin/owner tetap tercakup.
-create or replace function is_editor()
+create or replace function animebattle.is_editor()
 returns boolean
 language sql
 security definer
@@ -1067,7 +1069,7 @@ set search_path = animebattle, public
 stable
 as $$
   select exists (
-    select 1 from user_roles
+    select 1 from animebattle.user_roles
     where user_id = auth.uid()
       and role::text in ('editor', 'curator', 'admin', 'owner')
   )
@@ -1478,29 +1480,22 @@ as $$
     select c.id, 2
       from characters c cross join needle n cross join wanted w
      where 'character' = any(w.kinds)
-       and c.name_norm >= n.raw
-       and c.name_norm < n.raw || chr(1114111)
+       and c.name_norm like n.raw || '%'
     union all
     select c.id, 2
       from characters c cross join needle n cross join wanted w
      where 'character' = any(w.kinds)
-       and c.native_norm >= n.raw
-       and c.native_norm < n.raw || chr(1114111)
+       and c.native_norm like n.raw || '%'
     union all
     select a.character_id, 2
       from character_aliases a cross join needle n cross join wanted w
      where 'character' = any(w.kinds)
-       and a.alias_norm >= n.raw
-       and a.alias_norm < n.raw || chr(1114111)
+       and a.alias_norm like n.raw || '%'
     union all
     select c.id, 1
       from characters c cross join needle n cross join wanted w
      where 'character' = any(w.kinds)
        and char_length(n.raw) >= 3
-       -- Baris yang sudah cocok prefiks tidak perlu dikirim ulang: pada kueri
-       -- luas ketiga cabang mencocokkan 10.000 baris yang sama dan GROUP BY
-       -- menyortir 29.994 baris. Filter ini memangkasnya ke 10.000.
-       and c.name_norm not like n.raw || '%'
        and c.name_norm % n.raw
     union all
     select c.id, 1
@@ -1518,7 +1513,6 @@ as $$
     select c.id, 1
       from characters c cross join needle n cross join wanted w
      where 'character' = any(w.kinds)
-       and c.name_norm not like n.raw || '%'
        and c.search_vector @@ n.ts
   ),
   character_ids as (
@@ -1882,6 +1876,8 @@ begin
     raise exception 'rate_limit_hit: p_window_ms dan p_limit harus > 0';
   end if;
 
+  -- Awal jendela tetap, sejajar `FixedWindowRateLimiter`: jendela tidak bergeser
+  -- mengikuti permintaan pertama, sehingga batasnya dapat diprediksi.
   v_start := to_timestamp(
     floor(extract(epoch from p_now) * 1000 / p_window_ms) * p_window_ms / 1000.0
   );
