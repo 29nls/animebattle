@@ -30,7 +30,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node 24
         uses: actions/setup-node@v4
@@ -105,7 +105,7 @@ jobs:
       DATABASE_URL: postgres://animebattle:animebattle_ci@localhost:5432/animebattle_ci
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node 24
         uses: actions/setup-node@v4
@@ -148,10 +148,11 @@ jobs:
           --health-retries 20
     env:
       DATABASE_URL: postgres://animebattle:animebattle_ci@localhost:5432/animebattle_ci
+      SOURCE_DATABASE_URL: postgres://animebattle:animebattle_ci@localhost:5432/animebattle_ci
       RESTORE_DATABASE_URL: postgres://animebattle:animebattle_ci@localhost:5432/animebattle_restore
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node 24
         uses: actions/setup-node@v4
@@ -170,15 +171,21 @@ jobs:
       - name: Buat database tujuan restore
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c 'create database animebattle_restore'
 
-      - name: Dump logis
+      # Klien pg_dump/pg_restore harus semayor dengan server. Runner
+      # `ubuntu-latest` dapat membawa klien 17/18 yang menulis
+      # `SET transaction_timeout`, setting yang tidak dikenal server 16.
+      - name: Dump logis (klien PostgreSQL 16)
         run: |
-          pg_dump "$DATABASE_URL" \
-            --format=custom --no-owner --no-acl \
-            --file=/tmp/animebattle.dump
+          docker run --rm --network host -v /tmp:/tmp postgres:16 \
+            pg_dump "$DATABASE_URL" \
+              --format=custom --no-owner --no-acl \
+              --file=/tmp/animebattle.dump
           ls -lh /tmp/animebattle.dump
 
-      - name: Restore ke database terpisah
-        run: pg_restore --no-owner --no-acl --dbname="$RESTORE_DATABASE_URL" /tmp/animebattle.dump
+      - name: Restore ke database terpisah (klien PostgreSQL 16)
+        run: |
+          docker run --rm --network host -v /tmp:/tmp postgres:16 \
+            pg_restore --no-owner --no-acl --dbname="$RESTORE_DATABASE_URL" /tmp/animebattle.dump
 
       # Membandingkan migrasi, relasi, jumlah baris, fungsi, dan policy.
       - name: Verifikasi restore identik dengan sumber
@@ -193,11 +200,11 @@ jobs:
       pull-requests: read
     steps:
       - name: Checkout (riwayat penuh)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -38,7 +38,7 @@ jobs:
 
       - name: Checkout
         if: env.SKIP == 'false'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node 24
         if: env.SKIP == 'false'

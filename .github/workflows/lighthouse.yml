@@ -46,7 +46,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node 24
         uses: actions/setup-node@v4
@@ -72,7 +72,7 @@ jobs:
 
       # AC-21: hasil diarsipkan per PR.
       - name: Arsipkan laporan Lighthouse
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: lighthouse-reports
