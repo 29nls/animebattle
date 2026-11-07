@@ -1,8 +1,20 @@
 import type { NextConfig } from 'next';
+import { existsSync } from 'node:fs';
 import { initOpenNextCloudflareForDev } from '@opennextjs/cloudflare';
 
-// Inisialisasi Cloudflare context bindings (D1, R2, KV, dll.) untuk mode development lokal
-initOpenNextCloudflareForDev({ configPath: './freebuff.wrangler.jsonc' });
+/**
+ * Inisialisasi binding Cloudflare (D1, R2, KV) untuk `next dev`.
+ *
+ * `freebuff.wrangler.jsonc` dibuat oleh platform deployment dan **gitignored**,
+ * jadi berkas itu tidak ada di CI atau di clone baru. Tanpa penjagaan ini
+ * `next build` gagal `Could not read file` — bukan karena kode aplikasi, tetapi
+ * karena konfigurasi milik mesin lokal. Bila berkasnya tidak ada, lewati saja:
+ * build produksi di Worker memakai konfigurasi yang dibuat platform, dan test
+ * Node menyuntikkan klien SQL sendiri.
+ */
+if (existsSync('./freebuff.wrangler.jsonc')) {
+  initOpenNextCloudflareForDev({ configPath: './freebuff.wrangler.jsonc' });
+}
 
 /**
  * Konfigurasi Next.js.
