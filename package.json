@@ -38,6 +38,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.3.0",
+    "@opennextjs/cloudflare": "1.20.12",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",
@@ -46,7 +47,8 @@
     "postcss": "^8.5.29",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.0",
-    "typescript-eslint": "^8.71.1"
+    "typescript-eslint": "^8.71.1",
+    "wrangler": "4.148.0"
   },
   "dependencies": {
     "@sentry/node": "^11.11.0",

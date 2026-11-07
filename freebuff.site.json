@@ -1,0 +1,14 @@
+{
+  "siteId": "6725ba8f-6361-46b2-a7d6-76523469d212",
+  "name": "animebattle",
+  "environments": {
+    "preview": {
+      "id": "ad5d3ddb-1348-4182-99b6-a7f65425f987",
+      "url": "https://site-ad5d3ddb1348418299b6a7f65425f987.freebuff.page"
+    },
+    "production": {
+      "id": "35014d05-e846-4841-9cab-bc0782ff8b40",
+      "url": "https://site-35014d05e84648419cabbc0782ff8b40.freebuff.page"
+    }
+  }
+}
