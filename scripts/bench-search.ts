@@ -18,7 +18,7 @@
  * Pemakaian: npm run bench:search [-- --runs 20 --out docs/benchmarks/search-10k.md]
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -97,6 +97,7 @@ const USE_EMBEDDED = process.argv.includes('--embedded');
 
 let backend: BenchBackend;
 let embedded: EmbeddedCluster | null = null;
+let embeddedDir = '';
 
 if (BENCH_DATABASE_URL !== '' || USE_EMBEDDED) {
   let url = BENCH_DATABASE_URL;
@@ -108,6 +109,7 @@ if (BENCH_DATABASE_URL !== '' || USE_EMBEDDED) {
     const EmbeddedPostgres = module.default;
     const port = Number.parseInt(arg('port', '55432'), 10);
     const databaseDir = resolve(ROOT, `node_modules/.cache/bench-pg-${process.pid}`);
+    embeddedDir = databaseDir;
     embedded = new EmbeddedPostgres({
       databaseDir,
       user: 'postgres',
@@ -116,7 +118,15 @@ if (BENCH_DATABASE_URL !== '' || USE_EMBEDDED) {
       persistent: false,
       // initdb Windows default-nya WIN1252; data benchmark berisi Kanji/CJK,
       // jadi encoding harus UTF8 sejak cluster dibuat (bukan saat insert).
-      initdbFlags: ['--encoding=UTF8', '--locale=C'],
+      //
+      // Locale juga harus mendukung CJK. Dengan `--locale=C`, `[[:alnum:]]`
+      // hanya mengenal ASCII, sehingga `f_normalize_name('ベンチゴクト')`
+      // menghasilkan string **kosong** dan pencarian unicode selalu 0 baris —
+      // itu artefak harness, bukan perilaku produksi (Supabase memakai
+      // `en_US.UTF-8`). Di Windows, nama locale yang dikenal initdb adalah
+      // `en-US` (bukan `C.UTF-8`/`en_US.UTF-8`); nilainya dapat diubah lewat
+      // `BENCH_PG_LOCALE` untuk mesin Linux/macOS.
+      initdbFlags: ['--encoding=UTF8', `--locale=${process.env.BENCH_PG_LOCALE ?? 'en-US'}`],
       autoRehydrateSymlinks: true,
       onLog: () => {},
       onError: (error: unknown) => console.error('[embedded-postgres]', error),
@@ -140,7 +150,24 @@ if (BENCH_DATABASE_URL !== '' || USE_EMBEDDED) {
       (await pg.unsafe(text, params as unknown[])) as unknown as T[],
     close: async () => {
       await pg.end({ timeout: 5 });
-      if (embedded) await embedded.stop();
+      if (!embedded) return;
+      await embedded.stop();
+      // Windows melepas handle `postgres.exe` beberapa saat setelah prosesnya
+      // berhenti; menghapus direktori data terlalu cepat menghasilkan EBUSY dan
+      // menggagalkan run yang sebenarnya sudah sukses. Percobaan ulang singkat
+      // membuat cleanup idempoten lintas OS.
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        try {
+          rmSync(embeddedDir, { recursive: true, force: true });
+          return;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EBUSY' || attempt === 9) {
+            console.warn(`[bench] gagal menghapus ${embeddedDir}: ${(error as Error).message}`);
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 300));
+        }
+      }
     },
   };
 } else {
