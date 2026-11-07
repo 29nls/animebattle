@@ -36,3 +36,4 @@ node_modules/
 /.wrangler/
 freebuff.open-next.config.ts
 freebuff.wrangler.jsonc
+.secrets/

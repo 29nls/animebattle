@@ -30,6 +30,14 @@ export interface SqlClient {
    * terhadap DDL oleh `scripts/validate-db-access.mjs`.
    */
   query<T = Row>(text: string, params?: readonly unknown[]): Promise<T[]>;
+  /**
+   * Dialek SQL yang dipahami klien ini.
+   *
+   * Hanya diisi klien yang **tahu** dialeknya (D1 = `sqlite`, postgres.js =
+   * `postgres`). Klien yang disuntikkan test boleh mengosongkannya; pemanggil
+   * lalu memakai jalur portabel yang bekerja di keduanya.
+   */
+  dialect?: 'postgres' | 'sqlite';
 }
 
 /** Dilempar bila konfigurasi database belum ada — bukan kegagalan yang menyesatkan. */
@@ -101,6 +109,7 @@ export function isDatabaseUnavailable(error: unknown): boolean {
  * Dalam kasus itu galat koneksi asli tetap diteruskan ke pemanggil.
  */
 export function isDatabaseConfigured(): boolean {
+  if (cloudflareD1() !== null) return true;
   return typeof process.env.DATABASE_URL === 'string' && process.env.DATABASE_URL.trim() !== '';
 }
 
@@ -114,11 +123,47 @@ export function setSqlClient(client: SqlClient | null): void {
   injected = client;
 }
 
-import { readFileSync } from 'node:fs';
-import { rootCertificates } from 'node:tls';
-import postgres from 'postgres';
-
+import { createD1SqlClient, type D1DatabaseLike } from './d1.ts';
 import { SUPABASE_ROOT_2021_CA } from './supabase-ca.ts';
+
+/**
+ * Modul bawaan Node yang dimuat **malas**.
+ *
+ * Berkas ini juga masuk bundel Worker Cloudflare. Impor statis `node:fs`,
+ * `node:tls`, dan `postgres` akan menarik driver TCP ke dalam graf Worker —
+ * padahal di sana jalur yang dipakai adalah D1. `process.getBuiltinModule`
+ * (Node 22.3+) membuat modul itu hanya dimuat saat benar-benar dipanggil, dan
+ * mengembalikan `null` di runtime yang tidak menyediakannya.
+ */
+function nodeBuiltin<T>(id: string): T | null {
+  const get = (process as unknown as { getBuiltinModule?: (name: string) => unknown })
+    .getBuiltinModule;
+  if (typeof get !== 'function') return null;
+  try {
+    return (get(id) as T) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** `require` Node untuk memuat driver Postgres hanya di jalur fallback. */
+function nodeRequire(): ((id: string) => unknown) | null {
+  const module = nodeBuiltin<{ createRequire: (url: string) => (id: string) => unknown }>(
+    'node:module',
+  );
+  if (!module) return null;
+  try {
+    return module.createRequire(import.meta.url);
+  } catch {
+    return null;
+  }
+}
+
+/** Root CA bawaan Node, atau daftar kosong bila runtime tidak menyediakannya. */
+function nodeRootCertificates(): string[] {
+  const tls = nodeBuiltin<{ rootCertificates?: string[] }>('node:tls');
+  return Array.isArray(tls?.rootCertificates) ? tls.rootCertificates : [];
+}
 
 /** Path `sslrootcert` dari URL koneksi, atau `null` bila tidak ada/tidak dipakai. */
 function sslRootCertPath(url: string): string | null {
@@ -271,10 +316,13 @@ export function resolveDatabaseSsl(
       // seluruh proyek ke output server (peringatan "tracing of the whole
       // project"), memperbesar deployment. Berkasnya dibaca dari disk saat
       // runtime bila ada (mesin lokal); di Vercel tidak ada dan dilewati.
-      return {
-        source: 'sslrootcert',
-        options: { ssl: { ca: readFileSync(/*turbopackIgnore: true*/ path, 'utf8') } },
-      };
+      const fs = nodeBuiltin<{ readFileSync: (p: string, enc: 'utf8') => string }>('node:fs');
+      if (fs) {
+        return {
+          source: 'sslrootcert',
+          options: { ssl: { ca: fs.readFileSync(/*turbopackIgnore: true*/ path, 'utf8') } },
+        };
+      }
     } catch {
       // Berkas tidak ada di mesin ini (kasus nyata: path Windows dari `.env`
       // lokal dipakai di Vercel): bukan alasan menggagalkan koneksi — lanjut ke
@@ -288,7 +336,7 @@ export function resolveDatabaseSsl(
     // host publik lain tetap dapat diverifikasi bila hostnya berubah.
     return {
       source: 'bundled_supabase_root',
-      options: { ssl: { ca: [SUPABASE_ROOT_2021_CA, ...rootCertificates] } },
+      options: { ssl: { ca: [SUPABASE_ROOT_2021_CA, ...nodeRootCertificates()] } },
     };
   }
 
@@ -349,9 +397,49 @@ function normalizeTimestamps(value: unknown): unknown {
 }
 
 let defaultClient: SqlClient | null = null;
+let d1Client: SqlClient | null = null;
+
+/**
+ * Binding D1 dari context Cloudflare, atau `null` bila tidak ada.
+ *
+ * `getCloudflareContext` **tidak** diimpor statis: paketnya menarik `wrangler`
+ * saat dipanggil di luar Worker, dan impor statis akan membebani setiap test
+ * Node. Ia juga melempar bila dipanggil tanpa `initOpenNextCloudflareForDev`
+ * (mis. skrip CLI), jadi kegagalan di sini berarti "bukan runtime Cloudflare".
+ */
+function cloudflareD1(): D1DatabaseLike | null {
+  const env = cloudflareEnv();
+  const db = env?.DB as D1DatabaseLike | undefined;
+  if (!db || typeof db.prepare !== 'function') return null;
+  return db;
+}
+
+/** `env` dari context Cloudflare, atau `null`. */
+function cloudflareEnv(): Record<string, unknown> | null {
+  try {
+    const symbol = Symbol.for('__cloudflare-context__');
+    const context = (globalThis as Record<symbol, unknown>)[symbol];
+    if (context && typeof context === 'object') {
+      const env = (context as { env?: unknown }).env;
+      if (env && typeof env === 'object') return env as Record<string, unknown>;
+    }
+  } catch {
+    // Context tidak tersedia (CLI, test, build statis) — bukan kesalahan.
+  }
+  return null;
+}
 
 export function getSqlClient(): SqlClient {
   if (injected) return injected;
+
+  // D1 lebih dulu: di Worker Cloudflare, `env.DB` selalu ada dan `DATABASE_URL`
+  // tidak pernah (tidak ada soket TCP keluar). Fallback Postgres di bawah tetap
+  // dipertahankan untuk `next dev` di mesin lokal dan seluruh test Node.
+  const d1 = cloudflareD1();
+  if (d1) {
+    if (!d1Client) d1Client = createD1SqlClient(d1) as SqlClient;
+    return d1Client;
+  }
 
   if (!process.env.DATABASE_URL) {
     throw new DatabaseNotConfiguredError(
@@ -361,6 +449,22 @@ export function getSqlClient(): SqlClient {
   }
 
   if (!defaultClient) {
+    // `postgres` dimuat di sini, bukan di kepala berkas: bundel Worker tidak
+    // boleh menarik driver TCP hanya karena modul ini ikut terimpor.
+    const require = nodeRequire();
+    if (!require) {
+      throw new DatabaseNotConfiguredError(
+        'DATABASE_URL',
+        'Driver Postgres tidak tersedia di runtime ini; gunakan binding D1.',
+      );
+    }
+    const loaded = require('postgres') as
+      | typeof import('postgres')
+      | { default: typeof import('postgres') };
+    const postgres = (typeof loaded === 'function' ? loaded : loaded.default) as (
+      url: string,
+      options: Record<string, unknown>,
+    ) => { unsafe: (text: string, params: unknown[]) => Promise<unknown[]> };
     const sql = postgres(process.env.DATABASE_URL, {
       max: 10, // batas koneksi agar tidak membanjiri pool
       // Search path dikirim pada startup connection, bukan disetel sekali di
@@ -370,6 +474,7 @@ export function getSqlClient(): SqlClient {
     });
     
     defaultClient = {
+      dialect: 'postgres',
       async query<T = Row>(text: string, params?: readonly unknown[]): Promise<T[]> {
         // postgres.js unsafe method mendukung sintaks $1, $2 beserta array parameternya
         const rows = (await sql.unsafe(text, (params as any[]) || [])) as unknown[];

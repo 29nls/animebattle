@@ -1,4 +1,8 @@
 import type { NextConfig } from 'next';
+import { initOpenNextCloudflareForDev } from '@opennextjs/cloudflare';
+
+// Inisialisasi Cloudflare context bindings (D1, R2, KV, dll.) untuk mode development lokal
+initOpenNextCloudflareForDev({ configPath: './freebuff.wrangler.jsonc' });
 
 /**
  * Konfigurasi Next.js.

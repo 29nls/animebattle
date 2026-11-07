@@ -18,6 +18,7 @@
 import { demoCharacterListItems, demoEnabled } from '../demo/provider.ts';
 import { getSqlClient, isDatabaseConfigured, type SqlClient } from '../../lib/db/client.ts';
 import type { SearchType } from './search-params.ts';
+import { searchCharacterPageSqlite, searchCharactersSqlite } from './search-sqlite.ts';
 
 /**
  * Kolom yang dibutuhkan kartu daftar. Sengaja bukan `*`: menambah kolom ke sini
@@ -134,6 +135,10 @@ export async function searchCharacters(
   const q = query.trim();
   if (q === '') return [];
 
+  if (sql.dialect === 'sqlite') {
+    return searchCharactersSqlite(sql, q, normalizePageSize(limit));
+  }
+
   return sql.query<CharacterSearchHit>(
     `select * from search_characters($1, $2, true)`,
     [q, normalizePageSize(limit)],
@@ -219,6 +224,10 @@ export async function searchCharacterPage(
   const perPage = normalizePageSize(params.perPage);
   const page = Math.max(1, Math.floor(params.page ?? 1));
   const offset = (page - 1) * perPage;
+
+  if (sql.dialect === 'sqlite') {
+    return searchCharacterPageSqlite(sql, params, perPage, offset);
+  }
 
   const result = await sql.query<{ payload: unknown }>(
     `select search_characters_page($1, $2, $3, $4, $5, true, $6) as payload`,

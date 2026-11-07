@@ -11,6 +11,8 @@
  */
 
 import { ENGINE_VERSION } from '@/services/battle/index.ts';
+import { isDatabaseConfigured } from '@/lib/db/client.ts';
+import { isR2Configured } from '@/lib/storage/r2.ts';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +22,10 @@ export function GET(): Response {
       status: 'ok',
       engine_version: ENGINE_VERSION,
       // boolean saja — tidak pernah membocorkan nilai kredensial (PRD §28).
-      database_configured: Boolean(process.env.DATABASE_URL),
+      database_configured: isDatabaseConfigured(),
+      // Binding saja, tanpa nama bucket: cukup untuk membedakan "belum
+      // dipasang" dari "terpasang tetapi tidak terpakai".
+      storage_configured: isR2Configured(),
       battle_preview_enabled:
         process.env.NODE_ENV !== 'production' && process.env.ALLOW_BATTLE_PREVIEW === '1',
     },

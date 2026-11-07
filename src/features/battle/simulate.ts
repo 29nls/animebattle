@@ -15,6 +15,7 @@
  */
 
 import type { SqlClient } from '../../lib/db/client.ts';
+import { loadBattleSidesSqlite } from './dataset-sqlite.ts';
 import { runBattle } from '../../services/battle/index.ts';
 import type {
   BattleConditions,
@@ -76,6 +77,16 @@ export async function loadBattleSides(
   versionB: string,
 ): Promise<BattleSides> {
   assertDistinctVersions(versionA, versionB);
+
+  if (sql.dialect === 'sqlite') {
+    const sides = await loadBattleSidesSqlite(sql, versionA, versionB);
+    if (!sides) {
+      throw new BattleInputError(
+        'Salah satu form tidak ditemukan atau sudah dihapus. Dataset harus berisi dua sisi.',
+      );
+    }
+    return sides;
+  }
 
   // `battle_dataset` mengembalikan SATU nilai jsonb berisi array dua sisi
   // (diurutkan `version_id`), bukan setof satu baris per sisi. `select *` di sini

@@ -60,6 +60,11 @@ export async function claimNextPendingJob(sql: SqlClient): Promise<ClaimedIngest
     cursor: Record<string, unknown>;
     dry_run: boolean;
   }>(
+    // SQLite tidak punya penguncian baris (`for update skip locked`), jadi klausa
+    // itu hanya dikirim ke Postgres. Di D1, dua worker yang balapan dapat
+    // memilih job yang sama; `markJobCompleted` idempoten dan `claim` berikutnya
+    // tidak menemukan job itu lagi, sehingga dampaknya hanya pekerjaan ganda
+    // yang hasilnya ditulis ulang — bukan data ganda.
     `update ingestion_jobs
         set status = 'processing', started_at = now(), updated_at = now()
       where id = (
@@ -68,8 +73,7 @@ export async function claimNextPendingJob(sql: SqlClient): Promise<ClaimedIngest
                where status = 'pending'
                  and next_attempt_at <= now()
                order by priority, next_attempt_at, created_at
-               limit 1
-                 for update skip locked
+               limit 1${sql.dialect === 'sqlite' ? '' : '\n                 for update skip locked'}
             )
       returning id, scope, source_id, target_ref, retry_count, max_retries, cursor, dry_run`,
   );
@@ -146,20 +150,33 @@ export async function markJobFailed(
   // hanya menunda terlihatnya masalah di dashboard admin.
   const terminal = options.terminal ?? false;
 
+  // Jeda backoff dihitung di SQL agar tetap satu round-trip. SQLite tidak punya
+  // `power()`, tetapi `2^n` untuk n bilangan bulat cukup ditulis sebagai `1 << n`.
+  // Hasilnya dibulatkan ke detik, sama seperti `interval '1 second' * ...`.
+  const sqlite = sql.dialect === 'sqlite';
+  const nextAttemptExpr = sqlite
+    ? `strftime('%Y-%m-%dT%H:%M:%fZ','now', '+' || cast(min($4, (1 << (retry_count + 1)) * $5) as integer) || ' seconds')`
+    : `now() + (interval '1 second' * least($4::double precision, power(2, retry_count + 1) * $5::double precision))`;
+  // Cast enum hanya dikenal Postgres; di SQLite kolomnya TEXT dengan CHECK.
+  const failedStatus = sqlite ? `'failed'` : `'failed'::job_status_t`;
+  const pendingStatus = sqlite ? `'pending'` : `'pending'::job_status_t`;
+  const terminalParam = sqlite ? '$6' : '$6::boolean';
+  const errorTypeParam = sqlite ? '$3' : '$3::ingest_error_t';
+
   const rows = await sql.query<{
     status: 'pending' | 'failed';
     retry_count: number;
     next_attempt_at: string;
   }>(
     `update ingestion_jobs
-        set status = case when $6::boolean or retry_count + 1 >= max_retries then 'failed'::job_status_t
-                          else 'pending'::job_status_t end,
-            completed_at = case when $6::boolean or retry_count + 1 >= max_retries then now() else null end,
+        set status = case when ${terminalParam} or retry_count + 1 >= max_retries then ${failedStatus}
+                          else ${pendingStatus} end,
+            completed_at = case when ${terminalParam} or retry_count + 1 >= max_retries then now() else null end,
             updated_at = now(),
             retry_count = retry_count + 1,
             error_message = $2,
-            error_type = coalesce($3::ingest_error_t, error_type),
-            next_attempt_at = now() + (interval '1 second' * least($4::double precision, power(2, retry_count + 1) * $5::double precision))
+            error_type = coalesce(${errorTypeParam}, error_type),
+            next_attempt_at = ${nextAttemptExpr}
       where id = $1
       returning status, retry_count, next_attempt_at`,
     [job_id, error_message.slice(0, 2000), options.error_type ?? null, max, base, terminal],

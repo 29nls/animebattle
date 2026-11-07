@@ -34,6 +34,9 @@ import type {
   RuleSet,
 } from '../../services/battle/types.ts';
 
+/** Umur cache hasil battle — sama dengan default `cached_until` di skema Postgres. */
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 /** Hasil cache beserta id barisnya. */
 export interface CachedBattle {
   result: BattleResult;
@@ -56,15 +59,24 @@ export async function readCachedBattle(
   sql: SqlClient,
   inputHash: string,
 ): Promise<CachedBattle | null> {
-  const rows = await sql.query<{
-    id: string;
-    battle_id: string;
-    result_payload: BattleResult | null;
-  }>(
-    `select id, battle_id, result_payload
-       from battle_cache_get($1)`,
-    [inputHash],
-  );
+  // SQLite tidak punya RPC, jadi definisi "masih berlaku" ditulis langsung.
+  // Perbandingan teks sah karena `cached_until` selalu ISO 8601 UTC — bentuk
+  // yang urutannya sama dengan urutan waktu.
+  const rows =
+    sql.dialect === 'sqlite'
+      ? await sql.query<{ id: string; battle_id: string; result_payload: BattleResult | null }>(
+          `select id, battle_id, result_payload
+             from battle_results
+            where input_hash = $1
+              and cached_until > strftime('%Y-%m-%dT%H:%M:%fZ','now')
+            limit 1`,
+          [inputHash],
+        )
+      : await sql.query<{ id: string; battle_id: string; result_payload: BattleResult | null }>(
+          `select id, battle_id, result_payload
+             from battle_cache_get($1)`,
+          [inputHash],
+        );
 
   const row = rows[0];
   if (!row || row.result_payload === null) return null;
@@ -178,10 +190,10 @@ export async function saveBattle(
         difficulty, battle_length, score_breakdown, decisive_edges,
         primary_reason, secondary_factors, critical_counter, potential_scenario,
         limitations, assumptions, reasoning_refs, input_hash,
-        engine_version, rule_set_version, rule_set_id, result_payload)
+        engine_version, rule_set_version, rule_set_id, result_payload, cached_until)
      values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb,
              $10, $11::jsonb, $12, $13, $14::jsonb, $15::jsonb, $16::jsonb, $17,
-             $18, $19, $20, $21::jsonb)
+             $18, $19, $20, $21::jsonb, $22)
      on conflict (input_hash) do nothing
      returning id`,
     [
@@ -211,6 +223,9 @@ export async function saveBattle(
       result.rule_set_version,
       ruleSetRowId,
       JSON.stringify(result),
+      // Ditulis eksplisit: default `now() + interval '7 days'` milik Postgres
+      // tidak ada di D1, dan nilai ini juga yang dibandingkan `readCachedBattle`.
+      new Date(Date.now() + CACHE_TTL_MS).toISOString(),
     ],
   );
 

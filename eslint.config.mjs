@@ -28,6 +28,11 @@ export default [
   {
     ignores: [
       '.next/**',
+      // Artefak build Cloudflare/Freebuff Sites: dihasilkan mesin, bukan kode
+      // yang ditulis tangan. Tanpa ignore ini `npm run lint` gagal hanya karena
+      // `npm run build` pernah dijalankan.
+      '.open-next/**',
+      'freebuff-sites-build/**',
       'node_modules/**',
       'docs/**',
       'next-env.d.ts',

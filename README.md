@@ -69,7 +69,7 @@ SEO); enam variabel operasional tambahan hanya dipakai skrip/workflow, bukan bro
 | Variabel | Fungsi | Perilaku bila kosong |
 |---|---|---|
 | `DATABASE_CA_CERT` | Isi PEM CA tambahan untuk verifikasi TLS Postgres — **opsional**. Root CA Supabase (`prod-ca-2021.crt`, "Supabase Root 2021 CA") sudah disalin ke [`src/lib/db/supabase-ca.ts`](src/lib/db/supabase-ca.ts) dan dipakai otomatis untuk host `*.supabase.co/.com/.in`; verifikasi selalu penuh, `rejectUnauthorized` tidak pernah dimatikan | Untuk host Supabase tidak ada yang perlu diisi. Urutan jalur CA: `DATABASE_CA_CERT` → berkas `sslrootcert` pada URL bila benar-benar ada → CA bawaan (khusus host Supabase). Tanpa satu pun, verifikasi mengikuti `sslmode`: `verify-full` gagal `self-signed certificate in certificate chain` (pengunjung anonim melihat pesan generik; detail + saran perbaikan masuk log server). Nilai cacat diabaikan dengan peringatan, bukan dikirim ke TLS |
-| `DATABASE_URL` | Satu-satunya koneksi Postgres | `/api/health/ready` → 503 `not_configured`; route berbasis DB → 503 `UNAVAILABLE` dengan pesan generik. Kegagalan koneksi menjawab 503 `connection_failed` **beserta `reason`** — kategori sanit (mis. `tls_untrusted`, `dns`, `timeout`, `auth`, `connection_limit`) yang memungkinkan triase tanpa mereproduksi koneksi dari mesin operator; pesan driver yang sudah dibersihkan dari kredensial hanya masuk log server. `npm run diagnose:db` menjalankan triase itu dari mesin yang menjalankan perintah |
+| `DATABASE_URL` | Koneksi Postgres untuk `next dev` lokal, test Node, dan skrip migrasi. **Di Worker Cloudflare tidak dipakai**: binding D1 `env.DB` selalu menang bila ada, karena runtime itu tidak punya soket TCP keluar | `/api/health/ready` → 503 `not_configured`; route berbasis DB → 503 `UNAVAILABLE` dengan pesan generik. Kegagalan koneksi menjawab 503 `connection_failed` **beserta `reason`** — kategori sanit (mis. `tls_untrusted`, `dns`, `timeout`, `auth`, `connection_limit`) yang memungkinkan triase tanpa mereproduksi koneksi dari mesin operator; pesan driver yang sudah dibersihkan dari kredensial hanya masuk log server. `npm run diagnose:db` menjalankan triase itu dari mesin yang menjalankan perintah |
 | `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase Auth: login email/password, cookie sesi server-side, MFA TOTP. Anon key memang publik; **service-role key tidak dipakai aplikasi** | Rute `/api/admin/*` **fail-closed** 503 dan panel `/admin` terkunci |
 | `IP_HASH_SALT` | Salt opsional untuk hash IP di `audit_logs` | Hash IP tetap dibuat tanpa salt |
 | `CRON_SECRET` | Bearer token `GET /api/cron/sync` | Endpoint cron **fail-closed**: 503 |
@@ -84,6 +84,45 @@ SEO); enam variabel operasional tambahan hanya dipakai skrip/workflow, bukan bro
 `CRON_SECRET` cukup string acak panjang (`openssl rand -hex 32`); rotasi = ganti env
 lalu deploy ulang. Kredensial Supabase (URL + anon key) berasal dari dashboard project,
 bukan dibuat sendiri; anon key aman di klien selama RLS aktif.
+
+### Cloudflare D1 + R2 (deployment Freebuff Sites)
+
+Deployment produksi tidak memakai Postgres eksternal. Binding platform yang dipakai:
+
+| Binding | Isi | Dipakai oleh |
+|---|---|---|
+| `DB` (D1) | Skema SQLite dari [`docs/schema.d1.sql`](docs/schema.d1.sql) + seed [`docs/seed.d1.sql`](docs/seed.d1.sql) | `src/lib/db/d1.ts` lewat `getSqlClient()`; `isDatabaseConfigured()` |
+| `FILES` (R2) | Objek biner milik aplikasi | `src/lib/storage/r2.ts` (`putFile`/`getFile`/`deleteFile`); `isR2Configured()` |
+| `NEXT_INC_CACHE_R2_BUCKET` (R2) | Cache inkremental OpenNext | Adaptor OpenNext, bukan kode aplikasi |
+
+Keduanya diterjemahkan menjadi **boolean** di `GET /api/health` (`database_configured`,
+`storage_configured`) — nama bucket, id database, dan kredensial tidak pernah dikirim ke
+klien. Skema D1 adalah terjemahan 1:1 dari `docs/schema.sql`: `uuid` → `text` + ekspresi
+SQLite, enum → `text` + `CHECK ... IN (...)`, `jsonb` → `text`, `boolean` → `integer` 0/1,
+`timestamptz` → `text` ISO 8601 UTC, dan 29 trigger pengganti aturan yang di Postgres
+ditegakkan fungsi/RLS. Materialized view menjadi view biasa; pencarian FTS/trigram menjadi
+kolom `*_norm` + `LIKE`.
+
+`SqlClient.dialect` (`'postgres' | 'sqlite'`) membuat query yang semantiknya berbeda memilih
+jalurnya sendiri: RPC (`battle_cache_get`, `search_characters`, `rate_limit_hit`,
+`recompute_completeness`) diganti SQL langsung, cast `::jsonb`/`::enum` dibuang penerjemah,
+`any($n)` menjadi `json_each`, dan `col -> 'key'` menjadi `json_extract`. Jalur Postgres tetap
+utuh sehingga `next dev`, PGlite, dan skrip operasional berjalan seperti sebelumnya.
+
+Menerapkan skema ke D1 lokal:
+
+```bash
+rm -rf .wrangler/state/v3/d1   # hanya bila ingin mengulang dari nol
+npx wrangler d1 execute freebuff-next-db-local --config freebuff.wrangler.jsonc \
+  --local --file=docs/schema.d1.sql
+npx wrangler d1 execute freebuff-next-db-local --config freebuff.wrangler.jsonc \
+  --local --file=docs/seed.d1.sql
+```
+
+D1 remote tidak dapat dijangkau `wrangler` tanpa `CLOUDFLARE_API_TOKEN`; pada deployment
+Freebuff, jalur yang dipakai adalah endpoint sementara ber-`CRON_SECRET` yang menjalankan
+berkas SQL yang sama lewat binding Worker, lalu dihapus setelah selesai. Dataset produksi
+diimpor lewat `applyDataset` yang sudah ada (`POST /api/admin/ingestion/import` → worker cron).
 
 ## Verifikasi
 
@@ -101,10 +140,10 @@ npm run test:engine            # 229 unit test engine per modul (tanpa database)
 npm run test:security          # sesi Supabase, peran/MFA, rate limit login & rute, cron timing-safe, klasifikasi kegagalan DB
 npm run test:web               # dataset demo + pemilih sumber data + permalink/sitemap + penjaga galat halaman & base URL + query halaman di atas skema nyata (PGlite)
 npm run test:ingestion         # pipeline + route admin + cron di atas skema nyata (PGlite)
-npm run test:db                # migrasi dari nol vs docs/schema.sql + parser refresh MV
+npm run test:db                # migrasi dari nol vs docs/schema.sql, parser refresh MV, + 25 uji skema D1
 npm run test:lint-rules        # uji unit aturan lint (RuleTester)
 npm run test:lighthouse-config # guard anggaran Lighthouse CI (AC-21–23 tetap `error`)
-npm test                        # ketujuhnya sekaligus (229 + 102 + 147 + 31 + 7 + 3 + 4 = 523)
+npm test                        # ketujuhnya sekaligus (229 + 104 + 147 + 31 + 32 + 3 + 4 = 550)
 npm run validate:schema        # skema + seed, keluar 1 bila ada uji gagal
 npm run validate:battle-cases  # engine + case library
 npm run check:schema-drift     # docs/schema.sql vs database hasil migrasi (job CI database)
@@ -113,7 +152,7 @@ npm run check:battle-guards    # uji mutasi: guard runner benar-benar menolak li
 npm run build                  # Next.js production build
 ```
 
-Keluaran yang diharapkan: `Total: 59 · lulus 59 · gagal 0` (skema) dan `Total: 425 · gagal 0` (case library), serta `ℹ tests 229 · ℹ pass 229` (unit test engine), `ℹ tests 102 · ℹ pass 102` (keamanan: konfigurasi TLS database + CA Supabase bawaan, klasifikasi & sanitasi kegagalan koneksi, kontrak `reason` pada probe kesiapan, amplop & validasi parameter `/api/search`, header keamanan/CSP, audit nama env, serta intake legal takedown), `ℹ tests 147 · ℹ pass 147` (dataset demo, pemilihan sumber data, pemilih & halaman hasil `/versus`, penjaga galat pemuatan halaman + visibilitas panel + base URL situs, query baca halaman, **metrik homepage** serta **pencarian berhalaman** di atas skema nyata PGlite, dan — sejak 2026-11-05 — **slug/cache permalink**, **sitemap**, **rate limit terdistribusi**, serta **picker combobox**, **filter/pencarian `/characters`**, **atribusi tingkat dataset**, dan **penjaga keadaan/bahasa UI**), `ℹ tests 31 · ℹ pass 31` (pipeline ingestion + route admin + cron di atas skema nyata), `ℹ tests 7 · ℹ pass 7` (migrasi berversi vs `docs/schema.sql` + parser `refresh-mv.sql`), `ℹ tests 3 · ℹ pass 3` (aturan lint), `ℹ tests 4 · ℹ pass 4` (guard konfigurasi Lighthouse) — total **523** uji pada `npm test` (2026-11-05: 5 observability, 2 header keamanan, 4 audit env, dan 5 intake legal, di samping 38 test web yang mengunci parser/filter `/characters`, atribusi sumber, serta keadaan loading/galat/offline dan penjaga bahasa; 2026-11-04: 7 uji mengunci migrasi dari nol dan kontrak refresh MV).
+Keluaran yang diharapkan: `Total: 59 · lulus 59 · gagal 0` (skema) dan `Total: 425 · gagal 0` (case library), serta `ℹ tests 229 · ℹ pass 229` (unit test engine), `ℹ tests 104 · ℹ pass 104` (keamanan: konfigurasi TLS database + CA Supabase bawaan, klasifikasi & sanitasi kegagalan koneksi, kontrak `reason` pada probe kesiapan, amplop & validasi parameter `/api/search`, header keamanan/CSP, audit nama env, serta intake legal takedown), `ℹ tests 147 · ℹ pass 147` (dataset demo, pemilihan sumber data, pemilih & halaman hasil `/versus`, penjaga galat pemuatan halaman + visibilitas panel + base URL situs, query baca halaman, **metrik homepage** serta **pencarian berhalaman** di atas skema nyata PGlite, dan — sejak 2026-11-05 — **slug/cache permalink**, **sitemap**, **rate limit terdistribusi**, serta **picker combobox**, **filter/pencarian `/characters`**, **atribusi tingkat dataset**, dan **penjaga keadaan/bahasa UI**), `ℹ tests 31 · ℹ pass 31` (pipeline ingestion + route admin + cron di atas skema nyata), `ℹ tests 32 · ℹ pass 32` (migrasi berversi vs `docs/schema.sql` + parser `refresh-mv.sql`, ditambah 25 uji yang mengeksekusi `docs/schema.d1.sql` + `docs/seed.d1.sql` di SQLite: 29 trigger, 3 view, 5 indeks unik parsial, 23 `CHECK` enum, dan seed dua kali tidak menggandakan baris), `ℹ tests 3 · ℹ pass 3` (aturan lint), `ℹ tests 4 · ℹ pass 4` (guard konfigurasi Lighthouse) — total **550** uji pada `npm test` (2026-11-05: 5 observability, 2 header keamanan, 4 audit env, dan 5 intake legal, di samping 38 test web yang mengunci parser/filter `/characters`, atribusi sumber, serta keadaan loading/galat/offline dan penjaga bahasa; 2026-11-04: 7 uji mengunci migrasi dari nol dan kontrak refresh MV).
 
 Pipeline ingestion diuji dengan cara yang sama seperti skema: **dieksekusi di atas DDL sungguhan**. `tests/ingestion/` memuat `docs/schema.sql` + `docs/seed.sql` ke PGlite, menyuntikkan klien itu lewat `setSqlClient()`, lalu menjalankan jalur produksi apa adanya — `POST /api/admin/ingestion/import` (hanya staging + antrian) → `GET /api/cron/sync` (worker) → `runIngestionJob` (fetch/parse/normalize/validate/dedupe/upsert) → `GET /api/admin/ingestion/jobs` + `.../errors` (panel). Yang dibuktikan di sana: menjalankan dataset yang sama **3×** menghasilkan `records_created = 0` pada eksekusi kedua dan ketiga (AC-08), kegagalan per record muncul di `ingestion_errors` dengan tipe dan pesan penyebabnya (AC-10), atribusi (`source_id`/`source_url`/`source_name`) terisi di setiap baris kanonik, dan kebijakan sumber benar-benar menggigit: allow-list, `robots.txt` (termasuk gagal tertutup), penolakan alamat privat (SSRF), `Retry-After`, serta token bucket per host. Fetch dan DNS disuntik, jadi hasilnya deterministik dan tidak menyentuh jaringan.
 
@@ -129,7 +168,7 @@ Sejak 2026-10-10 suite web juga memuat [tests/web/database-queries.test.ts](test
 | Sensitivitas kondisi (AC-33) | 8 pasangan diperiksa, 1 dikecualikan (dua-duanya `insufficient_data`) |
 | Determinisme antar proses | Dua eksekusi terpisah menghasilkan keluaran **identik byte-for-byte** |
 | Mutasi guard runner (AC-36) | 6/6 mutasi tertangkap: id duplikat, tanpa `expect`, `side_a === side_b`, rujukan roster tak dikenal, ekspektasi dibalik, kategori kasus dihapus |
-| Batas arsitektur (38 pemeriksaan) | 22 fixture cocok dengan harapannya (kurang **maupun** lebih sama-sama gagal), 127 berkas produksi nol pelanggaran, 4 invarian: cakupan zona, jalur impor ingestion, kelengkapan klasifikasi 42 tabel/MV, kecocokan daftar enum route↔engine |
+| Batas arsitektur (38 pemeriksaan) | 22 fixture cocok dengan harapannya (kurang **maupun** lebih sama-sama gagal), 132 berkas produksi nol pelanggaran, 4 invarian: cakupan zona, jalur impor ingestion, kelengkapan klasifikasi 42 tabel/MV, kecocokan daftar enum route↔engine |
 | Uji unit engine (per modul) | 229/229 test lulus di 8 berkas; 3 bug produksi ditemukan dan diperbaiki (ambang `difficulty_thresholds.low` terlewat karena representasi biner `0,95 - 0,5`; `experience` tidak terdokumentasi dihukum −1 alih-alih netral 0 sesuai PRD §17.1; kunci `experience` yang absen dari `battle_dataset` menghasilkan rentetan `NaN` → winner `b` dengan `win_probability` null) |
 | Uji unit aturan lint | 3/3 suite RuleTester, termasuk empat kasus regresi bug yang ditemukan saat pemeriksaan (dua di antaranya: bentuk relatif yang lolos penuh, dan specifier bare `postgres` yang salah tuduh saat zona `relativeImportsOnly`) |
 | Jalur HTTP | `next dev` + `curl`: `/api/health` 200, simulasi 200 (`winner=a`, p=0.95 lewat gate dominasi, 14 baris `score_breakdown`), payload tak sah 400, jalur pratinjau 403 di `next start`, admin & cron 503 dengan pesan yang menyebut penyebabnya. Rute admin kini **fail-closed**: 503 tanpa konfigurasi Supabase Auth, 401 tanpa sesi/kedaluwarsa, 403 peran kurang atau admin AAL1, 429 setelah batas per user — dibuktikan integration test `tests/security/` (rute cron tetap 503 tanpa `CRON_SECRET`, 401 dengan secret salah) |
@@ -181,7 +220,7 @@ Atribusi di panel *Data Traceability* kini menautkan **halaman sumber per karakt
 | Fase | Status |
 |---|---|
 | Dokumentasi produk (PRD + lampiran) | Selesai — v1.0 draft untuk persetujuan |
-| Skema database | Selesai & terverifikasi eksekusi (59 uji; schema `animebattle`, migrasi berversi, grant/RLS) |
+| Skema database | Selesai & terverifikasi eksekusi (59 uji; schema `animebattle`, migrasi berversi, grant/RLS) — ditambah terjemahan **SQLite/D1** yang dieksekusi di `node:sqlite` (25 uji) dan diterapkan pada D1 produksi |
 | Battle engine + case library | Selesai & terverifikasi (39 kasus, 425 pemeriksaan) |
 | Scaffolding Next.js + lint batas | Selesai & terverifikasi (38 pemeriksaan batas, build hijau) |
 | Supabase Auth panel admin | Selesai & terverifikasi lokal: sesi server-side, peran viewer/editor/admin/owner, MFA `aal2` wajib untuk admin/owner, 503 fail-closed, audit import/run/retry/cancel, panel `/admin/audit`. Login/MFA ke project Supabase nyata belum diuji karena tidak ada project/kredensial |
@@ -194,6 +233,7 @@ Atribusi di panel *Data Traceability* kini menautkan **halaman sumber per karakt
 | Permalink, cache hasil & rate limit | Selesai & terverifikasi lokal (2026-11-05): permalink kanonik `/versus/[...matchup]`, redirect 308 untuk urutan terbalik, cache `battle_results.result_payload` per `input_hash` berversi, Popular Battles dari `mv_battle_popularity`, OG/JSON-LD/sitemap per matchup, picker combobox, dan limiter terdistribusi berbasis tabel Postgres untuk tiga route publik. Diuji lewat `node --test` (PGlite/fixture) dan `next start` port 3312 dengan `ALLOW_DEMO_DATA=1`: permalink 200 + JSON-LD + canonical + `og:image`, versi terbalik 308, sisi sama & slug ngawur 404, OG `image/png` 200, sitemap 7 `<url>`; kuota simulasi ke-31 → 429. **Belum**: dijalankan pada Postgres produksi dan `check:schema-drift`. OG image sengaja tidak membaca database, jadi tidak memuat angka hasil simulasi |
 | Pencarian hybrid | **Sebagian selesai (2026-10-11)**: peringkat FTS + trigram + alias + boost popularitas sudah ada sejak Sprint 1 dan kini dipakai jalur berhalaman dengan filter `verse`/`media`, amplop `{data,page,per_page,total,has_more}`, autocomplete `/api/search/suggest`, dan penolakan 400 untuk parameter di luar kontrak — terverifikasi pada data produksi (termasuk pencarian nama asli Jepang `ジェノス` dan prefiks dua huruf). Benchmark 10k sudah ada ([scripts/bench-search.ts](scripts/bench-search.ts), `npm run bench:search`) dan hasilnya **belum** memenuhi target p95 < 200 ms — lihat [docs/benchmarks/README.md](docs/benchmarks/README.md). Belum: pemuatan alias dari dataset (kolom ada, jalur impor belum menulisnya), pencarian lintas tipe (`types`), cache edge `s-maxage`, dan optimasi rencana query pencarian |
 | Antarmuka publik (bahasa & keadaan) | Selesai & terverifikasi lokal (2026-11-05): seluruh halaman publik berbahasa Indonesia (D23), `/compare` memakai statistik database/demo yang bersumber — bukan mock —, filter/pencarian `/characters` berhalaman, atribusi tingkat dataset di setiap halaman data, serta keadaan loading (`app/loading.tsx`), galat (`app/error.tsx`), kosong, dan offline (banner klien). Diuji 142 test web (parser filter, filter+pencarian PGlite, atribusi, penjaga keadaan/bahasa) + build. **Lighthouse belum dijalankan ulang** setelah perubahan UI; seluruh assertion tetap `error`. |
+| Cutover D1 + R2 (Freebuff Sites) | **Selesai & terverifikasi di produksi (2026-11-07)**: Postgres eksternal tidak lagi dipakai deployment. `docs/schema.d1.sql` (116 statement, 29 trigger, 3 view, 5 indeks unik parsial) + `docs/seed.d1.sql` (21 statement, idempoten) diterapkan ke binding `DB`; dataset One-Punch Man diimpor lewat `applyDataset` yang sama (60 ditemukan / 73 dibuat / 0 gagal). Diverifikasi pada URL produksi: `/api/search?q=saitama` 200, `/character/saitama` merender Saitama 4-A, `/versus` menampilkan Popular Battles, `/versus/result` memberi verdict Genos 10,0%/90,0%, `/api/health` → `database_configured:true` + `storage_configured:true`, `/api/health/ready` → `{"status":"ready"}`. RPC Postgres diganti SQL langsung per dialek (`SqlClient.dialect`), jadi `next dev`/PGlite/CI tetap memakai jalur Postgres yang utuh |
 | Adapter crawling per sumber, OAuth | Belum dimulai (Sprint 2–5 pada [roadmap pengembangan](docs/PRD.md#40-implementation-roadmap)) — auth email/password + TOTP sudah selesai; benchmark 10.000 baris sudah dikerjakan terpisah lewat `npm run bench:search` |
 
 ## Supabase Auth panel admin (2026-11-04)
