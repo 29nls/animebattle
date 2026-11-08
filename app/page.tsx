@@ -18,7 +18,7 @@ import { loadAttribution } from '@/features/attribution/queries.ts';
  * `tests/web/home-metrics.test.ts` menjaga teks ini tetap bebas klaim jumlah.
  */
 export const metadata: Metadata = {
-  title: 'Anime VS Battle — Siapa yang Menang?',
+  title: 'Anime VS Battle: Siapa yang Menang?',
   description:
     'Pilih dua karakter, pilih form-nya, dan lihat analisis statistik, hax, serta resistances dari simulasi yang dapat dipertanggungjawabkan.',
   alternates: { canonical: '/' },
@@ -34,11 +34,11 @@ export const dynamic = 'force-dynamic';
 
 const NUMBER = new Intl.NumberFormat('id-ID');
 
-/** Tanggal ringkas untuk daftar impor/matchup; `—` bila tidak ada. */
+/** Tanggal ringkas untuk daftar impor/matchup; `-` bila tidak ada. */
 function formatDay(value: string | null): string {
-  if (!value) return '—';
+  if (!value) return '-';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '—' : date.toISOString().slice(0, 10);
+  return Number.isNaN(date.getTime()) ? '-' : date.toISOString().slice(0, 10);
 }
 
 const IMPORT_STATUS_LABEL: Record<RecentImport['status'], string> = {
@@ -80,11 +80,8 @@ export default async function HomePage() {
         <div className="absolute top-1/3 right-1/4 -z-10 h-64 w-64 translate-x-1/2 -translate-y-1/2 rounded-full bg-accent-b/20 blur-[80px]" />
 
         <div className="relative mx-auto flex max-w-4xl flex-col items-center text-center">
-          <div className="animate-fade-in-up">
-            <span className="mb-4 inline-flex items-center rounded-full border border-line-strong bg-surface-1/50 px-3 py-1 text-xs font-medium text-ink-2 backdrop-blur-md">
-              <span className="mr-2 flex h-2 w-2 rounded-full bg-accent-a animate-pulse-glow" />
-              Engine pertarungan v1.0 aktif
-            </span>
+          <div className="animate-fade-in-up mb-4">
+            <p className="text-xs font-medium text-ink-2">Engine pertarungan v1.0</p>
           </div>
 
           <h1 className="animate-fade-in-up delay-100 mt-6 text-5xl font-black tracking-tight text-ink-0 sm:text-7xl">
@@ -98,25 +95,29 @@ export default async function HomePage() {
 
           {/* VS Builder Form */}
           <div className="animate-fade-in-up delay-300 mt-12 w-full max-w-3xl relative">
-            <div className="absolute inset-0 -z-10 rounded-2xl bg-gradient-to-r from-accent-a/20 to-accent-b/20 blur-xl animate-pulse-glow opacity-50" />
+            <div className="absolute inset-0 -z-10 rounded-2xl bg-gradient-to-r from-accent-a/20 to-accent-b/20 blur-xl opacity-50" />
             
             <form action="/versus" method="get" className="glass-strong rounded-2xl border border-line-strong p-2 sm:p-4 shadow-card">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
                 
                 {/* Character A */}
-                <div className="relative flex-1 group">
-                  <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                <div className="flex-1">
+                  <label htmlFor="home-fighter-a" className="mb-1.5 block text-xs font-medium text-ink-2">Karakter A</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
                     <svg className="h-5 w-5 text-accent-a" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                     </svg>
                   </div>
                   <input
+                    id="home-fighter-a"
                     name="a"
                     type="search"
                     required
                     placeholder="Karakter Pertama..."
                     className="w-full rounded-xl border border-line bg-surface-0/50 py-3 pl-10 pr-4 text-ink-0 placeholder:text-ink-3 outline-none transition-all focus:border-accent-a focus:bg-surface-0 focus:ring-1 focus:ring-accent-a"
                   />
+                  </div>
                 </div>
 
                 {/* VS Badge */}
@@ -127,19 +128,23 @@ export default async function HomePage() {
                 </div>
 
                 {/* Character B */}
-                <div className="relative flex-1 group">
-                  <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                <div className="flex-1">
+                  <label htmlFor="home-fighter-b" className="mb-1.5 block text-xs font-medium text-ink-2">Karakter B</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
                     <svg className="h-5 w-5 text-accent-b" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                     </svg>
                   </div>
                   <input
+                    id="home-fighter-b"
                     name="b"
                     type="search"
                     required
                     placeholder="Lawan..."
                     className="w-full rounded-xl border border-line bg-surface-0/50 py-3 pl-10 pr-4 text-ink-0 placeholder:text-ink-3 outline-none transition-all focus:border-accent-b focus:bg-surface-0 focus:ring-1 focus:ring-accent-b"
                   />
+                  </div>
                 </div>
 
                 {/* Submit */}
@@ -199,16 +204,14 @@ export default async function HomePage() {
       {/* ─── Secondary Sections ─── */}
       <section className="animate-fade-in-up delay-400 mt-8 grid gap-6 sm:grid-cols-2">
         {/* Features / Database Intro */}
-        <div className="group relative overflow-hidden rounded-2xl border border-line bg-surface-1 p-8 card-hover">
-          <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-accent-b/10 blur-3xl transition-colors group-hover:bg-accent-b/20" />
-          
-          <div className="relative z-10">
+        <div className="rounded-2xl border border-line bg-surface-1 p-8 card-hover">
+          <div>
             <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-surface-2 border border-line-strong shadow-sm text-2xl">
               📚
             </div>
             <h2 className="text-xl font-bold text-ink-0">Database Karakter</h2>
             <p className="mt-3 text-sm text-ink-2 leading-relaxed">
-              Pencarian dijalankan di server dengan PostgreSQL full text dan trigram,
+              Pencarian dijalankan di server dengan pencocokan nama berlapis,
               dengan pembagian form (era/wujud) sebagai entitas kelas satu.{' '}
               {counts
                 ? `Saat ini tersimpan ${NUMBER.format(counts.characters)} karakter dalam ${NUMBER.format(counts.forms)} form dari ${NUMBER.format(counts.verses)} verse.`
@@ -224,10 +227,8 @@ export default async function HomePage() {
         </div>
 
         {/* Engine Intro */}
-        <div className="group relative overflow-hidden rounded-2xl border border-line bg-surface-1 p-8 card-hover">
-          <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-accent-a/10 blur-3xl transition-colors group-hover:bg-accent-a/20" />
-          
-          <div className="relative z-10">
+        <div className="rounded-2xl border border-line bg-surface-1 p-8 card-hover">
+          <div>
             <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-surface-2 border border-line-strong shadow-sm text-2xl">
               ⚙️
             </div>
@@ -309,7 +310,7 @@ export default async function HomePage() {
           // yang tersimpan — dan halaman mengatakannya, bukan menunggu.
           <div className="rounded-xl border border-dashed border-line-strong bg-surface-1/50 p-6 text-sm text-ink-2">
             Belum ada matchup populer yang tercatat. Daftar ini dihitung dari hasil pertarungan
-            yang tersimpan (<span className="font-mono text-xs">battle_results</span>) &mdash; ia
+            yang tersimpan (<span className="font-mono text-xs">battle_results</span>). Isinya
             terisi setelah ada simulasi yang disimpan, bukan diisi angka contoh.
           </div>
         ) : (

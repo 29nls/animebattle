@@ -65,7 +65,7 @@ export function demoEnabled(): boolean {
 
 export const DEMO_LABEL = 'Data demo (sintetis)';
 export const DEMO_NOTICE =
-  'Halaman ini menampilkan dataset demo sintetis karena PostgreSQL belum dikonfigurasi. Semua nama, verse, dan angka dibuat untuk pengujian — bukan data kanon dan tidak dapat ditelusuri ke sumber (AC-09 belum berlaku di sini).';
+  'Halaman ini menampilkan dataset demo sintetis karena PostgreSQL belum dikonfigurasi. Semua nama, verse, dan angka dibuat untuk pengujian, bukan data kanon dan tidak dapat ditelusuri ke sumber (AC-09 belum berlaku di sini).';
 
 export function demoCharacterListItems(
   query?: string,
@@ -294,7 +294,7 @@ export function demoBattleOptionGroups(): DemoBattleOptionGroup[] {
     options: DEMO_FORM_RECORDS.filter((record) => record.character.slug === character.slug).map(
       (record) => ({
         value: `${character.slug}/${record.form.slug}`,
-        label: `${record.form.name}${record.form.era ? ` — ${record.form.era}` : ''} (${record.side.tier.code ?? 'tanpa tier'})`,
+        label: `${record.form.name}${record.form.era ? `, ${record.form.era}` : ''} (${record.side.tier.code ?? 'tanpa tier'})`,
         characterName: character.name,
         formName: record.form.name,
         tierCode: record.side.tier.code,

@@ -209,7 +209,7 @@ export function FighterPicker({ name, side, initial, demoOptions }: Props) {
                     const option = demoMatches[active];
                     if (option) {
                       const [slug] = option.value.split('/');
-                      void pickCharacter(slug ?? '', option.label.split(' — ')[0] ?? option.label);
+                      void pickCharacter(slug ?? '', option.label.split(': ')[0] ?? option.label);
                       setSelectedForm(option.value);
                     }
                   } else {
@@ -241,7 +241,7 @@ export function FighterPicker({ name, side, initial, demoOptions }: Props) {
                       onMouseDown={(event) => {
                         event.preventDefault();
                         const [slug] = option.value.split('/');
-                        void pickCharacter(slug ?? '', option.label.split(' — ')[0] ?? option.label);
+                        void pickCharacter(slug ?? '', option.label.split(': ')[0] ?? option.label);
                         setSelectedForm(option.value);
                       }}
                     >
