@@ -49,6 +49,13 @@
       "skillPath": "skills/codebase-architecture/SKILL.md",
       "computedHash": "76c861fdb98b7af7b6e23644f56bbab54bb1bdf4ba95d148019ab44153467f8f"
     },
+    "karpathy-guidelines": {
+      "source": "multica-ai/andrej-karpathy-skills",
+      "sourceType": "github",
+      "skillPath": "skills/karpathy-guidelines/SKILL.md",
+      "computedHash": "0ec1641120accbb458780e0bd19a50a4182f2b97863e90851b91307f29802c9f",
+      "installMode": "copy"
+    },
     "repo-skillopt": {
       "source": "objectivlabs/reposkillopt",
       "sourceType": "github",
