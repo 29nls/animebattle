@@ -28,7 +28,6 @@ export function sha256Hex(input: string): string {
   return createHash('sha256').update(input, 'utf8').digest('hex');
 }
 
-/** Hash kanonik dari sebuah nilai. */
 export function hashValue(value: unknown): string {
   return `sha256:${sha256Hex(stableStringify(value))}`;
 }

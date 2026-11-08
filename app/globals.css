@@ -269,14 +269,14 @@ body {
 
 /* ─── Gradient text ─── */
 .text-gradient-hero {
-  background: linear-gradient(135deg, oklch(0.9 0.01 265) 0%, oklch(0.75 0.15 255) 50%, oklch(0.72 0.2 25) 100%);
+  background-image: linear-gradient(135deg, oklch(0.9 0.01 265) 0%, oklch(0.75 0.15 255) 50%, oklch(0.72 0.2 25) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
 .text-gradient-vs {
-  background: linear-gradient(135deg, var(--color-accent-a), oklch(0.8 0.18 50));
+  background-image: linear-gradient(135deg, var(--color-accent-a), oklch(0.8 0.18 50));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -394,6 +394,27 @@ body {
   font-size: 0.8rem;
   color: white;
   text-shadow: 0 1px 3px oklch(0 0 0 / 0.5);
+}
+
+/* Teks gelap pada gradien terang: putih tidak mencapai 4,5:1. */
+.btn-primary,
+.btn-battle {
+  color: var(--color-surface-0);
+  cursor: pointer;
+}
+
+/* ─── Reduced motion ─── */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 /* ─── Responsive ─── */

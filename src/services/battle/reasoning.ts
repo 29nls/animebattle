@@ -105,7 +105,7 @@ export function buildReasoning(ctx: ReasoningContext): ReasoningBundle {
   const winnerSide: 'a' | 'b' | null = winner === 'a' || winner === 'b' ? winner : null;
   const winnerDecisive = winnerSide ? (winnerSide === 'a' ? decisiveA : decisiveB) : [];
 
-  // ---- primary reason
+  // primary reason
   let primary: ReasoningItem;
   if (winnerSide === null) {
     primary = {
@@ -138,7 +138,7 @@ export function buildReasoning(ctx: ReasoningContext): ReasoningBundle {
     primary = { text: primary.text, refs: [`condition:win_condition`] };
   }
 
-  // ---- secondary factors
+  // secondary factors
   const secondary: ReasoningItem[] = [];
   for (const row of contributions) {
     if (row.a_value === 0) continue;
@@ -158,7 +158,7 @@ export function buildReasoning(ctx: ReasoningContext): ReasoningBundle {
     });
   }
 
-  // ---- critical counter
+  // critical counter
   const loserSide: 'a' | 'b' | null = winnerSide === 'a' ? 'b' : winnerSide === 'b' ? 'a' : null;
   let criticalCounter: ReasoningItem;
   if (loserSide) {
@@ -201,7 +201,7 @@ export function buildReasoning(ctx: ReasoningContext): ReasoningBundle {
     };
   }
 
-  // ---- potential scenario (template bercabang, tanpa bahasa absolut)
+  // potential scenario (template bercabang, tanpa bahasa absolut)
   const speedRow = breakdown.find((r) => r.metric === 'speed');
   const speedGap = speedRow ? Math.abs(speedRow.a_value) : 0;
   const rangeRow = breakdown.find((r) => r.metric === 'range');

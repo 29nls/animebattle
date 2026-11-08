@@ -130,7 +130,6 @@ async function ensureConditions(sql: SqlClient, conditions: BattleConditions): P
   return rows[0].id;
 }
 
-/** Parameter penyimpanan satu hasil. */
 export interface SaveBattleParams {
   /** Slug kanonik matchup (`a/form-vs-b/form`) — juga `matchup_key` MV popularitas. */
   slug: string;

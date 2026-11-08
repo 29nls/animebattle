@@ -18,8 +18,8 @@ import './globals.css';
  */
 export const metadata: Metadata = {
   title: {
-    default: 'Anime VS Battle — Siapa yang Menang?',
-    template: '%s — Anime VS Battle',
+    default: 'Anime VS Battle: Siapa yang Menang?',
+    template: '%s | Anime VS Battle',
   },
   description:
     'Bandingkan karakter fiksi dan simulasikan pertarungannya. Statistik, kemampuan, resistensi, dan kondisi pertarungan dengan sumber yang dapat ditelusuri.',
@@ -31,7 +31,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: 'website',
     siteName: 'Anime VS Battle',
-    title: 'Anime VS Battle — Siapa yang Menang?',
+    title: 'Anime VS Battle: Siapa yang Menang?',
     description:
       'Pilih dua karakter, pilih form-nya, lalu lihat analisis mengapa salah satunya lebih unggul.',
   },
@@ -193,7 +193,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <div className="mt-8 border-t border-line/30 pt-6 text-center">
               <p className="mx-auto max-w-2xl text-[0.65rem] leading-relaxed text-ink-3">
                 Hasil pertarungan adalah simulasi probabilistik dari statistik, kemampuan,
-                resistensi, asumsi, dan kondisi yang dipilih — bukan hasil resmi, bukan klaim kanon.
+                resistensi, asumsi, dan kondisi yang dipilih, bukan hasil resmi, bukan klaim kanon.
                 Data diambil dari sumber publik yang tercantum di setiap halaman data.
               </p>
             </div>

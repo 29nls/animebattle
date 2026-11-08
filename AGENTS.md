@@ -9,11 +9,11 @@ Berkas ini untuk agen yang bekerja di repo ini. Isinya bukan pengantar produk (i
 ```bash
 npm run typecheck        # TS strict
 npm run lint             # batas arsitektur + next/core-web-vitals
-npm test                 # 7 suite berurutan, total 550 test
+npm test                 # 7 suite berurutan, total 551 test
 npm run check:architecture   # 38 pemeriksaan batas
 ```
 
-Angka acuan (jangan dilaporkan sebagai "hijau" tanpa angka ini): engine 229, security 104, web 147, ingestion 31, db 32, lint-rules 3, lighthouse-config 4. Per suite: `npm run test:<nama>`.
+Angka acuan (jangan dilaporkan sebagai "hijau" tanpa angka ini): engine 229, security 104, web 148, ingestion 31, db 32, lint-rules 3, lighthouse-config 4. Per suite: `npm run test:<nama>`.
 
 Tambahan sesuai jenis perubahan:
 

@@ -113,7 +113,7 @@ export function BattleResultView({
         </div>
       )}
 
-      {/* ─── Banner pemenang ─── */}
+      {/* Banner pemenang */}
       <div
         className={`relative overflow-hidden rounded-2xl border p-6 text-center shadow-card sm:p-10 ${
           result.winner === 'a'
@@ -204,7 +204,7 @@ export function BattleResultView({
       )}
 
       <div className="mt-8 grid gap-6 lg:grid-cols-2">
-        {/* ─── Narasi engine ─── */}
+        {/* Narasi engine */}
         <section aria-labelledby="narasi-engine" className="rounded-2xl border border-line bg-surface-1 p-6 sm:p-8">
           <h3 id="narasi-engine" className="mb-6 flex items-center gap-2 text-xl font-bold text-ink-0">
             <span aria-hidden="true" className="text-accent-win">📝</span> Narasi Engine
@@ -253,7 +253,7 @@ export function BattleResultView({
           </div>
         </section>
 
-        {/* ─── Rincian skor ─── */}
+        {/* Rincian skor */}
         <section aria-labelledby="rincian-skor" className="rounded-2xl border border-line bg-surface-1 p-6 sm:p-8">
           <h3 id="rincian-skor" className="mb-2 flex items-center gap-2 text-xl font-bold text-ink-0">
             <span aria-hidden="true" className="text-accent-b">📈</span> Rincian Skor
@@ -306,7 +306,7 @@ export function BattleResultView({
         </section>
       </div>
 
-      {/* ─── Keunggulan penentu ─── */}
+      {/* Keunggulan penentu */}
       {result.decisive_edges.length > 0 && (
         <section aria-labelledby="keunggulan-penentu" className="mt-6 rounded-2xl border border-line bg-surface-1 p-6 sm:p-8">
           <h3 id="keunggulan-penentu" className="mb-6 flex items-center gap-2 text-xl font-bold text-ink-0">
@@ -343,7 +343,7 @@ export function BattleResultView({
         </section>
       )}
 
-      {/* ─── Keterbatasan & asumsi ─── */}
+      {/* Keterbatasan & asumsi */}
       <section className="mt-6 grid gap-6 lg:grid-cols-2">
         <div className="rounded-2xl border border-line bg-surface-1 p-6">
           <h3 className="mb-3 text-sm font-bold uppercase tracking-wider text-ink-3">Keterbatasan</h3>
@@ -371,7 +371,7 @@ export function BattleResultView({
         </div>
       </section>
 
-      {/* ─── Disclaimer (AC-13, verbatim dari engine) ─── */}
+      {/* Disclaimer (AC-13, verbatim dari engine) */}
       <div className="mt-6 rounded-2xl border border-line-strong bg-surface-2 p-5 text-xs leading-relaxed text-ink-2">
         {result.disclaimer}
       </div>

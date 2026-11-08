@@ -73,7 +73,7 @@ export default async function VersusPage({
     ? groups.flatMap((group) =>
         group.options.map((option) => ({
           value: option.value,
-          label: `${group.label} — ${option.label}`,
+          label: `${group.label}: ${option.label}`,
         })),
       )
     : null;
@@ -113,7 +113,7 @@ export default async function VersusPage({
             <div className="relative grid gap-4 sm:grid-cols-[1fr_auto_1fr] lg:gap-8 items-stretch">
               <div className="hidden sm:block absolute top-1/2 left-0 right-0 h-px bg-gradient-to-r from-line via-line-strong to-line -translate-y-1/2 -z-10" />
 
-              <div className="glass-strong rounded-2xl border border-line-strong p-5 shadow-card transition-all hover:border-accent-a/50">
+              <div className="rounded-2xl border border-line-strong bg-surface-1 p-5 shadow-card transition-all hover:border-accent-a/50">
                 <div className="flex items-center gap-3 mb-4">
                   <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-a/10 text-accent-a font-bold">
                     A
@@ -125,14 +125,14 @@ export default async function VersusPage({
 
               <div className="flex justify-center items-center py-4 sm:py-0">
                 <div className="relative">
-                  <div className="absolute inset-0 rounded-full bg-gradient-to-br from-accent-a to-accent-b blur-md animate-pulse-glow" />
+                  <div className="absolute inset-0 rounded-full bg-gradient-to-br from-accent-a to-accent-b blur-md" />
                   <div className="relative flex h-14 w-14 shrink-0 items-center justify-center rounded-full border-2 border-line-strong bg-surface-1 shadow-lg">
                     <span className="text-xl font-black text-gradient-vs">VS</span>
                   </div>
                 </div>
               </div>
 
-              <div className="glass-strong rounded-2xl border border-line-strong p-5 shadow-card transition-all hover:border-accent-b/50">
+              <div className="rounded-2xl border border-line-strong bg-surface-1 p-5 shadow-card transition-all hover:border-accent-b/50">
                 <div className="flex items-center gap-3 mb-4">
                   <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-b/10 text-accent-b font-bold">
                     B
@@ -208,7 +208,7 @@ export default async function VersusPage({
             </div>
 
             <div className="flex justify-center pt-4">
-              <button type="submit" className="btn-battle text-lg px-8 py-4 flex items-center gap-3 animate-vs-pulse">
+              <button type="submit" className="btn-battle text-lg px-8 py-4 flex items-center gap-3">
                 Jalankan Simulasi
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />

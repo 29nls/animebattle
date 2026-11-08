@@ -6,7 +6,7 @@ dokumen ini berbeda, kode menang dan dokumen ini yang harus diperbaiki.
 
 Sumber kebenaran:
 
-- `app/globals.css` (token `@theme`, base, utility, keyframes), 402 baris.
+- `app/globals.css` (token `@theme`, base, utility, keyframes), 423 baris.
 - `app/layout.tsx` (metadata, `themeColor`, navbar, footer).
 - `app/page.tsx` dan `src/components/*.tsx` (pemakaian token yang sebenarnya).
 
@@ -357,10 +357,11 @@ pertama setara `rounded` dan `rounded-lg`; yang ketiga sedikit di bawah `rounded
 Untuk komponen baru, pakai kelas Tailwind, bukan angka mentah.
 
 **Kaca (glass).** `.glass` dan `.glass-strong` ada di CSS, tetapi yang dipakai
-hanya `glass-strong` (6 tempat: navbar, panel pemilih A/B di `/versus` dan
-`/compare`, formulir hero). Itu sudah batas wajar: kaca hanya untuk permukaan
-yang melayang di atas latar, bukan untuk semua kartu. Jangan menambah pemakaian
-kaca pada kartu isi biasa.
+hanya `glass-strong` (4 tempat: navbar, formulir hero, dan dua panel pemilih di
+`/compare`). `/versus` memakai panel solid `surface-1`, sehingga navbar menjadi
+satu-satunya kaca di halaman itu. Kaca hanya untuk permukaan yang melayang di
+atas latar, bukan untuk semua kartu. Jangan menambah pemakaian kaca pada kartu
+isi biasa.
 
 ### 4.1 Keadaan interaksi
 
@@ -384,13 +385,13 @@ Dial: ENERGY 3 / RHYTHM 2 / MOTION 2
 ### 5.1 ENERGY 3: berani, bukan riuh
 
 Alasan: beranda memasang H1 `text-5xl sm:text-7xl` dengan `font-black`, satu kata
-bergradien, badge status berdenyut, dua lingkaran cahaya merah dan biru di latar,
-grid halus, dan panel kaca di tengah dengan pendar di belakangnya. Ini bukan
-bahasa Linear yang tenang.
+bergradien, label versi engine yang tenang, dua lingkaran cahaya merah dan biru di
+latar, grid halus, dan panel kaca di tengah dengan pendar di belakangnya. Ini
+bukan bahasa Linear yang tenang.
 
 Puncak energi halaman ada di hero: dua lingkaran `blur-[80px]` merah dan biru di
-latar, ditambah satu lapisan gradien `animate-pulse-glow` di belakang formulir.
-Ketiganya sengaja hanya ada di sana. Jangan menyalin pola itu ke bagian lain.
+latar, ditambah satu lapisan gradien statis di belakang formulir. Ketiganya
+sengaja hanya ada di sana. Jangan menyalin pola itu ke bagian lain.
 
 Yang membuatnya tetap terkendali: hanya **satu** titik terang per layar. Di
 beranda, titik itu adalah formulir pemilih lawan. Di halaman hasil, titik itu
@@ -424,18 +425,18 @@ parallax. Yang ada adalah animasi masuk sekali jalan dan transisi keadaan.
 Dalam bahasa antislop, MOTION 2 biasanya berarti "scroll-reveal dan transisi".
 Repo ini hanya memakai separuh keduanya: transisi keadaan ada, scroll-reveal
 tidak. Nilainya tetap 2 karena geraknya lebih dari sekadar hover (ada animasi
-masuk berjeda dan empat animasi berulang), tetapi tidak pernah sampai ke
-koreografi. Kalau nanti scroll-reveal ditambahkan, dial ini tidak berubah; yang
-berubah adalah catatan bahwa separuh lainnya sudah terpakai.
+masuk berjeda dan dua animasi berulang di halaman 404 serta skeleton), tetapi
+tidak pernah sampai ke koreografi. Kalau nanti scroll-reveal ditambahkan, dial ini
+tidak berubah; yang berubah adalah catatan bahwa separuh lainnya sudah terpakai.
 
 | Gerak | Nilai | Dipakai untuk |
 |---|---|---|
 | `fade-in` | 0,5 dtk `ease-out` | Hampir setiap halaman saat dimuat (33 kali) |
 | `fade-in-up` | 0,6 dtk `ease-out` | Blok beranda dan beberapa halaman daftar (11 kali), dengan jeda 100 sampai 500 ms |
 | `slide-in-left/right` | 0,5 dtk | Tersedia, belum dipakai |
-| `pulse-glow` | 3 dtk, tak terbatas | Titik status "engine aktif", pendar formulir hero, sorot VS di `/versus` |
+| `pulse-glow` | 3 dtk, tak terbatas | Tersedia, tidak dipakai setelah denyut status dan VS dihapus |
 | `float` | 4 dtk, tak terbatas | Emoji pedang di halaman 404 |
-| `vs-pulse` | 2,5 dtk, tak terbatas | Tombol simulasi di `/versus` (satu-satunya) |
+| `vs-pulse` | 2,5 dtk, tak terbatas | Tersedia, tidak dipakai |
 | `shimmer` | 1,8 dtk, tak terbatas | Kilau di dalam `.skeleton`, dipakai `app/loading.tsx` lewat `PageSkeleton` |
 | `gradient-shift` | 4 dtk | Tersedia, belum dipakai |
 | `card-hover` | 0,3 dtk, naik 2 px | Kartu yang bisa diklik |
@@ -447,20 +448,19 @@ Aturan gerak:
    berurutan 100, 200, 300, 400, 500 ms, seluruhnya di `app/page.tsx` (7 elemen).
    Jangan menambah delay di luar lima nilai itu, dan jangan memasang animasi masuk
    pada elemen yang muncul saat scroll.
-2. **Gerak berulang hanya untuk status hidup.** `pulse-glow`, `float`, `vs-pulse`,
-   dan `shimmer` boleh berulang karena masing-masing menandakan sesuatu yang
-   memang berlangsung: mesin aktif, halaman kosong, ajakan bertarung, data dimuat.
+2. **Gerak berulang hanya untuk keadaan yang benar-benar berlangsung.** `float`
+   dan `shimmer` boleh berulang karena menandai halaman kosong dan data yang
+   sedang dimuat. Denyut status dan ajakan bertarung tidak lagi dipakai.
 3. **Hover mengangkat, bukan membesar.** `translateY(-1px)` pada `.btn-primary`,
    `-2px` pada `.btn-battle` dan `.card-hover`. Tidak ada `scale` sama sekali di
    repo, dan itu disengaja: pembesaran menggeser tata letak di halaman tabel.
    Bayangan yang naik bersama elemen sudah cukup memberi rasa terangkat.
 4. **Transisi keadaan memakai `cubic-bezier(0.4, 0, 0.2, 1)`** untuk bar dan
    kartu, `ease` untuk tombol. Jangan mencampur kurva lain.
-5. **Hormati `prefers-reduced-motion`.** Saat ini belum ada satu pun aturan
-   `prefers-reduced-motion` di repo. Itu utang, bukan pilihan: setiap pekerjaan UI
-   baru wajib menyertakan `motion-reduce:animate-none` pada elemen beranimasi
-   berulang, atau menambahkan blok media query di `app/globals.css` yang
-   mematikan `animation` dan `transition` saat preferensi itu aktif.
+5. **Hormati `prefers-reduced-motion`.** `app/globals.css` sudah mematikan
+   `animation` dan `transition`, serta mengubah `scroll-behavior` menjadi `auto`
+   saat preferensi itu aktif. Setiap elemen beranimasi baru tetap wajib diperiksa
+   terhadap aturan ini.
 
 ## 6. Motif identitas
 
@@ -470,8 +470,8 @@ walau logonya ditukar:
 1. **Dua kutub warna.** Merah selalu pihak A, biru selalu pihak B. Tidak ada
    halaman yang membalik arti itu.
 2. **Tanda VS sebagai satu-satunya ornamen.** Kotak VS bergradien merah ke biru
-   muncul di navigasi (navbar dan header ponsel), dan pendar merah-biru yang
-   berdenyut mengelilingi badge VS di `/versus`. Versi kecilnya memakai teks
+   muncul di navigasi (navbar dan header ponsel), dan pendar merah-biru statis
+   mengelilingi badge VS di `/versus`. Versi kecilnya memakai teks
    bergradien merah ke jingga: tiga badge VS (formulir beranda, `/versus`,
    `/compare`) dan satu kata di lima H1 halaman daftar. Tidak ada ornamen lain
    yang diulang seperti itu.
@@ -519,15 +519,15 @@ skor, dan label itu memang selalu kecil.
 2.6. Gradien menandai pihak atau tindakan utama; sorot hanya pada elemen yang
 menyatakan pihaknya.
 
-**R-10 (kaca di banyak tempat).** Ini yang paling dekat gagal: `glass-strong`
-dipakai 6 kali, yaitu navbar, formulir hero, dua panel pemilih di `/versus`, dan
-dua panel di `/compare`. Semuanya permukaan yang melayang di atas latar, jadi
-masih bisa dibela, tetapi kalau jumlahnya bertambah lagi, ganti salah satunya
-dengan `surface-1` biasa.
+**R-10 (kaca di banyak tempat).** `glass-strong` dipakai 4 kali, yaitu navbar,
+formulir hero, dan dua panel pemilih di `/compare`. Panel `/versus` sudah solid
+`surface-1`, sehingga navbar menjadi satu-satunya kaca di halaman itu. `/compare`
+belum masuk audit ini; jangan menambah pemakaian kaca di sana sebelum halaman itu
+diaudit.
 
-**R-39 (`prefers-reduced-motion`).** Gagal, dan tidak dibela. Lihat bagian 5.3
-butir 5. Ini pekerjaan yang harus diselesaikan sebelum rilis berikutnya yang
-menyentuh animasi.
+**R-39 (`prefers-reduced-motion`).** Lulus. `app/globals.css` mematikan
+`animation` dan `transition`, serta mengubah `scroll-behavior` menjadi `auto`
+saat preferensi itu aktif. Lihat bagian 5.3 butir 5.
 
 ## 9. Cara memakai dokumen ini
 
