@@ -68,7 +68,7 @@ Skill ada di `.agents/skills/`, dicatat di `skills-lock.json`, dan bisa dipulihk
 **`antislop` bukan filter opsional untuk pekerjaan UI.** Tiga hal berlaku di setiap mode:
 
 1. **R-02**: jangan menulis em dash (U+2014) di teks yang agen tulis. Pakai koma, titik, titik dua, atau kurung. Ini berlaku untuk kode, komentar, dokumentasi, dan pesan commit.
-2. **R-37**: sebelum membangun UI, butuh arah desain. Repo ini **belum punya `DESIGN.md`**, tetapi arahnya sudah terbaca dari `app/globals.css`: token OKLCH, aksen A (merah) vs B (biru), `--radius-card`, `--shadow-glow-a/b`. Baca berkas itu dulu. Kalau arah tidak jelas, tanyakan atau beri label "draft tanpa arah".
+2. **R-37**: sebelum membangun UI, butuh arah desain. Arahnya ada di [DESIGN.md](DESIGN.md): palet OKLCH, tipografi, dan dial **ENERGY 3 / RHYTHM 2 / MOTION 2**. Baca berkas itu dulu, lalu `app/globals.css` sebagai sumber token. Kalau dokumen dan kode berbeda, kode menang dan dokumen diperbaiki di commit yang sama. Kalau arah untuk kebutuhan baru tetap tidak jelas, tanyakan atau beri label "draft tanpa arah".
 3. **R-23**: jangan mengarang logo, avatar, statistik, atau testimoni. Angka di halaman harus dibaca dari database, bukan ditulis tangan. README mencatat satu insiden persis seperti ini ("lebih dari 10.000 karakter" saat katalog berisi 3).
 
 **R-35**: jangan menyatakan UI selesai tanpa `npm run build` dan klik nyata pada setiap kontrol. Kalau tidak bisa dijalankan, katakan itu dan verifikasi lewat inspeksi kode, jangan mengklaim sudah diklik.
