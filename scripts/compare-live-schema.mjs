@@ -26,6 +26,12 @@
  * fisik dapat berbeda dari berkas tanpa ada kolom yang hilang. Perbedaan urutan
  * dilaporkan terpisah sebagai informasi, bukan sebagai drift.
  *
+ * Constraint NOT NULL tidak dibandingkan lewat `pg_constraint`: PostgreSQL 18
+ * melaporkannya sebagai baris `contype = 'n'`, sedangkan PostgreSQL 16 tidak.
+ * Nullability sudah dibandingkan pada snapshot `columns` (`attnotnull`), jadi
+ * mengecualikan `n` mencegah drift palsu saat baseline PGlite lebih baru dari
+ * database live tanpa melemahkan pemeriksaan.
+ *
  * Objek ekstra dipisahkan menjadi "tambahan pada relasi aplikasi" (drift: kolom/
  * index/trigger/constraint pada tabel yang didefinisikan berkas) dan "objek
  * aplikasi lain" (tabel di `public` yang tidak ada di berkas — bukan drift berkas
@@ -112,6 +118,7 @@ const SNAPSHOTS = {
                   from pg_constraint con
                   join pg_namespace n on n.oid = con.connamespace
                  where n.nspname = '${SCHEMA}'
+                   and con.contype <> 'n'
                  order by relation, con.conname`,
   // RLS dan policy ikut dibandingkan: keduanya ditetapkan berkas DDL dan
   // berdampak pada keamanan, jadi "identik" tanpa keduanya tidak bermakna.
