@@ -437,7 +437,6 @@ export function resistanceCoverage(
   };
 }
 
-/** Apakah sebuah sisi punya setidaknya satu decisive edge. */
 export function hasDecisiveEdge(outcomes: AbilityOutcome[], side: Side): boolean {
   return outcomes.some((o) => o.side === side && o.decisive);
 }

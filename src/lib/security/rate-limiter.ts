@@ -11,7 +11,6 @@
  * Sprint 4 tanpa mengubah kontrak modul ini.
  */
 
-/** Hasil satu pemeriksaan kuota. */
 export type RateLimitResult =
   | { allowed: true; remaining: number }
   | { allowed: false; retryAfterMs: number };

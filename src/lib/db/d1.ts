@@ -254,13 +254,13 @@ export function bindValue(value: unknown): unknown {
   return value;
 }
 
-/** Bagian `D1Database` yang dipakai — cukup untuk diuji dengan stub. */
 /** Pernyataan D1 yang sudah/belum diikat parameter. */
 export interface D1StatementLike {
   bind(...values: unknown[]): D1StatementLike;
   all<T = D1Row>(): Promise<{ results?: T[] }>;
 }
 
+/** Bagian `D1Database` yang dipakai, cukup untuk diuji dengan stub. */
 export interface D1DatabaseLike {
   prepare(sql: string): D1StatementLike;
 }

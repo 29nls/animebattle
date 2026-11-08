@@ -83,7 +83,6 @@ export function isR2Configured(): boolean {
   return getR2Bucket() !== null;
 }
 
-/** Menyimpan file atau buffer ke Cloudflare R2. */
 export async function putFile(
   key: string,
   data: string | ArrayBuffer | Uint8Array | ReadableStream,
@@ -113,7 +112,6 @@ export async function putFile(
   };
 }
 
-/** Mengambil file dari Cloudflare R2. */
 export async function getFile(
   key: string,
 ): Promise<{ data: ReadableStream; metadata: R2ObjectMetadata } | null> {
@@ -136,7 +134,6 @@ export async function getFile(
   };
 }
 
-/** Menghapus file dari Cloudflare R2. */
 export async function deleteFile(key: string): Promise<boolean> {
   const bucket = getR2Bucket();
   if (!bucket) return false;
