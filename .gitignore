@@ -31,3 +31,9 @@ node_modules/
 .loadtest-env.json
 .loadtest-*.json
 .loadtest-*.log
+/freebuff-sites-build/
+/.open-next/
+/.wrangler/
+freebuff.open-next.config.ts
+freebuff.wrangler.jsonc
+.secrets/

@@ -1041,7 +1041,46 @@ export async function applyDataset(
 
   if (!context.dryRun && report.created + report.updated > 0) {
     try {
-      await context.sql.query('select recompute_completeness()');
+      // SQLite tidak punya fungsi yang dapat didefinisikan pengguna, jadi isi
+      // `recompute_completeness()` dijalankan sebagai dua UPDATE yang sama.
+      if (context.sql.dialect === 'sqlite') {
+        await context.sql.query(
+          `update character_versions
+              set data_completeness = case
+                    when counts.core_metrics >= 4 and counts.any_metrics >= 8 then 'complete'
+                    when counts.core_metrics >= 2 then 'partial'
+                    else 'minimal'
+                  end
+             from (
+               select cv.id,
+                      count(*) filter (where s.metric in ('tier','attack_potency','durability','speed')
+                                         and s.status = 'current') as core_metrics,
+                      count(distinct s.metric) as any_metrics
+                 from character_versions cv
+                 left join statistics s on s.character_version_id = cv.id
+                group by cv.id
+             ) as counts
+            where character_versions.id = counts.id`,
+        );
+        await context.sql.query(
+          `update characters
+              set data_completeness = case
+                    when agg.best = 'complete' then 'complete'
+                    when agg.best = 'partial' then 'partial'
+                    else 'minimal'
+                  end
+             from (
+               select c.id, max(cv.data_completeness) as best
+                 from characters c
+                 left join character_versions cv
+                   on cv.character_id = c.id and cv.deleted_at is null
+                group by c.id
+             ) as agg
+            where characters.id = agg.id`,
+        );
+      } else {
+        await context.sql.query('select recompute_completeness()');
+      }
     } catch (error) {
       report.notes.push(
         `recompute_completeness tidak dijalankan: ${error instanceof Error ? error.message : String(error)}`,

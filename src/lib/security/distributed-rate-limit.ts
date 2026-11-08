@@ -84,11 +84,15 @@ export async function checkDistributedRateLimit(
   bucket: string,
   options: RateLimitOptions,
 ): Promise<DistributedRateLimitResult> {
-  const rows = await sql.query<RateLimitRow>(
-    `select allowed, remaining, retry_after_ms
-       from rate_limit_hit($1, $2, $3, to_timestamp($4 / 1000.0))`,
-    [bucket, options.windowMs, options.limit, options.nowMs ?? Date.now()],
-  );
+  const nowMs = options.nowMs ?? Date.now();
+  const rows =
+    sql.dialect === 'sqlite'
+      ? await hitRateLimitSqlite(sql, bucket, options, nowMs)
+      : await sql.query<RateLimitRow>(
+          `select allowed, remaining, retry_after_ms
+             from rate_limit_hit($1, $2, $3, to_timestamp($4 / 1000.0))`,
+          [bucket, options.windowMs, options.limit, nowMs],
+        );
 
   const row = rows[0];
   // Fungsi mengembalikan tepat satu baris berbentuk boolean/integer. Bentuk lain
@@ -100,6 +104,46 @@ export async function checkDistributedRateLimit(
 
   if (row.allowed) return { allowed: true, remaining: Number(row.remaining) };
   return { allowed: false, retryAfterMs: Math.max(1, Number(row.retry_after_ms)) };
+}
+
+/**
+ * Jalur SQLite: RPC `rate_limit_hit` tidak ada, jadi langkah atomiknya ditulis
+ * langsung — satu `insert ... on conflict do update ... returning hits`, yang
+ * memang didukung D1. Perhitungan jendela tetap identik dengan versi Postgres
+ * (jendela tetap, bukan bergeser) supaya batasnya tetap dapat diprediksi.
+ */
+async function hitRateLimitSqlite(
+  sql: SqlClient,
+  bucket: string,
+  options: RateLimitOptions,
+  nowMs: number,
+): Promise<RateLimitRow[]> {
+  if (options.windowMs <= 0 || options.limit <= 0) {
+    throw new Error('rate_limit_hit: windowMs dan limit harus > 0');
+  }
+
+  const windowStartMs = Math.floor(nowMs / options.windowMs) * options.windowMs;
+  const windowStart = new Date(windowStartMs).toISOString();
+  const rows = await sql.query<{ hits: number }>(
+    `insert into rate_limit_windows (bucket, window_start, hits)
+     values ($1, $2, 1)
+     on conflict (bucket, window_start) do update set hits = rate_limit_windows.hits + 1
+     returning hits`,
+    [bucket, windowStart],
+  );
+
+  const hits = Number(rows[0]?.hits ?? 0);
+  const allowed = hits <= options.limit;
+  const retryAfterMs = allowed ? 0 : Math.max(1, Math.ceil(windowStartMs + options.windowMs - nowMs));
+
+  // Pembersihan oportunistik (1%), sama seperti versi Postgres: tabel tidak
+  // tumbuh tanpa batas tanpa perlu cron khusus.
+  if (Math.random() < 0.01) {
+    const cutoff = new Date(nowMs - 24 * 60 * 60 * 1000).toISOString();
+    await sql.query(`delete from rate_limit_windows where window_start < $1`, [cutoff]);
+  }
+
+  return [{ allowed, remaining: Math.max(options.limit - hits, 0), retry_after_ms: retryAfterMs }];
 }
 
 /** Header 429 yang sama dengan guard admin: detik, dibulatkan ke atas. */

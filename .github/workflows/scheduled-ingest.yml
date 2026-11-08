@@ -10,11 +10,20 @@
 # (zona `scheduled-worker`, tools/architecture/zones.mjs) dan berperilaku
 # fail-closed: tanpa CRON_SECRET di sisi server, ia menolak 503.
 #
-# Status: AKTIF sejak 2026-10-11. `DEPLOY_URL` + `CRON_SECRET` sudah disetel di
-# repo secrets dan dispatch manual memanggil endpoint produksi sungguhan
-# (HTTP 200, `{"processed":[],"count":0}` pada antrean kosong). Step pertama
-# tetap sengaja **skip dengan pesan jelas** bila secrets kosong — bukan
-# mengklaim sukses palsu — dan run digagalkan bila respons endpoint bukan 2xx.
+# Status: AKTIF sejak 2026-10-11, tetapi **belum pernah hijau**. `DEPLOY_URL` +
+# `CRON_SECRET` sudah disetel (step konfigurasi berjalan dengan `SKIP=false`),
+# namun setiap run terjadwal sejak 2026-11-06 membalas **HTTP 500 dengan body
+# kosong** — mis. run 42089541289 dan 42176649309. Klaim lama di komentar ini
+# ("dispatch manual menerima HTTP 200") tidak sesuai bukti dan sudah dikoreksi.
+#
+# Penyebab 500 kosong: handler cron tidak menangkap kegagalan database, sehingga
+# error driver lolos ke framework. Sejak perbaikan di `app/api/cron/sync/route.ts`
+# kegagalan itu dijawab 503 JSON (`UNAVAILABLE`) atau 500 JSON (`INTERNAL`) dan
+# dicatat di log server. Verifikasi akhir tetap butuh run nyata setelah deploy:
+# **BUTUH MANUSIA** — jalankan `workflow_dispatch` dan pastikan HTTP 2xx.
+#
+# Step pertama tetap sengaja **skip dengan pesan jelas** bila secrets kosong —
+# bukan mengklaim sukses palsu — dan run digagalkan bila respons bukan 2xx.
 name: Scheduled Ingestion
 
 on:
@@ -61,7 +70,7 @@ jobs:
           cat /tmp/cron-response.json
           case "$http_code" in
             2??) echo "::notice::Ingestion tick selesai."; exit 0 ;;
-            503) echo "::warning::Endpoint menolak (fail-closed server?) — periksa CRON_SECRET di environment deployment."; exit 1 ;;
+            503) echo "::warning::Endpoint menjawab 503 — periksa DATABASE_URL/konektivitas deployment (bukan hanya CRON_SECRET; 401 berarti secret salah)."; exit 1 ;;
             *)   echo "::error::Endpoint cron membalas $http_code"; exit 1 ;;
           esac
 
